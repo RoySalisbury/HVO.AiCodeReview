@@ -70,32 +70,32 @@ public static class CodeReviewServiceFactory
             // Single-provider mode
             if (settings.Mode.Equals("single", StringComparison.OrdinalIgnoreCase))
             {
-                var active = providers.FirstOrDefault(p =>
-                    p.Name.Equals(settings.ActiveProvider, StringComparison.OrdinalIgnoreCase)
-                    || settings.Providers.Keys.First(k =>
-                        k.Equals(settings.ActiveProvider, StringComparison.OrdinalIgnoreCase)) != null
-                    && providers.Any(x => x.Name == settings.ActiveProvider));
+                // Look up from the already-created providers list by config key or display name
+                var activeKey = settings.ActiveProvider;
+                var providerKeys = settings.Providers
+                    .Where(kv => kv.Value.Enabled)
+                    .Select(kv => kv.Key)
+                    .ToList();
 
-                // Try matching by config key
-                if (active.Service == null)
+                // Find the index of the matching provider in the enabled list
+                var matchIndex = providerKeys.FindIndex(k =>
+                    k.Equals(activeKey, StringComparison.OrdinalIgnoreCase));
+
+                if (matchIndex < 0)
                 {
-                    var idx = settings.Providers.Keys
-                        .Select((k, i) => (k, i))
-                        .FirstOrDefault(x =>
-                            x.k.Equals(settings.ActiveProvider, StringComparison.OrdinalIgnoreCase));
-
-                    if (idx.k != null && idx.i < providers.Count)
-                        active = providers[idx.i];
+                    // Try matching by display name
+                    matchIndex = providers.FindIndex(p =>
+                        p.Name.Equals(activeKey, StringComparison.OrdinalIgnoreCase));
                 }
 
-                if (active.Service != null)
+                if (matchIndex >= 0 && matchIndex < providers.Count)
                 {
                     loggerFactory.CreateLogger("CodeReviewServiceFactory")
-                        .LogInformation("Single-provider mode: using '{Provider}'", active.Name);
-                    return active.Service;
+                        .LogInformation("Single-provider mode: using '{Provider}'", providers[matchIndex].Name);
+                    return providers[matchIndex].Service;
                 }
 
-                // Fallback to first provider
+                // Fallback to first enabled provider
                 loggerFactory.CreateLogger("CodeReviewServiceFactory")
                     .LogWarning("ActiveProvider '{Active}' not found — falling back to '{First}'",
                         settings.ActiveProvider, providers[0].Name);

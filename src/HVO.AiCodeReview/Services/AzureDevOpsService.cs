@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
 
-public class AzureDevOpsService : IAzureDevOpsService
+public class AzureDevOpsService : IAzureDevOpsService, IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly AzureDevOpsSettings _settings;
@@ -16,6 +16,7 @@ public class AzureDevOpsService : IAzureDevOpsService
     // Lazy-resolved identity ID -- populated from config or auto-discovered from PAT
     private string? _resolvedIdentityId;
     private readonly SemaphoreSlim _identityLock = new(1, 1);
+    private bool _disposed;
 
     public AzureDevOpsService(
         HttpClient httpClient,
@@ -602,14 +603,7 @@ public class AzureDevOpsService : IAzureDevOpsService
                 new { parentCommentId = 0, content, commentType = 1 }
             },
             status = StatusToInt(status),
-            properties = new Dictionary<string, object>
-            {
-                ["Microsoft.TeamFoundation.Discussion.UniqueID"] = new
-                {
-                    type = "System.String",
-                    value = Guid.NewGuid().ToString()
-                }
-            }
+            properties = BuildThreadProperties()
         };
 
         var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
@@ -617,9 +611,6 @@ public class AzureDevOpsService : IAzureDevOpsService
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false,
         });
-
-        // Fix the property type key to use $type/$value format
-        json = json.Replace("\"type\":", "\"$type\":").Replace("\"value\":", "\"$value\":");
 
         _logger.LogDebug("POST thread: {Url}", url);
         var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
@@ -646,14 +637,7 @@ public class AzureDevOpsService : IAzureDevOpsService
                 rightFileStart = new { line = startLine, offset = 1 },
                 rightFileEnd = new { line = endLine, offset = int.MaxValue },
             },
-            properties = new Dictionary<string, object>
-            {
-                ["Microsoft.TeamFoundation.Discussion.UniqueID"] = new
-                {
-                    type = "System.String",
-                    value = Guid.NewGuid().ToString()
-                }
-            }
+            properties = BuildThreadProperties()
         };
 
         var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
@@ -661,8 +645,6 @@ public class AzureDevOpsService : IAzureDevOpsService
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false,
         });
-
-        json = json.Replace("\"type\":", "\"$type\":").Replace("\"value\":", "\"$value\":");
 
         _logger.LogDebug("POST inline thread: {Url} for {FilePath}:{StartLine}-{EndLine}", url, filePath, startLine, endLine);
         var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
@@ -709,6 +691,31 @@ public class AzureDevOpsService : IAzureDevOpsService
             _logger.LogWarning("Failed to update PR description: {StatusCode} {Reason} — {Body}",
                 (int)response.StatusCode, response.ReasonPhrase, errorBody);
         }
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _identityLock.Dispose();
+            _disposed = true;
+        }
+    }
+
+    /// <summary>
+    /// Build the ADO thread properties dictionary using the required $type/$value format.
+    /// Using explicit dictionary keys avoids brittle string replacement on serialized JSON.
+    /// </summary>
+    private static Dictionary<string, Dictionary<string, string>> BuildThreadProperties()
+    {
+        return new Dictionary<string, Dictionary<string, string>>
+        {
+            ["Microsoft.TeamFoundation.Discussion.UniqueID"] = new Dictionary<string, string>
+            {
+                ["$type"] = "System.String",
+                ["$value"] = Guid.NewGuid().ToString()
+            }
+        };
     }
 
     private static int StatusToInt(string status) => status.ToLowerInvariant() switch

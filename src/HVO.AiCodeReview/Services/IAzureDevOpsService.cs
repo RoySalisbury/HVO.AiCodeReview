@@ -6,7 +6,7 @@ namespace AiCodeReview.Services;
 /// Abstracts Azure DevOps REST API interactions. All methods accept project
 /// and repository per-request; only Organization and PAT come from config.
 /// </summary>
-public interface IAzureDevOpsService
+public interface IAzureDevOpsService : IDisposable
 {
     /// <summary>Fetch PR metadata including reviewers.</summary>
     Task<PullRequestInfo> GetPullRequestAsync(string project, string repository, int pullRequestId);

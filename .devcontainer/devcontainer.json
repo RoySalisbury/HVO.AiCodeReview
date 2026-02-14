@@ -1,0 +1,163 @@
+{
+  "name": "HVO.Enterprise Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {
+      "ppa": true,
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    },
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "21"
+    },
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "version": "latest",
+      "helm": "latest",
+      "minikube": "none"
+    },
+    "ghcr.io/devcontainers/features/powershell:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "installDirectlyFromGitHubRelease": true,
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "installOhMyZsh": true,
+      "configureZshAsDefaultShell": true,
+      "username": "vscode",
+      "userUid": "automatic",
+      "userGid": "automatic",
+      "upgradePackages": false
+    },
+    "ghcr.io/devcontainers/features/dotnet:2": {
+      "version": "10.0",
+      "additionalVersions": "8.0, 9.0"
+    },
+    "ghcr.io/devcontainers/features/azure-cli:1": {
+      "version": "latest",
+      "installBicep": true,
+      "bicepVersion": "latest"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true,
+      "dockerDashComposeVersion": "v2",
+      "installDockerComposeSwitch": false
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csdevkit",
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.vscode-dotnet-runtime",
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "github.vscode-github-actions",
+        "ms-vscode.vscode-js-profile-flame",
+        "openai.chatgpt"
+      ],
+      "settings": {
+        "omnisharp.enableRoslynAnalyzers": true,
+        "omnisharp.enableEditorConfigSupport": true,
+        "omnisharp.enableImportCompletion": true,
+        "csharp.semanticHighlighting.enabled": true,
+        "editor.formatOnSave": true,
+        "editor.formatOnType": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll": "explicit",
+          "source.organizeImports": "explicit"
+        }
+      }
+    }
+  },
+  // Environment variables for dev container (non-sensitive only)
+  // Secrets should be provided via User Secrets or .devcontainer/devcontainer.local.env (gitignored)
+  // See docs/security/secrets-guide.md for comprehensive secret management
+  "containerEnv": {
+    "ASPNETCORE_ENVIRONMENT": "Development",
+    "DOTNET_ENVIRONMENT": "Development",
+    "DOCKER_HOST_ADDRESS": "0.0.0.0",
+    "POSTGRES_DOCKER_CONTEXT": "proxmox-home",
+    "HVO_POSTGRES_HOST": "postgres",
+    "HVO_POSTGRES_HOST_LOCAL": "127.0.0.1",
+    "HVO_POSTGRES_PORT": "5432",
+    "HVO_POSTGRES_DATABASE": "hvo",
+    "HVO_POSTGRES_USERNAME": "postgres",
+    "HVO_POSTGRES_PASSWORD": "postgres",
+    "HVO_REDIS_HOST": "redis",
+    "HVO_REDIS_HOST_LOCAL": "127.0.0.1",
+    "HVO_REDIS_PORT": "6379",
+    // Identity Hardening - Logging Configuration (non-sensitive)
+    "LOGGING_LOGLEVEL_DEFAULT": "Information",
+    "LOGGING_LOGLEVEL_MICROSOFT_ASPNETCORE": "Warning"
+  },
+  "remoteEnv": {},
+  // Port mappings with allInterfaces for Docker-from-Docker accessibility
+  // 5000-5001: Main HVO.SkyMonitor app (HTTP/HTTPS)
+  // 5010-5011: Camera Agent (HTTP/HTTPS)
+  // 5432: PostgreSQL, 6379: Redis
+  // 9000-9001: MinIO (API/Console)
+  // 7096: Logic Host HTTPS (dotnet run)
+  // 5174: SkyMonitor container mode (HTTP)
+  // 5130: Camera agent container mode
+  "forwardPorts": [
+    5000,
+    5001,
+    5432,
+    6379
+  ],
+  "portsAttributes": {
+    "5000": {
+      "onAutoForward": "silent",
+      "elevateIfNeeded": true
+    },
+    "5001": {
+      "onAutoForward": "silent",
+      "elevateIfNeeded": true
+    },
+    "5432": {
+      "onAutoForward": "silent",
+      "elevateIfNeeded": true
+    },
+    "6379": {
+      "onAutoForward": "silent",
+      "elevateIfNeeded": true
+    }
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "silent"
+  },
+  // Ensure host-side secrets directory exists to avoid bind mount errors
+  "initializeCommand": "mkdir -p \"$HOME/.microsoft/usersecrets\"",
+  // Mount user secrets from host into container
+  // Allows dev container to access locally stored secrets
+  "mounts": [
+    {
+      "type": "volume",
+      "source": "x509stores",
+      "target": "/home/vscode/.dotnet/corefx/cryptography/x509stores"
+    },
+    {
+      "type": "bind",
+      "source": "${localEnv:HOME}/.microsoft/usersecrets",
+      "target": "/home/vscode/.microsoft/usersecrets"
+    }
+  ],
+  "postStartCommand": "bash .devcontainer/start-deps.sh",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteUser": "vscode"
+}

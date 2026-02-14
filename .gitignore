@@ -424,3 +424,16 @@ FodyWeavers.xsd
 appsettings.Development.json
 appsettings.Test.json
 appsettings.*.local.json
+
+# ===================================================================
+# Dev container / OS / Python artifacts
+# ===================================================================
+# Python virtual environment (created by dev container setup)
+.venv/
+
+# macOS Finder metadata
+.DS_Store
+
+# Environment variable files (may contain secrets)
+.env.*
+!.env.template

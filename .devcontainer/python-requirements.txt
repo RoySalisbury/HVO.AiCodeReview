@@ -1,0 +1,17 @@
+# Python dependencies commonly used for parsing/config/web requests in tooling scripts
+# Kept intentionally small and general-purpose.
+
+PyYAML
+jsonschema
+Markdown
+beautifulsoup4
+lxml
+chardet
+charset-normalizer
+pathspec
+packaging
+requests
+python-dateutil
+regex
+# TOML (Python 3.11+ includes tomllib, but toml is still commonly used)
+toml

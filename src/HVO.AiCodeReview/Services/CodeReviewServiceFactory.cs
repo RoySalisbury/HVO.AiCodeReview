@@ -70,22 +70,29 @@ public static class CodeReviewServiceFactory
             // Single-provider mode
             if (settings.Mode.Equals("single", StringComparison.OrdinalIgnoreCase))
             {
-                // Find provider matching the ActiveProvider key
+                // Look up from the already-created providers list by config key or display name
                 var activeKey = settings.ActiveProvider;
-                var matchingProvider = settings.Providers
+                var providerKeys = settings.Providers
                     .Where(kv => kv.Value.Enabled)
-                    .Where(kv => kv.Key.Equals(activeKey, StringComparison.OrdinalIgnoreCase)
-                                 || kv.Value.DisplayName.Equals(activeKey, StringComparison.OrdinalIgnoreCase))
-                    .Select(kv => (
-                        Name: kv.Value.DisplayName.Length > 0 ? kv.Value.DisplayName : kv.Key,
-                        Service: CreateProvider(kv.Key, kv.Value, loggerFactory)))
-                    .FirstOrDefault();
+                    .Select(kv => kv.Key)
+                    .ToList();
 
-                if (matchingProvider.Service != null)
+                // Find the index of the matching provider in the enabled list
+                var matchIndex = providerKeys.FindIndex(k =>
+                    k.Equals(activeKey, StringComparison.OrdinalIgnoreCase));
+
+                if (matchIndex < 0)
+                {
+                    // Try matching by display name
+                    matchIndex = providers.FindIndex(p =>
+                        p.Name.Equals(activeKey, StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (matchIndex >= 0 && matchIndex < providers.Count)
                 {
                     loggerFactory.CreateLogger("CodeReviewServiceFactory")
-                        .LogInformation("Single-provider mode: using '{Provider}'", matchingProvider.Name);
-                    return matchingProvider.Service;
+                        .LogInformation("Single-provider mode: using '{Provider}'", providers[matchIndex].Name);
+                    return providers[matchIndex].Service;
                 }
 
                 // Fallback to first enabled provider

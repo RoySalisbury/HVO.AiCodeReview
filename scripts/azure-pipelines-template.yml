@@ -1,0 +1,91 @@
+# ===========================================================================
+# AI Code Review Pipeline Template
+# ===========================================================================
+# Add this step to your PR-triggered pipeline to enable AI code reviews.
+#
+# Prerequisites:
+#   1. Deploy the AiCodeReview API service
+#   2. Set the CODE_REVIEW_API_URL variable (pipeline variable or variable group)
+#
+# This template uses built-in Azure DevOps variables so it works across
+# any project and repository with zero per-repo configuration.
+# ===========================================================================
+
+# Example: Full PR pipeline with AI code review
+# Uncomment and customize for your team's needs.
+
+# trigger: none    # Only run on PRs, not pushes
+#
+# pr:
+#   branches:
+#     include:
+#       - main
+#       - develop
+#       - release/*
+
+# variables:
+#   CODE_REVIEW_API_URL: 'https://your-ai-code-review-service.azurewebsites.net'
+
+# pool:
+#   vmImage: 'ubuntu-latest'
+
+steps:
+  # ---------------------------------------------------------------------------
+  # Option A: Inline script (no external file dependency)
+  # ---------------------------------------------------------------------------
+  - task: PowerShell@2
+    displayName: 'AI Code Review'
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    inputs:
+      targetType: inline
+      pwsh: true
+      script: |
+        $body = @{
+            projectName    = "$(System.TeamProject)"
+            repositoryName = "$(Build.Repository.Name)"
+            pullRequestId  = [int]$(System.PullRequest.PullRequestId)
+        } | ConvertTo-Json
+
+        Write-Host "##vso[task.setprogress value=5]Submitting AI code review..."
+        Write-Host "Requesting review for PR #$(System.PullRequest.PullRequestId)..."
+
+        try {
+            $response = Invoke-RestMethod `
+                -Uri "$(CODE_REVIEW_API_URL)/api/review" `
+                -Method POST -Body $body `
+                -ContentType "application/json" `
+                -TimeoutSec 600
+
+            Write-Host "##vso[task.setprogress value=100]Review complete"
+            Write-Host ""
+            Write-Host "Status:  $($response.status)"
+            Write-Host "Verdict: $($response.recommendation)"
+            Write-Host "Issues:  $($response.issueCount) (E:$($response.errorCount) W:$($response.warningCount) I:$($response.infoCount))"
+
+            Write-Host "##vso[task.setvariable variable=AI_REVIEW_STATUS]$($response.status)"
+            Write-Host "##vso[task.setvariable variable=AI_REVIEW_RECOMMENDATION]$($response.recommendation)"
+
+            if ($response.recommendation -eq "Rejected") {
+                Write-Host "##vso[task.logissue type=error]AI Code Review: REJECTED"
+                Write-Host "##vso[task.complete result=Failed;]AI Code Review REJECTED"
+            }
+            elseif ($response.recommendation -eq "NeedsWork") {
+                Write-Host "##vso[task.logissue type=warning]AI Code Review: NEEDS WORK"
+            }
+        }
+        catch {
+            Write-Host "##vso[task.logissue type=warning]AI Code Review unavailable: $($_.Exception.Message)"
+            # Don't fail the pipeline if the review service is down
+        }
+
+  # ---------------------------------------------------------------------------
+  # Option B: External script file (if checked into the repo)
+  # ---------------------------------------------------------------------------
+  # - task: PowerShell@2
+  #   displayName: 'AI Code Review'
+  #   condition: eq(variables['Build.Reason'], 'PullRequest')
+  #   inputs:
+  #     targetType: filePath
+  #     filePath: '$(Build.SourcesDirectory)/pipeline/ai-code-review.ps1'
+  #     pwsh: true
+  #     arguments: '-ApiUrl "$(CODE_REVIEW_API_URL)"'

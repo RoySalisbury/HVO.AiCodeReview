@@ -1,0 +1,3 @@
+{
+  "customInstructions": "Keep your feedback concise and actionable.\n\nIn addition to standard review criteria, also evaluate the following:\n\n- **Cyclomatic complexity**: Flag methods with high cyclomatic complexity (roughly >10) and suggest refactoring.\n- **Method length**: Flag methods longer than ~50 lines and suggest decomposition.\n- **Magic numbers/strings**: Flag hardcoded values that should be constants or configuration.\n- **Error handling**: Ensure exceptions are caught at appropriate levels and not silently swallowed.\n- **Async best practices**: Check for proper async/await usage — no sync-over-async, no fire-and-forget without justification."
+}

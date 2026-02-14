@@ -416,3 +416,11 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# ===================================================================
+# HVO.AiCodeReview - Secrets and environment-specific config
+# ===================================================================
+# These files contain real API keys, PATs, and endpoints - NEVER commit
+appsettings.Development.json
+appsettings.Test.json
+appsettings.*.local.json

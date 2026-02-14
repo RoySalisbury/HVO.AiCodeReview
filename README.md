@@ -63,32 +63,36 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 ## Architecture
 
 ```
-┌─────────────────────┐       ┌──────────────────────────┐
-│  Azure DevOps       │       │  AI Code Review Service   │
-│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API     │
-└─────────────────────┘       │  (.NET 8)                 │
-                              │                           │
-                              │  ┌─────────────────────┐  │
-                              │  │ ReviewController     │  │
-                              │  └────────┬────────────┘  │
-                              │           │               │
-                              │  ┌────────▼────────────┐  │
-                              │  │ CodeReviewOrchest-   │  │
-                              │  │ rator                │  │
-                              │  └──┬─────────────┬────┘  │
-                              │     │             │       │
-                              │  ┌──▼──┐    ┌─────▼────┐  │
-                              │  │Azure│    │CodeReview │  │
-                              │  │DevOps│    │Service   │  │
-                              │  │Svc   │    │(AI)      │  │
-                              │  └──┬───┘    └────┬─────┘  │
-                              └─────┼─────────────┼───────┘
-                                    │             │
-                              ┌─────▼─────┐ ┌─────▼──────┐
-                              │ Azure     │ │ Azure      │
-                              │ DevOps    │ │ OpenAI     │
-                              │ REST API  │ │ (any model)│
-                              └───────────┘ └────────────┘
+┌─────────────────────┐       ┌──────────────────────────────┐
+│  Azure DevOps       │       │  AI Code Review Service       │
+│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API (.NET 8)│
+└─────────────────────┘       │                              │
+                              │  ┌────────────────────────┐  │
+                              │  │ ReviewController        │  │
+                              │  └───────────┬────────────┘  │
+                              │              │               │
+                              │  ┌───────────▼────────────┐  │
+                              │  │ CodeReviewOrchestrator  │  │
+                              │  └──┬────────────────┬────┘  │
+                              │     │                │       │
+                              │  ┌──▼───┐   ┌────────▼────┐  │
+                              │  │Azure │   │ CodeReview  │  │
+                              │  │DevOps│   │ Service     │  │
+                              │  │Svc   │   │ Factory     │  │
+                              │  └──┬───┘   └──┬──────┬───┘  │
+                              │     │          │      │      │
+                              │     │    ┌─────▼┐  ┌──▼────┐ │
+                              │     │    │Single│  │Consen-│ │
+                              │     │    │ AI   │  │sus    │ │
+                              │     │    │Review│  │Review │ │
+                              │     │    └──┬───┘  └──┬────┘ │
+                              └─────┼───────┼─────────┼──────┘
+                                    │       │         │
+                              ┌─────▼─────┐ │  ┌──────▼─────┐
+                              │ Azure     │ │  │ Multiple   │
+                              │ DevOps    │ └──▶ AI Models  │
+                              │ REST API  │    │ (fan-out)  │
+                              └───────────┘    └────────────┘
 ```
 
 **Flow:**
@@ -97,11 +101,12 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 2. The **Rate Limiter** checks if the PR was reviewed too recently — rejects immediately if so.
 3. The **Orchestrator** fetches PR state and metadata from Azure DevOps, then decides the action:
    - **Full Review** — first review; calls the AI, posts comments, votes.
-   - **Re-Review** — new commits detected; calls the AI again, deduplicates comments.
+   - **Re-Review** — new commits detected; calls the AI again, deduplicates comments, resolves fixed threads via AI verification.
    - **Vote Only** — draft-to-active transition with no code changes; submits vote only.
    - **Skip** — no changes since last review; records a skip event in history.
-4. The **CodeReviewService** sends the diff to Azure OpenAI and parses the structured JSON response.
-5. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
+4. The **CodeReviewServiceFactory** creates either a single-provider or **ConsensusReviewService** (fan-out to multiple AI models, merge by agreement threshold).
+5. Each file is reviewed in parallel (controlled by `MaxParallelReviews`). AI responses are validated, inline comments are filtered by changed-line proximity and density thresholds, and false positives are detected.
+6. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
 
 ---
 
@@ -322,7 +327,7 @@ If the file doesn't exist or the path is empty, no custom instructions are injec
 
 ```bash
 # Navigate to the project
-cd Projects/AiCodeReview/AiCodeReview
+cd src/HVO.AiCodeReview
 
 # Restore and build
 dotnet build
@@ -335,27 +340,11 @@ The service starts on **http://localhost:5094**. Swagger UI is available at http
 
 ### Docker / Container
 
-Create a `Dockerfile` in the `AiCodeReview/` directory:
-
-```dockerfile
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-WORKDIR /src
-COPY AiCodeReview/AiCodeReview.csproj AiCodeReview/
-RUN dotnet restore AiCodeReview/AiCodeReview.csproj
-COPY AiCodeReview/ AiCodeReview/
-RUN dotnet publish AiCodeReview/AiCodeReview.csproj -c Release -o /app
-
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
-WORKDIR /app
-COPY --from=build /app .
-EXPOSE 8080
-ENV ASPNETCORE_URLS=http://+:8080
-ENTRYPOINT ["dotnet", "AiCodeReview.dll"]
-```
+A multi-stage `Dockerfile` is included at `src/HVO.AiCodeReview/Dockerfile`. It builds with the .NET 8 SDK, publishes to a slim ASP.NET runtime image, and runs as a non-root user on port 8080.
 
 ```bash
-# Build
-docker build -t ai-code-review .
+# Build (from repo root)
+docker build -f src/HVO.AiCodeReview/Dockerfile -t hvo-ai-code-review .
 
 # Run with environment variables for secrets
 docker run -d -p 8080:8080 \
@@ -364,7 +353,7 @@ docker run -d -p 8080:8080 \
   -e AzureOpenAI__Endpoint="https://my-resource.openai.azure.com/" \
   -e AzureOpenAI__ApiKey="your-key" \
   -e AzureOpenAI__DeploymentName="gpt-4o" \
-  ai-code-review
+  hvo-ai-code-review
 ```
 
 ### Production Deployment
@@ -780,59 +769,85 @@ The service includes an in-memory rate limiter that prevents the same PR from be
 ## Project Structure
 
 ```
-AiCodeReview/
-├── AiCodeReview.sln                    # Solution file
+HVO.AiCodeReview/
+├── HVO.AiCodeReview.sln                # Solution file
 ├── .gitignore
 ├── README.md
+├── .env.template                       # Environment variable template (safe to commit)
 │
-├── AiCodeReview/                       # Main web API project
-│   ├── AiCodeReview.csproj
-│   ├── Program.cs                      # DI setup, middleware pipeline
-│   ├── appsettings.json                # Configuration template
-│   ├── appsettings.Development.json    # Dev overrides (secrets — gitignored)
-│   ├── custom-instructions.json        # Optional AI review instructions
-│   │
-│   ├── Controllers/
-│   │   └── CodeReviewController.cs     # API endpoints
-│   │
-│   ├── Models/
-│   │   ├── AiProviderSettings.cs       # Multi-provider AI configuration model
-│   │   ├── AzureDevOpsSettings.cs      # Azure DevOps configuration model
-│   │   ├── AzureOpenAISettings.cs      # Azure OpenAI configuration (legacy compat)
-│   │   ├── ReviewRequest.cs            # POST request DTO
-│   │   ├── ReviewResponse.cs           # POST response DTO
-│   │   ├── ReviewMetricsResponse.cs    # GET metrics response DTO
-│   │   ├── ReviewMetadata.cs           # PR properties metadata model
-│   │   ├── ReviewStatusUpdate.cs       # Progress tracking model
-│   │   ├── CodeReviewResult.cs         # AI review result model
-│   │   └── PullRequestInfo.cs          # PR info fetched from Azure DevOps
-│   │
-│   ├── Services/
-│   │   ├── CodeReviewOrchestrator.cs   # Main review flow orchestration
-│   │   ├── ICodeReviewOrchestrator.cs  # Orchestrator interface
-│   │   ├── AzureOpenAiReviewService.cs # Azure OpenAI provider implementation
-│   │   ├── ConsensusReviewService.cs   # Multi-provider consensus aggregator
-│   │   ├── CodeReviewServiceFactory.cs # Config-driven provider factory + DI
-│   │   ├── ICodeReviewService.cs       # AI service interface (provider-agnostic)
-│   │   ├── AzureDevOpsService.cs       # Azure DevOps REST API client
-│   │   ├── IAzureDevOpsService.cs      # DevOps service interface
-│   │   └── ReviewRateLimiter.cs        # In-memory rate limiter
-│   │
-│   └── Properties/
-│       └── launchSettings.json         # Dev launch profiles
+├── .devcontainer/                      # Dev container configuration
+│   ├── devcontainer.json               # Container features, mounts, env vars
+│   ├── Dockerfile                      # Dev container base image
+│   ├── deps.compose.yml                # PostgreSQL + Redis for local dev
+│   ├── post-create.sh                  # SDK validation, tooling setup
+│   ├── start-deps.sh                   # Start dependency containers
+│   └── python-requirements.txt         # Python packages for tooling
 │
-└── AiCodeReview.Tests/                 # MSTest integration tests
-    ├── AiCodeReview.Tests.csproj
-    ├── appsettings.Test.json           # Test configuration (legacy + multi-provider)
-    ├── ReviewFlowIntegrationTests.cs   # Full lifecycle test (7 scenarios)
-    ├── ReviewLifecycleTests.cs         # 5 parallel lifecycle tests
-    ├── AiQualityVerificationTests.cs   # Known-bad-code LiveAI tests
-    ├── ServiceIntegrationTests.cs      # Service-level tests (7 tests)
-    ├── AiSmokeTest.cs                  # AI smoke tests (Manual category)
-    └── Helpers/
-        ├── FakeCodeReviewService.cs    # Deterministic AI replacement for tests
-        ├── TestServiceBuilder.cs       # Shared DI builder (FakeAi + RealAi)
-        └── TestPullRequestHelper.cs    # Disposable repo lifecycle + 6-layer safety
+├── .github/
+│   └── copilot-session-context.md      # Copilot session context & project history
+│
+├── scripts/
+│   ├── ai-code-review.ps1              # PowerShell pipeline script
+│   └── azure-pipelines-template.yml    # Azure Pipelines YAML template
+│
+├── docs/                               # Documentation
+│
+├── src/
+│   └── HVO.AiCodeReview/               # Main web API project
+│       ├── HVO.AiCodeReview.csproj
+│       ├── Program.cs                  # DI setup, middleware pipeline
+│       ├── Dockerfile                  # Multi-stage production Docker build
+│       ├── appsettings.json            # Configuration template
+│       ├── appsettings.Development.json        # Dev overrides (gitignored)
+│       ├── appsettings.Development.template.json # Dev config template
+│       ├── custom-instructions.json    # Optional AI review instructions
+│       │
+│       ├── Controllers/
+│       │   └── CodeReviewController.cs # API endpoints
+│       │
+│       ├── Models/
+│       │   ├── AiProviderSettings.cs       # Multi-provider AI configuration
+│       │   ├── AzureDevOpsSettings.cs      # Azure DevOps configuration
+│       │   ├── AzureOpenAISettings.cs      # Legacy Azure OpenAI settings
+│       │   ├── CodeReviewResult.cs         # AI review result (summary, verdicts, comments)
+│       │   ├── FileChange.cs              # File diff with unified diff & changed ranges
+│       │   ├── PullRequestInfo.cs          # PR info from Azure DevOps
+│       │   ├── ReviewMetadata.cs           # PR properties metadata
+│       │   ├── ReviewMetricsResponse.cs    # Metrics API response DTO
+│       │   ├── ReviewRequest.cs            # POST request DTO
+│       │   ├── ReviewResponse.cs           # POST response DTO
+│       │   └── ReviewStatusUpdate.cs       # Progress tracking model
+│       │
+│       ├── Services/
+│       │   ├── CodeReviewOrchestrator.cs   # Main review flow orchestration
+│       │   ├── ICodeReviewOrchestrator.cs  # Orchestrator interface
+│       │   ├── AzureOpenAiReviewService.cs # Azure OpenAI provider implementation
+│       │   ├── ConsensusReviewService.cs   # Multi-provider consensus aggregator
+│       │   ├── CodeReviewServiceFactory.cs # Config-driven provider factory + DI
+│       │   ├── ICodeReviewService.cs       # AI service interface (provider-agnostic)
+│       │   ├── AzureDevOpsService.cs       # Azure DevOps REST API client
+│       │   ├── IAzureDevOpsService.cs      # DevOps service interface
+│       │   └── ReviewRateLimiter.cs        # In-memory rate limiter
+│       │
+│       └── Properties/
+│           └── launchSettings.json     # Dev launch profiles
+│
+└── tests/
+    └── HVO.AiCodeReview.Tests/         # MSTest integration tests
+        ├── HVO.AiCodeReview.Tests.csproj
+        ├── appsettings.Test.json           # Test config (gitignored)
+        ├── appsettings.Test.template.json  # Test config template
+        ├── ReviewLifecycleTests.cs         # 5 parallel lifecycle tests
+        ├── ServiceIntegrationTests.cs      # 7 service-level tests
+        ├── UnifiedDiffTests.cs             # 9 diff algorithm unit tests
+        ├── MultiProviderTests.cs           # 17 factory + consensus tests
+        ├── AiQualityVerificationTests.cs   # 3 known-bad-code LiveAI tests
+        ├── AiSmokeTest.cs                 # 2 manual AI smoke tests
+        ├── ReviewFlowIntegrationTests.cs  # Legacy lifecycle (Ignored)
+        └── Helpers/
+            ├── FakeCodeReviewService.cs    # Deterministic AI replacement
+            ├── TestServiceBuilder.cs       # Shared DI builder (FakeAi + RealAi)
+            └── TestPullRequestHelper.cs    # Disposable repo + 6-layer safety
 ```
 
 ---
@@ -899,9 +914,7 @@ The PAT used for integration tests requires the following **additional** scope b
 ### Run All Automated Tests
 
 ```bash
-cd Projects/AiCodeReview
-
-# Run all tests (excluding manual/ignored)
+# From repo root
 dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQualifiedName!~CleanupTestPR'
 ```
 
@@ -909,8 +922,10 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 
 | Test File | Tests | Category | Description |
 |-----------|-------|----------|-------------|
-| `ReviewLifecycleTests.cs` | 5 | Integration | Independent, parallelizable lifecycle tests: first review, skip, re-review dedup, draft→active vote-only, reset + re-review. Each test creates its own disposable repo. Replaces the old monolithic 7-scenario test. |
+| `ReviewLifecycleTests.cs` | 5 | Integration | Independent, parallelizable lifecycle tests: first review, skip, re-review dedup, draft→active vote-only, reset + re-review. Each test creates its own disposable repo. |
 | `ServiceIntegrationTests.cs` | 7 | Integration | History round-trips, ReviewCount, description table, tag resilience, metrics API, property read/write, description PATCH. Each test gets its own disposable repo. |
+| `UnifiedDiffTests.cs` | 9 | Unit | LCS-based unified diff computation and `@@ hunk @@` header parsing. Pure unit tests — no external dependencies. |
+| `MultiProviderTests.cs` | 17 | Unit | Factory tests (fallback, single, consensus, unknown type, disabled provider), consensus aggregation (overlap detection, threshold, voting, metrics), and settings binding. No external dependencies. |
 | `AiQualityVerificationTests.cs` | 3 | LiveAI | Push code with **known, deliberate issues** (hardcoded secrets, SQL injection, null derefs, resource leaks) and verify the real AI flags them. Includes a fix-and-reverify cycle. Run with `--filter TestCategory=LiveAI`. |
 | `AiSmokeTest.cs` | 2 | Manual | Manual-only tests that call real Azure OpenAI (basic prompt + JSON mode). Run with `--filter TestCategory=Manual`. |
 | `ReviewFlowIntegrationTests.cs` | 1 (Ignored) | — | Legacy monolithic 7-scenario lifecycle test. Replaced by `ReviewLifecycleTests.cs`. Kept for reference. |
@@ -926,7 +941,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 ### Running Tests
 
 ```bash
-cd Projects/AiCodeReview
+# From repo root
 
 # All automated tests (fake AI — fast, no API cost)
 dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI'
@@ -955,7 +970,7 @@ Two tests are tagged `[Ignore]` (run explicitly by filter) for ad-hoc use:
 
 ### Test Configuration
 
-Tests read from `appsettings.Test.json`:
+Tests read from `appsettings.Test.json` (gitignored). Copy `appsettings.Test.template.json` and fill in your values:
 
 ```json
 {
@@ -978,6 +993,47 @@ Tests read from `appsettings.Test.json`:
 ```
 
 > **Note:** `MinReviewIntervalMinutes` is set to `0` in test configuration to disable rate limiting during rapid test execution. The `Repository` and `TargetBranch` settings are not used — each test creates its own disposable repo with its own branches.
+
+---
+
+## Dev Container
+
+The repo includes a full dev container configuration in `.devcontainer/` for a consistent development environment.
+
+**What's included:**
+
+| Component | Details |
+|-----------|---------|
+| **.NET** | SDK 10.0 (+ 8.0, 9.0) |
+| **Node.js** | LTS |
+| **Python** | 3.12 with venv |
+| **Java** | 21 |
+| **Go** | Latest |
+| **Terraform** | Latest |
+| **Azure CLI** | Latest with Bicep |
+| **GitHub CLI** | Latest |
+| **Docker-in-Docker** | Docker + Compose v2 |
+| **kubectl + Helm** | Latest |
+| **PowerShell** | Latest |
+
+**VS Code Extensions:** C# Dev Kit, GitHub Copilot, GitHub Copilot Chat, GitHub Actions.
+
+**Local Services:** PostgreSQL 16 and Redis 7 are started automatically via `docker compose` on container start (`start-deps.sh`).
+
+**Secrets:** .NET User Secrets are bind-mounted from the host machine (`~/.microsoft/usersecrets`), so each developer gets their own secrets without anything being committed to source control.
+
+**Getting started:** Open the repo in VS Code and select "Reopen in Container" when prompted. The `post-create.sh` script validates all SDKs, creates a Python venv, installs tooling, and sets up HTTPS dev certificates.
+
+---
+
+## Scripts
+
+The `scripts/` folder contains pipeline integration helpers:
+
+| File | Description |
+|------|-------------|
+| `ai-code-review.ps1` | PowerShell script for Azure Pipelines. Calls the review API, sets pipeline output variables (`AI_REVIEW_STATUS`, `AI_REVIEW_RECOMMENDATION`, `AI_REVIEW_ISSUE_COUNT`), and fails the pipeline on "Rejected" or warns on "NeedsWork". |
+| `azure-pipelines-template.yml` | Azure Pipelines YAML template with two options: inline PowerShell (Option A) or external script file (Option B). Conditionally runs on PR builds only. |
 
 ---
 

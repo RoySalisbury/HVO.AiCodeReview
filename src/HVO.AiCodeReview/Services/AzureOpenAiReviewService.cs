@@ -284,6 +284,11 @@ public class AzureOpenAiReviewService : ICodeReviewService
                     attempt + 1, maxRetries, delay.TotalSeconds);
                 await Task.Delay(delay);
             }
+            catch (ClientResultException cex)
+            {
+                _logger.LogError(cex, "AI error during thread verification. Status: {Status}", cex.Status);
+                throw;
+            }
         }
         sw.Stop();
 

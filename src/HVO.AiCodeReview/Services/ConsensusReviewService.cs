@@ -213,10 +213,18 @@ public class ConsensusReviewService : ICodeReviewService
             .ToList();
 
         // ── Metrics: sum across providers ──
-        int? promptTokens = results.Sum(r => r.Result.PromptTokens);
-        int? completionTokens = results.Sum(r => r.Result.CompletionTokens);
-        int? totalTokens = results.Sum(r => r.Result.TotalTokens);
-        long? maxDuration = results.Max(r => r.Result.AiDurationMs);
+        int? promptTokens = results.Any(r => r.Result.PromptTokens.HasValue)
+            ? results.Where(r => r.Result.PromptTokens.HasValue).Sum(r => r.Result.PromptTokens!.Value)
+            : null;
+        int? completionTokens = results.Any(r => r.Result.CompletionTokens.HasValue)
+            ? results.Where(r => r.Result.CompletionTokens.HasValue).Sum(r => r.Result.CompletionTokens!.Value)
+            : null;
+        int? totalTokens = results.Any(r => r.Result.TotalTokens.HasValue)
+            ? results.Where(r => r.Result.TotalTokens.HasValue).Sum(r => r.Result.TotalTokens!.Value)
+            : null;
+        long? maxDuration = results.Any(r => r.Result.AiDurationMs.HasValue)
+            ? results.Where(r => r.Result.AiDurationMs.HasValue).Max(r => r.Result.AiDurationMs!.Value)
+            : null;
 
         return new CodeReviewResult
         {

@@ -66,7 +66,17 @@ public class ReviewRateLimiter : IReviewRateLimiter
         // Periodically evict stale entries (older than 24 h)
         if (Interlocked.Increment(ref _requestCounter) % CleanupInterval == 0)
         {
-            _ = Task.Run(CleanupStaleEntries); // Run cleanup on background thread to avoid contention
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    CleanupStaleEntries();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Rate limiter cleanup failed");
+                }
+            });
         }
 
         return (true, 0, null);

@@ -17,7 +17,7 @@ public class FakeCodeReviewService : ICodeReviewService
     /// </summary>
     public Func<PullRequestInfo, List<FileChange>, CodeReviewResult>? ResultFactory { get; set; }
 
-    public Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges)
+    public Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
         if (ResultFactory is not null)
             return Task.FromResult(ResultFactory(pullRequest, fileChanges));
@@ -54,7 +54,7 @@ public class FakeCodeReviewService : ICodeReviewService
     /// Review a single file — used by the parallel per-file orchestration.
     /// Returns a deterministic result for the single file.
     /// </summary>
-    public Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr)
+    public Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
         ArgumentNullException.ThrowIfNull(file);
 

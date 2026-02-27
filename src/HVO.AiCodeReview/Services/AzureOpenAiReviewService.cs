@@ -57,10 +57,10 @@ public class AzureOpenAiReviewService : ICodeReviewService
             modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length);
     }
 
-    public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges)
+    public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
         var systemPrompt = _systemPrompt;
-        var userPrompt = BuildUserPrompt(pullRequest, fileChanges);
+        var userPrompt = BuildUserPrompt(pullRequest, fileChanges, workItems);
 
         _logger.LogInformation("Sending {FileCount} files to AI for review of PR #{PrId}",
             fileChanges.Count, pullRequest.PullRequestId);
@@ -144,9 +144,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// <summary>
     /// Review a single file in its own dedicated AI call for maximum accuracy.
     /// </summary>
-    public async Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr)
+    public async Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
-        var userPrompt = BuildSingleFileUserPrompt(pullRequest, file, totalFilesInPr);
+        var userPrompt = BuildSingleFileUserPrompt(pullRequest, file, totalFilesInPr, workItems);
 
         _logger.LogInformation("Reviewing file {FilePath} ({ChangeType}) for PR #{PrId}",
             file.FilePath, file.ChangeType, pullRequest.PullRequestId);
@@ -350,6 +350,22 @@ public class AzureOpenAiReviewService : ICodeReviewService
             sb.AppendLine("**Original Review Comment:**");
             sb.AppendLine($"> {c.OriginalComment}");
             sb.AppendLine();
+
+            // Include human replies for additional context
+            if (c.AuthorReplies.Count > 0)
+            {
+                sb.AppendLine("**Author/Reviewer Replies:**");
+                foreach (var reply in c.AuthorReplies)
+                {
+                    var dateStr = reply.CreatedDateUtc != default
+                        ? reply.CreatedDateUtc.ToString("yyyy-MM-dd HH:mm UTC")
+                        : "unknown date";
+                    sb.AppendLine($"> **{reply.Author}** ({dateStr}):");
+                    sb.AppendLine($"> {reply.Content}");
+                    sb.AppendLine();
+                }
+            }
+
             sb.AppendLine("**Current Code At That Location:**");
             sb.AppendLine("```");
             sb.AppendLine(c.CurrentCode);
@@ -365,6 +381,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         For each thread, you are given:
         - The ORIGINAL review comment describing an issue
+        - Any REPLIES from the PR author or other reviewers (if available)
         - The CURRENT code at the location that was commented on
 
         Your job is to determine whether the SPECIFIC issue described in the comment was ACTUALLY FIXED
@@ -378,6 +395,10 @@ public class AzureOpenAiReviewService : ICodeReviewService
         - If the comment's concern no longer applies because the code structure has fundamentally changed
           (e.g., the method was rewritten with a different approach that inherently avoids the issue),
           mark as FIXED.
+        - If the PR author replied with a valid explanation for why the code is correct as-is
+          (e.g., it's intentional behavior, a known pattern, or a false positive), consider their
+          reasoning carefully. If their explanation is technically sound, mark as FIXED.
+        - If the PR author acknowledged the issue and the code now reflects the fix, mark as FIXED.
 
         IMPORTANT: The fact that lines were modified does NOT by itself mean the issue was fixed.
         Only mark as fixed if you can verify the specific concern was addressed.
@@ -510,7 +531,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 "commitsCount": <int>,
                 "description": "<one-sentence summary of the PR's overall intent>",
                 "verdict": "APPROVED|APPROVED WITH SUGGESTIONS|NEEDS WORK|REJECTED",
-                "verdictJustification": "<one-sentence justification>"
+                "verdictJustification": "<justification — see rule 15 for length requirements>"
               },
               "fileReviews": [
                 {
@@ -530,6 +551,16 @@ public class AzureOpenAiReviewService : ICodeReviewService
                   "status": "closed|active"
                 }
               ],
+              "acceptanceCriteriaAnalysis": {
+                "summary": "<1-2 sentence overview of AC coverage>",
+                "items": [
+                  {
+                    "criterion": "<abbreviated AC text>",
+                    "status": "Addressed|Partially Addressed|Not Addressed|Cannot Determine",
+                    "evidence": "<brief explanation with file paths where relevant>"
+                  }
+                ]
+              },
               "recommendedVote": <10|5|-5|-10>
             }
 
@@ -578,7 +609,43 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 - Only flag ACTUAL hardcoded secrets (real tokens, real keys), not empty fields.
                 - Flag the real secret in ONE place, don't repeat the same issue across multiple config files.
             14. COMMENT QUALITY: Only comment on things a senior engineer would care about. No pedantic nit-picks.
-            15. EXAMPLE of a correct inline comment (given input file lines "  45 | public void Process() {" through "  70 | }"):
+            15. REJECTION / NEEDS WORK — REQUIRE SPECIFIC JUSTIFICATION:
+               When the verdict is REJECTED or NEEDS WORK, the verdictJustification MUST be a detailed
+               paragraph (3-6 sentences) that:
+               a) Names EVERY file that contributed to the rejection using its full repo-relative path
+                  (e.g., "/src/services/Foo.cs") — never say "the file" or "a file" without the path.
+               b) Describes the SPECIFIC problem in each named file.
+               c) Explains WHY each issue is a blocker (e.g., security risk, data loss, logic error).
+               d) Suggests concrete remediation steps.
+               For APPROVED or APPROVED WITH SUGGESTIONS, a single sentence is fine.
+               Additionally, every file that contributed to a REJECTED or NEEDS WORK verdict MUST appear
+               in the fileReviews array with a CONCERN or NEEDS WORK verdict and a clear reviewText
+               explaining the specific problem. Do NOT reject a PR without pointing to specific files and issues.
+            16. NON-CODE / REFERENCE FILES:
+               Files that contain only a commit hash, an empty object, whitespace, or no meaningful code
+               are typically infrastructure artifacts (e.g., git submodule pointers, placeholder files,
+               tracking references). These are NOT code quality issues.
+               - Do NOT include such files in your verdict reasoning or verdictJustification.
+               - Do NOT use them as grounds for REJECTED or NEEDS WORK verdicts.
+               - If you encounter such a file, you may skip it from fileReviews entirely, or at most
+                 include it with verdict "APPROVED" and a brief informational reviewText.
+               - Focus your review exclusively on files that contain actual reviewable code or configuration.
+            18. ACCEPTANCE CRITERIA / DEFINITION OF DONE ANALYSIS:
+               When linked work items with acceptance criteria are provided in the user prompt,
+               you MUST populate the "acceptanceCriteriaAnalysis" object. For each AC item:
+               a) State whether the PR code changes address it ("Addressed"), partially address
+                  it ("Partially Addressed"), don't address it ("Not Addressed"), or if you
+                  can't tell from the code alone ("Cannot Determine").
+               b) Cite specific files/code as evidence.
+               c) "Cannot Determine" is for criteria that require runtime verification, external
+                  system checks, or manual testing (e.g., "event visible in dashboard").
+               d) If NO linked work items or AC are provided, omit the acceptanceCriteriaAnalysis
+                  field entirely — do NOT fabricate criteria.
+               e) AC analysis does NOT change the code quality verdict. A PR can be "APPROVED" for
+                  code quality even if some AC items are "Not Addressed" — those are separate concerns.
+                  However, note unaddressed AC items in the verdictJustification as informational context.
+               f) If work item discussion comments mention AC changes or scope decisions, factor those in.
+            19. EXAMPLE of a correct inline comment (given input file lines "  45 | public void Process() {" through "  70 | }"):
                 {
                   "filePath": "/src/Services/MyService.cs",
                   "startLine": 45,
@@ -606,7 +673,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 "commitsCount": 1,
                 "description": "<one-sentence description of this file's changes>",
                 "verdict": "APPROVED|APPROVED WITH SUGGESTIONS|NEEDS WORK|REJECTED",
-                "verdictJustification": "<one-sentence justification for this file>"
+                "verdictJustification": "<justification — for REJECTED/NEEDS WORK: 3-6 sentences listing specific blocking issues, why they are blockers, and remediation steps. For APPROVED: one sentence is fine. ALWAYS include the full repo-relative file path for every file mentioned.>"
               },
               "fileReviews": [
                 {
@@ -626,6 +693,16 @@ public class AzureOpenAiReviewService : ICodeReviewService
                   "status": "closed|active"
                 }
               ],
+              "acceptanceCriteriaAnalysis": {
+                "summary": "<1-2 sentence overview of AC coverage — only for this file's relevance>",
+                "items": [
+                  {
+                    "criterion": "<abbreviated AC text>",
+                    "status": "Addressed|Partially Addressed|Not Addressed|Cannot Determine",
+                    "evidence": "<brief explanation referencing code in this file>"
+                  }
+                ]
+              },
               "recommendedVote": <10|5|-5|-10>
             }
 
@@ -707,9 +784,15 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 class, variable, or symbol as "not defined", "missing", or "not implemented", SEARCH the entire
                 file content to confirm it truly does not exist. Methods may be defined hundreds of lines below
                 the call site. If you find the symbol elsewhere in the file, do NOT flag it.
+
+            11. ACCEPTANCE CRITERIA ANALYSIS (SINGLE FILE):
+                When linked work items with acceptance criteria are provided, populate
+                "acceptanceCriteriaAnalysis" ONLY with AC items relevant to THIS specific file.
+                Skip AC items that don't relate to this file's purpose. If NO AC items are relevant
+                to this file, omit the field entirely. If NO work items were provided, omit it.
             """;
 
-    private static string BuildUserPrompt(PullRequestInfo pr, List<FileChange> fileChanges)
+    private static string BuildUserPrompt(PullRequestInfo pr, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -723,6 +806,10 @@ public class AzureOpenAiReviewService : ICodeReviewService
             sb.AppendLine($"**Description**: {pr.Description}");
         }
         sb.AppendLine();
+
+        // Include linked work item context (AC/DoD)
+        AppendWorkItemContext(sb, workItems);
+
         sb.AppendLine($"**Files Changed**: {fileChanges.Count}");
         sb.AppendLine();
 
@@ -797,7 +884,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// Build a user prompt for reviewing a single file in isolation.
     /// Includes PR context for relevance but only contains one file's content.
     /// </summary>
-    private static string BuildSingleFileUserPrompt(PullRequestInfo pr, FileChange file, int totalFilesInPr)
+    private static string BuildSingleFileUserPrompt(PullRequestInfo pr, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -809,6 +896,10 @@ public class AzureOpenAiReviewService : ICodeReviewService
         if (!string.IsNullOrWhiteSpace(pr.Description))
             sb.AppendLine($"**Description**: {pr.Description}");
         sb.AppendLine();
+
+        // Include linked work item context (AC/DoD)
+        AppendWorkItemContext(sb, workItems);
+
         sb.AppendLine($"This PR has {totalFilesInPr} changed files total. You are reviewing **one file** below.");
         sb.AppendLine();
 
@@ -925,5 +1016,53 @@ public class AzureOpenAiReviewService : ICodeReviewService
         }
         catch { /* ignore parse errors */ }
         return "(no inline data)";
+    }
+
+    /// <summary>
+    /// Append linked work item context (AC/DoD, description, comments) to the user prompt.
+    /// </summary>
+    private static void AppendWorkItemContext(System.Text.StringBuilder sb, List<WorkItemInfo>? workItems)
+    {
+        if (workItems == null || workItems.Count == 0)
+            return;
+
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine("## Linked Work Items");
+        sb.AppendLine();
+
+        foreach (var wi in workItems)
+        {
+            sb.AppendLine($"### {wi.WorkItemType} #{wi.Id}: {wi.Title}");
+            sb.AppendLine($"**State**: {wi.State}");
+            sb.AppendLine();
+
+            if (!string.IsNullOrWhiteSpace(wi.Description))
+            {
+                sb.AppendLine("**Description:**");
+                sb.AppendLine(wi.Description);
+                sb.AppendLine();
+            }
+
+            if (!string.IsNullOrWhiteSpace(wi.AcceptanceCriteria))
+            {
+                sb.AppendLine("**Acceptance Criteria / Definition of Done:**");
+                sb.AppendLine(wi.AcceptanceCriteria);
+                sb.AppendLine();
+            }
+
+            if (wi.Comments.Count > 0)
+            {
+                sb.AppendLine("**Work Item Discussion** (may contain AC modifications or scope decisions):");
+                foreach (var comment in wi.Comments)
+                {
+                    sb.AppendLine($"- [{comment.CreatedDate:yyyy-MM-dd}] {comment.Author}: {comment.Text}");
+                }
+                sb.AppendLine();
+            }
+        }
+
+        sb.AppendLine("---");
+        sb.AppendLine();
     }
 }

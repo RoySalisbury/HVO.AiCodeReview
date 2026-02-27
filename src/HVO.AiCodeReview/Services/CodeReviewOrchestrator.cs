@@ -34,16 +34,21 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         string project,
         string repository,
         int pullRequestId,
-        IProgress<ReviewStatusUpdate>? progress = null)
+        IProgress<ReviewStatusUpdate>? progress = null,
+        bool forceReview = false,
+        bool simulationOnly = false)
     {
         try
         {
+            if (simulationOnly)
+                _logger.LogInformation("SIMULATION MODE — review will NOT post anything to PR #{PrId}", pullRequestId);
+
             // ── Step 0: Rate-limit check (in-memory, no API calls) ──────
             var (allowed, secondsRemaining, lastReviewedUtc) = _rateLimiter.Check(
                 _devOpsSettings.Organization, project, repository, pullRequestId,
                 _devOpsSettings.MinReviewIntervalMinutes);
 
-            if (!allowed)
+            if (!allowed && !forceReview && !simulationOnly)
             {
                 var nextAllowed = lastReviewedUtc!.Value.AddMinutes(_devOpsSettings.MinReviewIntervalMinutes);
                 ReportProgress(progress, ReviewStep.Complete,
@@ -74,7 +79,14 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 prInfo.IsDraft, prInfo.LastMergeSourceCommit, currentIteration);
 
             // ── Step 2: Decide what action to take ──────────────────────────
-            var action = DetermineAction(prInfo, metadata, currentIteration);
+            var action = (forceReview || simulationOnly)
+                ? ReviewAction.ReReview
+                : DetermineAction(prInfo, metadata, currentIteration);
+
+            if (forceReview)
+                _logger.LogInformation("Force-review requested for PR #{PrId} — bypassing skip/dedup logic.", pullRequestId);
+            else if (simulationOnly)
+                _logger.LogInformation("Simulation mode for PR #{PrId} — bypassing skip/dedup logic (nothing will be posted).", pullRequestId);
 
             _logger.LogInformation("Review action for PR #{PrId}: {Action}", pullRequestId, action);
 
@@ -91,7 +103,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 case ReviewAction.ReReview:
                     return await HandleReviewAsync(
                         project, repository, pullRequestId, prInfo, metadata,
-                        currentIteration, action == ReviewAction.ReReview, progress);
+                        currentIteration, action == ReviewAction.ReReview, progress,
+                        simulationOnly);
 
                 default:
                     throw new InvalidOperationException($"Unexpected review action: {action}");
@@ -275,7 +288,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         string project, string repository, int pullRequestId,
         PullRequestInfo prInfo, ReviewMetadata metadata,
         int currentIteration, bool isReReview,
-        IProgress<ReviewStatusUpdate>? progress)
+        IProgress<ReviewStatusUpdate>? progress,
+        bool simulationOnly = false)
     {
         var totalSw = Stopwatch.StartNew();
         var reviewLabel = isReReview ? "Re-review" : "Review";
@@ -294,36 +308,104 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _logger.LogInformation("{Label}: Retrieved {Count} file changes for PR #{PrId}",
             reviewLabel, fileChanges.Count, pullRequestId);
 
+        // ── Pre-filter: classify and separate non-reviewable files ───────
+        var allFileCount = fileChanges.Count;
+        var skippedFiles = new List<FileChange>();
+        var reviewableFiles = new List<FileChange>();
+
+        foreach (var fc in fileChanges)
+        {
+            var skipReason = ClassifyNonReviewableFile(fc);
+            if (skipReason != null)
+            {
+                fc.SkipReason = skipReason;
+                skippedFiles.Add(fc);
+            }
+            else
+            {
+                reviewableFiles.Add(fc);
+            }
+        }
+
+        if (skippedFiles.Count > 0)
+        {
+            // Group by reason for concise logging
+            var grouped = skippedFiles.GroupBy(f => f.SkipReason).OrderByDescending(g => g.Count());
+            var groupSummary = string.Join(", ", grouped.Select(g => $"{g.Count()} {g.Key}"));
+            _logger.LogInformation("{Label}: Skipped {SkipCount}/{TotalCount} non-reviewable files ({Groups})",
+                reviewLabel, skippedFiles.Count, allFileCount, groupSummary);
+        }
+
+        // Replace fileChanges with only reviewable files for AI analysis
+        fileChanges = reviewableFiles;
+
         if (fileChanges.Count == 0)
         {
             _logger.LogWarning("No reviewable file changes found for PR #{PrId}", pullRequestId);
 
-            await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
-                "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR.",
-                "closed");
-
-            var noFilesHistory = new ReviewHistoryEntry
+            if (!simulationOnly)
             {
-                Action = isReReview ? "Re-Review" : "Full Review",
-                Verdict = "Approved (auto — no files)",
-                SourceCommit = prInfo.LastMergeSourceCommit,
-                Iteration = currentIteration,
-                IsDraft = prInfo.IsDraft,
-                InlineComments = 0,
-                FilesChanged = 0,
-            };
-            await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration, false, noFilesHistory);
+                await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
+                    "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR.",
+                    "closed");
+
+                var noFilesHistory = new ReviewHistoryEntry
+                {
+                    Action = isReReview ? "Re-Review" : "Full Review",
+                    Verdict = "Approved (auto — no files)",
+                    SourceCommit = prInfo.LastMergeSourceCommit,
+                    Iteration = currentIteration,
+                    IsDraft = prInfo.IsDraft,
+                    InlineComments = 0,
+                    FilesChanged = 0,
+                };
+                await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration, false, noFilesHistory);
+            }
 
             ReportProgress(progress, ReviewStep.Complete,
                 "No reviewable files found. Auto-approved.", 100);
 
             return new ReviewResponse
             {
-                Status = "Reviewed",
+                Status = simulationOnly ? "Simulated" : "Reviewed",
                 Recommendation = "Approved",
                 Summary = "No reviewable file changes found. Auto-approved.",
                 Vote = 10,
+                SkippedFiles = simulationOnly && skippedFiles.Count > 0
+                    ? skippedFiles.Select(f => new SkippedFileDto { FilePath = f.FilePath, SkipReason = f.SkipReason! }).ToList()
+                    : null,
             };
+        }
+
+        // ── Fetch linked work items (AC/DoD context) ───────────────────
+        ReportProgress(progress, ReviewStep.AnalyzingCode,
+            "Retrieving linked work items for AC/DoD context...", 30);
+
+        List<WorkItemInfo>? workItems = null;
+        try
+        {
+            var workItemIds = await _devOpsService.GetLinkedWorkItemIdsAsync(project, repository, pullRequestId);
+            if (workItemIds.Count > 0)
+            {
+                workItems = new List<WorkItemInfo>();
+                foreach (var wiId in workItemIds)
+                {
+                    var wi = await _devOpsService.GetWorkItemAsync(project, wiId);
+                    if (wi != null)
+                    {
+                        // Fetch discussion comments for AC modification context
+                        var comments = await _devOpsService.GetWorkItemCommentsAsync(project, wiId);
+                        wi.Comments = comments;
+                        workItems.Add(wi);
+                    }
+                }
+                _logger.LogInformation("Retrieved {Count} work item(s) with AC/DoD context for PR #{PrId}",
+                    workItems.Count, pullRequestId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to retrieve work items for PR #{PrId} — continuing without AC context", pullRequestId);
         }
 
         // ── AI analysis (parallel per-file for accuracy) ──────────────
@@ -344,7 +426,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             await semaphore.WaitAsync();
             try
             {
-                var result = await _reviewService.ReviewFileAsync(prInfo, file, fileChanges.Count);
+                var result = await _reviewService.ReviewFileAsync(prInfo, file, fileChanges.Count, workItems);
                 perFileResults[index] = result;
 
                 var done = Interlocked.Increment(ref completedFiles);
@@ -419,6 +501,12 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // ── Resolve fixed threads from prior AI reviews ─────────────────
         List<ExistingCommentThread> existingThreads = new();
         int resolvedThreads = 0;
+        int postedComments = 0;
+        int skippedDuplicates = 0;
+        int repliedInThread = 0;
+
+        if (!simulationOnly)
+        {
         if (isReReview)
         {
             existingThreads = await _devOpsService.GetExistingReviewThreadsAsync(
@@ -480,6 +568,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                                     EndLine = thread.EndLine,
                                     OriginalComment = thread.Content,
                                     CurrentCode = currentCode,
+                                    AuthorReplies = thread.Replies,
                                 });
                             }
                             // else: lines unchanged — leave thread active, nothing to verify
@@ -534,18 +623,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             }
         }
 
-        // ── Post inline comments (with deduplication) ───────────────────
+        // ── Post inline comments (with semantic deduplication) ─────────
         ReportProgress(progress, ReviewStep.PostingInlineComments,
             $"Posting inline comments (deduplicating against existing threads)...", 65);
 
-        int postedComments = 0;
-        int skippedDuplicates = 0;
         foreach (var comment in lineSpecificComments)
         {
             var commentContent = $"**{comment.LeadIn}.** {comment.Comment}{attributionSuffix}";
 
-            // Dedup: skip if same file + same line range + same core content already exists
-            // (strip attribution tag from comparison since old comments may not have it)
+            // ── Exact dedup: skip if same file + same line range + same core content ──
             var coreContent = $"**{comment.LeadIn}.** {comment.Comment}";
             if (existingThreads.Any(t =>
                     string.Equals(t.FilePath, comment.FilePath, StringComparison.OrdinalIgnoreCase)
@@ -555,6 +641,55 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                         || string.Equals(t.Content, coreContent, StringComparison.Ordinal))))
             {
                 skippedDuplicates++;
+                continue;
+            }
+
+            // ── Semantic dedup: same file + overlapping line range + same severity ──
+            // Instead of creating a new thread, reply in the existing one with updated feedback
+            var semanticMatch = existingThreads.FirstOrDefault(t =>
+                t.IsAiGenerated
+                && string.Equals(t.FilePath, comment.FilePath, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(t.LeadIn, comment.LeadIn, StringComparison.OrdinalIgnoreCase)
+                && LinesOverlap(t.StartLine, t.EndLine, comment.StartLine, comment.EndLine));
+
+            if (semanticMatch != null)
+            {
+                // Build a contextual reply acknowledging the conversation
+                var replyText = BuildThreadReply(comment, semanticMatch, attributionSuffix);
+                try
+                {
+                    await _devOpsService.ReplyToThreadAsync(
+                        project, repository, pullRequestId, semanticMatch.ThreadId, replyText);
+
+                    // If the thread was resolved/closed, reactivate it since the issue persists
+                    if (semanticMatch.Status != 1 /* Active */)
+                    {
+                        await _devOpsService.UpdateThreadStatusAsync(
+                            project, repository, pullRequestId, semanticMatch.ThreadId, "active");
+                    }
+
+                    repliedInThread++;
+                    _logger.LogInformation(
+                        "Replied in existing thread {ThreadId} on {File} L{Start}-{End} (semantic match: same {LeadIn} on overlapping lines)",
+                        semanticMatch.ThreadId, comment.FilePath, comment.StartLine, comment.EndLine, comment.LeadIn);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to reply in thread {ThreadId}, falling back to new thread", semanticMatch.ThreadId);
+                    // Fall back to posting a new thread
+                    try
+                    {
+                        await _devOpsService.PostInlineCommentThreadAsync(
+                            project, repository, pullRequestId,
+                            comment.FilePath, comment.StartLine, comment.EndLine,
+                            commentContent, comment.Status);
+                        postedComments++;
+                    }
+                    catch (Exception ex2)
+                    {
+                        _logger.LogWarning(ex2, "Failed to post inline comment on {File}:{Line}", comment.FilePath, comment.StartLine);
+                    }
+                }
                 continue;
             }
 
@@ -573,15 +708,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             }
         }
 
-        _logger.LogInformation("Posted {Count}/{Total} inline comments, skipped {Dupes} duplicates, resolved {Resolved} prior threads",
-            postedComments, reviewResult.InlineComments.Count, skippedDuplicates, resolvedThreads);
+        _logger.LogInformation("Posted {Count}/{Total} inline comments, skipped {Dupes} duplicates, replied in {Replied} existing threads, resolved {Resolved} prior threads",
+            postedComments, reviewResult.InlineComments.Count, skippedDuplicates, repliedInThread, resolvedThreads);
 
         // ── Post summary comment ────────────────────────────────────────
         ReportProgress(progress, ReviewStep.PostingSummary,
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
-            nextReviewNumber, isReReview ? metadata : null);
+            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -674,6 +809,65 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 ? "Review posted but vote submission failed. Check server logs."
                 : null,
         };
+
+        } // end if (!simulationOnly)
+
+        // ── Simulation path: build summary but don't post anything ──────
+        var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
+            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles);
+
+        totalSw.Stop();
+
+        var simVote = reviewResult.RecommendedVote;
+        var statusLabel = "Simulated";
+
+        var completionMsg2 = $"Simulation complete: {reviewResult.Summary.Verdict} (nothing posted)";
+        ReportProgress(progress, ReviewStep.Complete, completionMsg2, 100);
+
+        int simErrors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
+        int simWarnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
+        int simInfo = reviewResult.InlineComments.Count(c => c.LeadIn is "Suggestion" or "LGTM" or "Good catch" or "Important");
+
+        var simResponse = new ReviewResponse
+        {
+            Status = statusLabel,
+            Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
+            Summary = simSummaryMarkdown,
+            IssueCount = reviewResult.InlineComments.Count,
+            ErrorCount = simErrors,
+            WarningCount = simWarnings,
+            InfoCount = simInfo,
+            Vote = simVote,
+            Verdict = reviewResult.Summary.Verdict,
+            VerdictJustification = reviewResult.Summary.VerdictJustification,
+            InlineComments = lineSpecificComments.Select(c => new InlineCommentDto
+            {
+                FilePath = c.FilePath,
+                StartLine = c.StartLine,
+                EndLine = c.EndLine,
+                Severity = c.LeadIn,
+                Comment = c.Comment,
+                Status = c.Status,
+            }).ToList(),
+            FileReviews = reviewResult.FileReviews.Select(f => new FileReviewDto
+            {
+                FilePath = f.FilePath,
+                Verdict = f.Verdict,
+                ReviewText = f.ReviewText,
+            }).ToList(),
+            SkippedFiles = skippedFiles.Count > 0
+                ? skippedFiles.Select(f => new SkippedFileDto
+                {
+                    FilePath = f.FilePath,
+                    SkipReason = f.SkipReason!,
+                }).ToList()
+                : null,
+        };
+
+        _logger.LogInformation("SIMULATION complete for PR #{PrId}: {Verdict} — {IssueCount} issues, {FileCount} files reviewed, {SkipCount} files skipped (nothing posted)",
+            pullRequestId, reviewResult.Summary.Verdict, reviewResult.InlineComments.Count, fileChanges.Count, skippedFiles.Count);
+
+        return simResponse;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -826,8 +1020,110 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildSummaryMarkdown(int pullRequestId, CodeReviewResult result, bool isReReview = false,
-        int reviewNumber = 0, ReviewMetadata? priorMetadata = null)
+    // ── Known lock / generated file names ────────────────────────────────
+    private static readonly HashSet<string> LockFileNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "composer.lock", "Gemfile.lock", "poetry.lock",
+        "Pipfile.lock", "packages.lock.json", "shrinkwrap.yaml",
+    };
+
+    private static readonly HashSet<string> GeneratedFileSuffixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".designer.cs", ".g.cs", ".generated.cs", ".g.i.cs",
+        ".min.js", ".min.css",
+    };
+
+    /// <summary>
+    /// SHA pattern: 40-hex-char git object hash, optionally followed by whitespace.
+    /// Matches submodule pointers, .gitmodules entries, etc.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex ShaPattern =
+        new(@"^\s*[0-9a-fA-F]{40}\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Classifies a file as non-reviewable if it matches known patterns (submodule ref, lock file, etc.).
+    /// Returns a human-readable reason string, or null if the file should be reviewed normally.
+    /// </summary>
+    internal static string? ClassifyNonReviewableFile(FileChange file)
+    {
+        var fileName = Path.GetFileName(file.FilePath);
+        var ext = Path.GetExtension(file.FilePath).ToLowerInvariant();
+
+        // 1. Lock files (auto-generated, huge, no human-written code)
+        if (LockFileNames.Contains(fileName))
+            return "lock file";
+
+        // 2. Generated code files
+        if (GeneratedFileSuffixes.Any(suffix => file.FilePath.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)))
+            return "generated file";
+
+        // 3. Known non-code marker files
+        if (fileName.Equals(".gitkeep", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals(".gitattributes", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals(".editorconfig", StringComparison.OrdinalIgnoreCase))
+            return "config marker";
+
+        // 4. Content-based checks (only for files we have content for)
+        var content = file.ModifiedContent ?? file.OriginalContent;
+        if (content != null)
+        {
+            var trimmed = content.Trim();
+
+            // Empty / whitespace-only files
+            if (trimmed.Length == 0)
+                return "empty file";
+
+            // Single-line files that are just a SHA hash (git submodule pointers)
+            if (!trimmed.Contains('\n') && ShaPattern.IsMatch(trimmed))
+                return "submodule reference";
+
+            // Very short single-line content that looks like a hash/guid/token (not real code)
+            if (!trimmed.Contains('\n') && trimmed.Length <= 128 && !trimmed.Contains(' ')
+                && System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^[0-9a-fA-F\-]{20,}$"))
+                return "hash/identifier reference";
+        }
+
+        return null; // Reviewable
+    }
+
+    /// <summary>
+    /// Check if two line ranges overlap or are adjacent (within 5 lines).
+    /// Used for semantic deduplication — a re-phrased comment on nearby lines is likely the same concern.
+    /// </summary>
+    internal static bool LinesOverlap(int start1, int end1, int start2, int end2, int tolerance = 5)
+    {
+        return start1 <= end2 + tolerance && start2 <= end1 + tolerance;
+    }
+
+    /// <summary>
+    /// Build a contextual reply for an existing thread, acknowledging the conversation history.
+    /// </summary>
+    private static string BuildThreadReply(InlineComment newComment, ExistingCommentThread existingThread, string attributionSuffix)
+    {
+        var sb = new StringBuilder();
+
+        // Acknowledge human replies if present
+        if (existingThread.Replies.Count > 0)
+        {
+            sb.AppendLine("**Re-review update** — I've reviewed the changes and the conversation on this thread.");
+            sb.AppendLine();
+            sb.AppendLine($"**{newComment.LeadIn}.** {newComment.Comment}");
+        }
+        else
+        {
+            sb.AppendLine("**Re-review update** — This issue was flagged again during re-review.");
+            sb.AppendLine();
+            sb.AppendLine($"**{newComment.LeadIn}.** {newComment.Comment}");
+        }
+
+        sb.Append(attributionSuffix);
+        return sb.ToString();
+    }
+
+    internal static string BuildSummaryMarkdown(int pullRequestId, CodeReviewResult result, bool isReReview = false,
+        int reviewNumber = 0, ReviewMetadata? priorMetadata = null, List<WorkItemInfo>? workItems = null,
+        List<FileChange>? skippedFiles = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
@@ -866,12 +1162,23 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         sb.AppendLine("### Summary");
         sb.AppendLine($"{s.FilesChanged} files changed ({s.EditsCount} edits, {s.AddsCount} adds, {s.DeletesCount} deletes). {s.Description}");
         sb.AppendLine();
+
+        // Note about skipped non-reviewable files
+        if (skippedFiles != null && skippedFiles.Count > 0)
+        {
+            var grouped = skippedFiles.GroupBy(f => f.SkipReason ?? "unknown").OrderByDescending(g => g.Count());
+            var parts = grouped.Select(g => $"{g.Count()} {g.Key}{(g.Count() != 1 ? "s" : "")}");
+            sb.AppendLine($"> :file_folder: **{skippedFiles.Count} file(s) excluded** from detailed review: {string.Join(", ", parts)}.");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("---");
         sb.AppendLine();
 
-        // Code Changes Review (only CONCERN/REJECTED or AI-failure entries)
+        // Code Changes Review (only CONCERN/NEEDS WORK/REJECTED or AI-failure entries)
         var filesWithIssues = result.FileReviews
             .Where(fr => fr.Verdict.Equals("CONCERN", StringComparison.OrdinalIgnoreCase)
+                         || fr.Verdict.Equals("NEEDS WORK", StringComparison.OrdinalIgnoreCase)
                          || fr.Verdict.Equals("REJECTED", StringComparison.OrdinalIgnoreCase)
                          || fr.ReviewText.Contains("AI review failed", StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -891,10 +1198,127 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
 
         // Verdict
+        var isNonApproval = s.Verdict.Contains("REJECTED", StringComparison.OrdinalIgnoreCase)
+            || s.Verdict.Contains("NEEDS WORK", StringComparison.OrdinalIgnoreCase);
+
         sb.AppendLine($"### Verdict: **{s.Verdict}**");
         sb.AppendLine(s.VerdictJustification);
 
+        // For rejections/needs-work, add a prominent "Blocking Issues" section
+        // that consolidates all the reasons the PR was not approved.
+        if (isNonApproval)
+        {
+            // Prefer fileReviews for blocking issues; fall back to inline comments
+            // with active status (Concern/Bug/Security) when fileReviews is empty.
+            var blockingItems = new List<(string FilePath, string Description)>();
+
+            if (filesWithIssues.Count > 0)
+            {
+                blockingItems.AddRange(filesWithIssues.Select(fr => (fr.FilePath, fr.ReviewText)));
+            }
+            else if (result.InlineComments.Count > 0)
+            {
+                // Extract blocking issues from inline comments that are "active"
+                var activeComments = result.InlineComments
+                    .Where(c => c.Status.Equals("active", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (activeComments.Count == 0)
+                    activeComments = result.InlineComments; // fallback to all
+
+                blockingItems.AddRange(activeComments.Select(c =>
+                    (c.FilePath, $"[Line {c.StartLine}] **{c.LeadIn}**: {c.Comment}")));
+            }
+
+            if (blockingItems.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("---");
+                sb.AppendLine();
+                sb.AppendLine("### :x: Blocking Issues");
+                sb.AppendLine();
+                sb.AppendLine("The following issues must be resolved before this PR can be approved:");
+                sb.AppendLine();
+                for (int i = 0; i < blockingItems.Count; i++)
+                {
+                    var (filePath, desc) = blockingItems[i];
+                    sb.AppendLine($"{i + 1}. **`{filePath}`**: {desc}");
+                }
+                sb.AppendLine();
+            }
+        }
+
+        // ── Acceptance Criteria / Definition of Done Analysis ────────────
+        AppendAcceptanceCriteriaSection(sb, result, workItems);
+
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Append the AC/DoD compliance analysis section to the summary markdown.
+    /// Shows linked work item requirements and per-criterion status from the AI analysis.
+    /// </summary>
+    private static void AppendAcceptanceCriteriaSection(
+        StringBuilder sb, CodeReviewResult result, List<WorkItemInfo>? workItems)
+    {
+        // Only show if we have work items with AC or the AI produced AC analysis
+        var hasAcItems = result.AcceptanceCriteriaAnalysis?.Items?.Count > 0;
+        var hasWorkItemsWithAc = workItems?.Any(wi => !string.IsNullOrWhiteSpace(wi.AcceptanceCriteria)) == true;
+
+        if (!hasAcItems && !hasWorkItemsWithAc)
+            return;
+
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine("### :clipboard: Acceptance Criteria / DoD Compliance");
+        sb.AppendLine();
+
+        // Show linked work item context
+        if (hasWorkItemsWithAc)
+        {
+            foreach (var wi in workItems!.Where(w => !string.IsNullOrWhiteSpace(w.AcceptanceCriteria)))
+            {
+                sb.AppendLine($"**{wi.WorkItemType} #{wi.Id}**: {wi.Title}");
+                sb.AppendLine();
+            }
+        }
+
+        // Show per-criterion analysis from AI
+        if (hasAcItems)
+        {
+            var analysis = result.AcceptanceCriteriaAnalysis!;
+            if (!string.IsNullOrWhiteSpace(analysis.Summary))
+            {
+                sb.AppendLine(analysis.Summary);
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("| Status | Criterion | Evidence |");
+            sb.AppendLine("|--------|-----------|----------|");
+
+            foreach (var item in analysis.Items)
+            {
+                var icon = item.Status switch
+                {
+                    "Addressed" => ":white_check_mark:",
+                    "Partially Addressed" => ":large_orange_diamond:",
+                    "Not Addressed" => ":x:",
+                    "Cannot Determine" => ":grey_question:",
+                    _ => ":grey_question:",
+                };
+                // Escape pipes in text for table formatting
+                var criterion = item.Criterion.Replace("|", "\\|");
+                var evidence = item.Evidence.Replace("|", "\\|");
+                sb.AppendLine($"| {icon} {item.Status} | {criterion} | {evidence} |");
+            }
+            sb.AppendLine();
+        }
+        else if (hasWorkItemsWithAc)
+        {
+            // We had AC but the AI didn't produce analysis (shouldn't normally happen)
+            sb.AppendLine("_Acceptance criteria were found on linked work items but the AI did not produce a per-criterion analysis._");
+            sb.AppendLine();
+        }
     }
 
     private static string MapVerdictToRecommendation(string verdict) => verdict.ToUpperInvariant() switch
@@ -1286,6 +1710,49 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         merged.CompletionTokens = totalCompletion;
         merged.TotalTokens = totalTokens;
         merged.AiDurationMs = totalAiMs;
+
+        // ── Merge acceptance criteria analysis from per-file results ────
+        var allAcItems = new List<AcceptanceCriteriaItem>();
+        foreach (var batch in batchResults)
+        {
+            if (batch.AcceptanceCriteriaAnalysis?.Items != null)
+                allAcItems.AddRange(batch.AcceptanceCriteriaAnalysis.Items);
+        }
+
+        if (allAcItems.Count > 0)
+        {
+            // Deduplicate by criterion text (take the most informative status per criterion)
+            var statusPriority = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Addressed"] = 3,
+                ["Partially Addressed"] = 2,
+                ["Cannot Determine"] = 1,
+                ["Not Addressed"] = 0,
+            };
+
+            var grouped = allAcItems
+                .GroupBy(a => a.Criterion, StringComparer.OrdinalIgnoreCase)
+                .Select(g =>
+                {
+                    // If any file says "Addressed", the overall status should reflect that
+                    var best = g.OrderByDescending(a => statusPriority.GetValueOrDefault(a.Status, 0)).First();
+                    // Combine evidence from all files
+                    var allEvidence = g.Select(a => a.Evidence).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct();
+                    return new AcceptanceCriteriaItem
+                    {
+                        Criterion = best.Criterion,
+                        Status = best.Status,
+                        Evidence = string.Join(" | ", allEvidence),
+                    };
+                })
+                .ToList();
+
+            merged.AcceptanceCriteriaAnalysis = new AcceptanceCriteriaAnalysis
+            {
+                Summary = $"AC analysis merged from {batchResults.Count} file reviews.",
+                Items = grouped,
+            };
+        }
 
         return merged;
     }

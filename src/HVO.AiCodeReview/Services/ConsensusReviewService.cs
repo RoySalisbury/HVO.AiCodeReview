@@ -44,19 +44,19 @@ public class ConsensusReviewService : ICodeReviewService
     }
 
     public async Task<CodeReviewResult> ReviewAsync(
-        PullRequestInfo pullRequest, List<FileChange> fileChanges)
+        PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
         var results = await FanOutAsync(
-            (name, svc) => svc.ReviewAsync(pullRequest, fileChanges));
+            (name, svc) => svc.ReviewAsync(pullRequest, fileChanges, workItems));
 
         return MergeResults(results);
     }
 
     public async Task<CodeReviewResult> ReviewFileAsync(
-        PullRequestInfo pullRequest, FileChange file, int totalFilesInPr)
+        PullRequestInfo pullRequest, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
         var results = await FanOutAsync(
-            (name, svc) => svc.ReviewFileAsync(pullRequest, file, totalFilesInPr));
+            (name, svc) => svc.ReviewFileAsync(pullRequest, file, totalFilesInPr, workItems));
 
         return MergeResults(results);
     }

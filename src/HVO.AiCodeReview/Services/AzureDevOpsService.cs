@@ -385,6 +385,17 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
             if (!content.StartsWith("**"))
                 continue;
 
+            // Extract the lead-in/severity (e.g., "Bug", "Concern", "Suggestion")
+            var leadIn = "";
+            var boldEnd = content.IndexOf(".", StringComparison.Ordinal);
+            if (boldEnd > 2)
+            {
+                var rawLeadIn = content[2..boldEnd]; // strip leading "**"
+                if (rawLeadIn.EndsWith("**"))
+                    rawLeadIn = rawLeadIn[..^2];
+                leadIn = rawLeadIn.Trim();
+            }
+
             var threadId = thread.TryGetProperty("id", out var tid) ? tid.GetInt32() : 0;
             // ADO returns status as either an int or a string depending on API version
             int threadStatus = 0;
@@ -406,6 +417,42 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
             // Detect if this was posted by our AI reviewer via the attribution tag
             bool isAiGenerated = tagMarker != null && content.Contains(tagMarker, StringComparison.Ordinal);
 
+            // Collect replies (comments after the first one) from human users
+            var replies = new List<ThreadReply>();
+            for (int i = 1; i < commentsArr.Count; i++)
+            {
+                var reply = commentsArr[i];
+                // Skip system-generated comments (commentType 2 = system)
+                if (reply.TryGetProperty("commentType", out var ct) && ct.ValueKind == JsonValueKind.Number && ct.GetInt32() == 2)
+                    continue;
+                // Skip deleted comments
+                if (reply.TryGetProperty("isDeleted", out var del) && del.GetBoolean())
+                    continue;
+
+                var replyContent = reply.TryGetProperty("content", out var rc) ? rc.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(replyContent))
+                    continue;
+
+                // Skip replies that also have our attribution tag (AI follow-up replies)
+                if (tagMarker != null && replyContent.Contains(tagMarker, StringComparison.Ordinal))
+                    continue;
+
+                var author = "";
+                if (reply.TryGetProperty("author", out var auth) && auth.TryGetProperty("displayName", out var dn))
+                    author = dn.GetString() ?? "";
+
+                DateTime createdDate = default;
+                if (reply.TryGetProperty("publishedDate", out var pd))
+                    DateTime.TryParse(pd.GetString(), out createdDate);
+
+                replies.Add(new ThreadReply
+                {
+                    Author = author,
+                    Content = replyContent,
+                    CreatedDateUtc = createdDate,
+                });
+            }
+
             threads.Add(new ExistingCommentThread
             {
                 ThreadId = threadId,
@@ -415,11 +462,13 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
                 Content = content,
                 Status = threadStatus,
                 IsAiGenerated = isAiGenerated,
+                LeadIn = leadIn,
+                Replies = replies,
             });
         }
 
-        _logger.LogDebug("Found {Count} existing AI review threads on PR #{PrId} ({AiCount} AI-tagged)",
-            threads.Count, pullRequestId, threads.Count(t => t.IsAiGenerated));
+        _logger.LogDebug("Found {Count} existing AI review threads on PR #{PrId} ({AiCount} AI-tagged, {WithReplies} with replies)",
+            threads.Count, pullRequestId, threads.Count(t => t.IsAiGenerated), threads.Count(t => t.Replies.Count > 0));
         return threads;
     }
 
@@ -443,6 +492,26 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
         {
             var errorBody = await response.Content.ReadAsStringAsync();
             _logger.LogWarning("Failed to update thread {ThreadId} status: {StatusCode} — {Body}",
+                threadId, (int)response.StatusCode, errorBody);
+        }
+    }
+
+    public async Task ReplyToThreadAsync(
+        string project, string repository, int pullRequestId,
+        int threadId, string content)
+    {
+        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/threads/{threadId}/comments?{ApiVersion}";
+
+        var body = new { content, commentType = 1, parentCommentId = 1 };
+        var json = JsonSerializer.Serialize(body);
+
+        _logger.LogDebug("POST reply to thread {ThreadId}: {Url}", threadId, url);
+        var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            _logger.LogWarning("Failed to reply to thread {ThreadId}: {StatusCode} — {Body}",
                 threadId, (int)response.StatusCode, errorBody);
         }
     }
@@ -693,6 +762,173 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
         }
     }
 
+    // ── Work Item Integration ───────────────────────────────────────────────
+
+    public async Task<List<int>> GetLinkedWorkItemIdsAsync(string project, string repository, int pullRequestId)
+    {
+        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/workitems?{ApiVersion}";
+        _logger.LogDebug("GET linked work items for PR #{PrId}", pullRequestId);
+
+        try
+        {
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var ids = new List<int>();
+            if (json.TryGetProperty("value", out var arr))
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.TryGetProperty("id", out var idProp))
+                    {
+                        // The API returns id as a string
+                        var idStr = idProp.GetString() ?? idProp.GetRawText();
+                        if (int.TryParse(idStr, out var id))
+                            ids.Add(id);
+                    }
+                }
+            }
+            _logger.LogInformation("PR #{PrId} has {Count} linked work item(s): [{Ids}]",
+                pullRequestId, ids.Count, string.Join(", ", ids));
+            return ids;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to retrieve linked work items for PR #{PrId}", pullRequestId);
+            return new List<int>();
+        }
+    }
+
+    public async Task<WorkItemInfo?> GetWorkItemAsync(string project, int workItemId)
+    {
+        // Use the org-level endpoint (no project scope needed for reading)
+        var url = $"https://dev.azure.com/{_settings.Organization}/_apis/wit/workItems/{workItemId}?$expand=all&{ApiVersion}";
+        _logger.LogDebug("GET work item #{Id}", workItemId);
+
+        try
+        {
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to fetch work item #{Id}: {Status}", workItemId, (int)response.StatusCode);
+                return null;
+            }
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var fields = json.GetProperty("fields");
+
+            var wi = new WorkItemInfo
+            {
+                Id = workItemId,
+                WorkItemType = GetField(fields, "System.WorkItemType"),
+                Title = GetField(fields, "System.Title"),
+                State = GetField(fields, "System.State"),
+                Description = StripHtml(GetField(fields, "System.Description")),
+                AcceptanceCriteria = StripHtml(GetField(fields, "Microsoft.VSTS.Common.AcceptanceCriteria")),
+            };
+
+            _logger.LogInformation("Work item #{Id}: [{Type}] '{Title}' (State: {State}, AC: {ACLen} chars)",
+                wi.Id, wi.WorkItemType, wi.Title, wi.State, wi.AcceptanceCriteria.Length);
+
+            return wi;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to fetch work item #{Id}", workItemId);
+            return null;
+        }
+    }
+
+    public async Task<List<WorkItemComment>> GetWorkItemCommentsAsync(string project, int workItemId)
+    {
+        // Comments API requires project scope and preview API version
+        var url = $"https://dev.azure.com/{_settings.Organization}/{project}/_apis/wit/workItems/{workItemId}/comments?api-version=7.1-preview.4";
+        _logger.LogDebug("GET comments for work item #{Id}", workItemId);
+
+        try
+        {
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to fetch comments for work item #{Id}: {Status}", workItemId, (int)response.StatusCode);
+                return new List<WorkItemComment>();
+            }
+
+            // Azure DevOps may return a UTF-8 BOM; ReadFromJsonAsync handles it
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var comments = new List<WorkItemComment>();
+
+            if (json.TryGetProperty("comments", out var arr))
+            {
+                foreach (var c in arr.EnumerateArray())
+                {
+                    var text = c.TryGetProperty("text", out var textProp) ? textProp.GetString() ?? "" : "";
+                    var author = "";
+                    if (c.TryGetProperty("createdBy", out var createdBy) &&
+                        createdBy.TryGetProperty("displayName", out var displayName))
+                    {
+                        author = displayName.GetString() ?? "";
+                    }
+
+                    var createdDate = DateTime.UtcNow;
+                    if (c.TryGetProperty("createdDate", out var dateProp) &&
+                        DateTime.TryParse(dateProp.GetString(), out var parsed))
+                    {
+                        createdDate = parsed;
+                    }
+
+                    comments.Add(new WorkItemComment
+                    {
+                        Author = author,
+                        CreatedDate = createdDate,
+                        Text = StripHtml(text),
+                    });
+                }
+            }
+
+            _logger.LogInformation("Work item #{Id} has {Count} discussion comment(s)", workItemId, comments.Count);
+            return comments;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to fetch comments for work item #{Id}", workItemId);
+            return new List<WorkItemComment>();
+        }
+    }
+
+    /// <summary>
+    /// Strip HTML tags from Azure DevOps rich-text fields, converting to plain text.
+    /// </summary>
+    internal static string StripHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return string.Empty;
+
+        // Convert common block elements to newlines
+        var text = System.Text.RegularExpressions.Regex.Replace(html, @"<br\s*/?>", "\n");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"<li>", "- ");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"</li>", "\n");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"</p>", "\n");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"</div>", "\n");
+
+        // Strip remaining tags
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"<[^>]+>", "");
+
+        // Decode HTML entities
+        text = System.Net.WebUtility.HtmlDecode(text);
+
+        // Normalize whitespace: collapse multiple blank lines
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\n{3,}", "\n\n");
+
+        return text.Trim();
+    }
+
+    private static string GetField(JsonElement fields, string fieldName)
+    {
+        return fields.TryGetProperty(fieldName, out var prop) ? prop.GetString() ?? "" : "";
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -732,11 +968,16 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
     private static bool IsBinaryExtension(string ext) => ext switch
     {
         ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".ico" or ".svg" or
-        ".woff" or ".woff2" or ".ttf" or ".eot" or
-        ".zip" or ".gz" or ".tar" or ".rar" or
-        ".dll" or ".exe" or ".pdb" or
-        ".pdf" or ".doc" or ".docx" or
-        ".xls" or ".xlsx" => true,
+        ".webp" or ".tif" or ".tiff" or ".avif" or
+        ".woff" or ".woff2" or ".ttf" or ".eot" or ".otf" or
+        ".zip" or ".gz" or ".tar" or ".rar" or ".7z" or ".bz2" or ".xz" or
+        ".dll" or ".exe" or ".pdb" or ".so" or ".dylib" or ".class" or
+        ".jar" or ".war" or ".nupkg" or ".wasm" or
+        ".pdf" or ".doc" or ".docx" or ".xls" or ".xlsx" or ".pptx" or
+        ".mp3" or ".mp4" or ".wav" or ".avi" or ".mov" or ".webm" or
+        ".db" or ".sqlite" or ".mdb" or
+        ".snk" or ".pfx" or ".cer" or
+        ".ai" or ".psd" or ".sketch" => true,
         _ => false
     };
 

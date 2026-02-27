@@ -19,6 +19,9 @@ public class CodeReviewResult
     [JsonPropertyName("observations")]
     public List<string> Observations { get; set; } = new();
 
+    [JsonPropertyName("acceptanceCriteriaAnalysis")]
+    public AcceptanceCriteriaAnalysis? AcceptanceCriteriaAnalysis { get; set; }
+
     [JsonPropertyName("recommendedVote")]
     public int RecommendedVote { get; set; } = 10;
 
@@ -114,4 +117,34 @@ public class InlineComment
     /// <summary>"closed" for approved items, "active" for items needing attention.</summary>
     [JsonPropertyName("status")]
     public string Status { get; set; } = "closed";
+}
+
+/// <summary>
+/// AI analysis of how well the PR addresses linked work item acceptance criteria.
+/// Only populated when the PR has linked work items with acceptance criteria.
+/// </summary>
+public class AcceptanceCriteriaAnalysis
+{
+    /// <summary>Brief summary of AC coverage (1-2 sentences).</summary>
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = string.Empty;
+
+    /// <summary>Per-item analysis of each acceptance criterion.</summary>
+    [JsonPropertyName("items")]
+    public List<AcceptanceCriteriaItem> Items { get; set; } = new();
+}
+
+public class AcceptanceCriteriaItem
+{
+    /// <summary>The acceptance criterion text (abbreviated).</summary>
+    [JsonPropertyName("criterion")]
+    public string Criterion { get; set; } = string.Empty;
+
+    /// <summary>"Addressed", "Partially Addressed", "Not Addressed", "Cannot Determine"</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>Brief explanation of how/why the PR addresses or doesn't address this criterion.</summary>
+    [JsonPropertyName("evidence")]
+    public string Evidence { get; set; } = string.Empty;
 }

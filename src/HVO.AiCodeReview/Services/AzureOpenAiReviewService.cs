@@ -20,6 +20,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     private readonly string _singleFileSystemPrompt;
     private readonly string _prSummarySystemPrompt;
     private readonly int _maxInputLinesPerFile;
+    private readonly ReviewProfile _reviewProfile;
 
     // ── Legacy constructor: used by direct DI registration via IOptions ──
 
@@ -32,7 +33,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
             settings.Value.DeploymentName,
             settings.Value.CustomInstructionsPath,
             logger,
-            maxInputLinesPerFile: 5000)
+            maxInputLinesPerFile: 5000,
+            reviewProfile: null)
     { }
 
     // ── Factory constructor: used by CodeReviewServiceFactory from ProviderConfig ──
@@ -43,11 +45,13 @@ public class AzureOpenAiReviewService : ICodeReviewService
         string modelName,
         string? customInstructionsPath,
         ILogger<AzureOpenAiReviewService> logger,
-        int maxInputLinesPerFile = 5000)
+        int maxInputLinesPerFile = 5000,
+        ReviewProfile? reviewProfile = null)
     {
         _modelName = modelName;
         _logger = logger;
         _maxInputLinesPerFile = maxInputLinesPerFile;
+        _reviewProfile = reviewProfile ?? new ReviewProfile();
 
         var client = new AzureOpenAIClient(
             new Uri(endpoint),
@@ -59,8 +63,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
         _systemPrompt = BuildSystemPrompt(customInstructionsPath);
         _singleFileSystemPrompt = BuildSingleFileSystemPrompt(customInstructionsPath);
         _prSummarySystemPrompt = BuildPrSummarySystemPrompt();
-        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines})",
-            modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length, _prSummarySystemPrompt.Length, _maxInputLinesPerFile);
+        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines}, temperature: {Temp}, batch tokens: {BatchTok}, single-file tokens: {SFTok})",
+            modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length, _prSummarySystemPrompt.Length,
+            _maxInputLinesPerFile, _reviewProfile.Temperature, _reviewProfile.MaxOutputTokensBatch, _reviewProfile.MaxOutputTokensSingleFile);
     }
 
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
@@ -79,8 +84,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         var options = new ChatCompletionOptions
         {
-            Temperature = 0.1f,
-            MaxOutputTokenCount = 16000,
+            Temperature = _reviewProfile.Temperature,
+            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensBatch,
             ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
         };
 
@@ -165,8 +170,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         var options = new ChatCompletionOptions
         {
-            Temperature = 0.1f,
-            MaxOutputTokenCount = 4000,  // single file needs fewer tokens
+            Temperature = _reviewProfile.Temperature,
+            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensSingleFile,
             ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
         };
 
@@ -266,8 +271,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         var options = new ChatCompletionOptions
         {
-            Temperature = 0.1f,
-            MaxOutputTokenCount = 2000,
+            Temperature = _reviewProfile.Temperature,
+            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensVerification,
             ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
         };
 
@@ -452,8 +457,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         var options = new ChatCompletionOptions
         {
-            Temperature = 0.1f,
-            MaxOutputTokenCount = 4000,
+            Temperature = _reviewProfile.Temperature,
+            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensPrSummary,
             ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
         };
 

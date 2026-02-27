@@ -16,11 +16,17 @@ public class AzureOpenAiReviewService : ICodeReviewService
     private readonly string _modelName;
     private readonly ILogger<AzureOpenAiReviewService> _logger;
     private readonly ChatClient _chatClient;
-    private readonly string _systemPrompt;
-    private readonly string _singleFileSystemPrompt;
-    private readonly string _prSummarySystemPrompt;
     private readonly int _maxInputLinesPerFile;
     private readonly ReviewProfile _reviewProfile;
+
+    // Prompt pipeline (layered rule catalog) — null when no catalog is loaded
+    private readonly PromptAssemblyPipeline? _pipeline;
+    private readonly string? _customInstructions;
+
+    // Hardcoded fallback prompts (used when pipeline is not available)
+    private readonly string _fallbackSystemPrompt;
+    private readonly string _fallbackSingleFileSystemPrompt;
+    private readonly string _fallbackPrSummarySystemPrompt;
 
     // ── Legacy constructor: used by direct DI registration via IOptions ──
 
@@ -47,12 +53,17 @@ public class AzureOpenAiReviewService : ICodeReviewService
         string? customInstructionsPath,
         ILogger<AzureOpenAiReviewService> logger,
         int maxInputLinesPerFile = 5000,
-        ReviewProfile? reviewProfile = null)
+        ReviewProfile? reviewProfile = null,
+        PromptAssemblyPipeline? pipeline = null)
     {
         _modelName = modelName;
         _logger = logger;
         _maxInputLinesPerFile = maxInputLinesPerFile;
         _reviewProfile = reviewProfile ?? new ReviewProfile();
+        _pipeline = pipeline;
+
+        // Load custom instructions once (used by both pipeline and fallback paths)
+        _customInstructions = LoadCustomInstructions(customInstructionsPath);
 
         var client = new AzureOpenAIClient(
             new Uri(endpoint),
@@ -60,18 +71,50 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         _chatClient = client.GetChatClient(modelName);
 
-        // Build system prompts
-        _systemPrompt = BuildSystemPrompt(customInstructionsPath);
-        _singleFileSystemPrompt = BuildSingleFileSystemPrompt(customInstructionsPath);
-        _prSummarySystemPrompt = BuildPrSummarySystemPrompt();
-        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines}, temperature: {Temp}, batch tokens: {BatchTok}, single-file tokens: {SFTok}, verification tokens: {VerTok}, pr-summary tokens: {PrTok})",
-            modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length, _prSummarySystemPrompt.Length,
+        // Build hardcoded fallback prompts (used when pipeline has no catalog)
+        _fallbackSystemPrompt = BuildSystemPrompt(_customInstructions);
+        _fallbackSingleFileSystemPrompt = BuildSingleFileSystemPrompt(_customInstructions);
+        _fallbackPrSummarySystemPrompt = BuildPrSummarySystemPrompt();
+
+        var batchPrompt = GetSystemPrompt();
+        var singlePrompt = GetSingleFileSystemPrompt();
+        var prSummaryPrompt = GetPrSummarySystemPrompt();
+        var source = _pipeline?.HasCatalog == true ? "catalog" : "hardcoded";
+        _logger.LogInformation("[{Provider}] System prompts assembled from {Source} (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines}, temperature: {Temp}, batch tokens: {BatchTok}, single-file tokens: {SFTok}, verification tokens: {VerTok}, pr-summary tokens: {PrTok})",
+            modelName, source, batchPrompt.Length, singlePrompt.Length, prSummaryPrompt.Length,
             _maxInputLinesPerFile, _reviewProfile.Temperature, _reviewProfile.MaxOutputTokensBatch, _reviewProfile.MaxOutputTokensSingleFile, _reviewProfile.MaxOutputTokensVerification, _reviewProfile.MaxOutputTokensPrSummary);
     }
 
+    // ─── Prompt accessors (pipeline → fallback) ─────────────────────────
+
+    /// <summary>
+    /// Returns the system prompt for batch (multi-file) reviews.
+    /// Uses the pipeline catalog if available, otherwise falls back to hardcoded.
+    /// </summary>
+    internal string GetSystemPrompt()
+        => _pipeline?.AssemblePrompt("batch", _customInstructions) ?? _fallbackSystemPrompt;
+
+    /// <summary>
+    /// Returns the system prompt for single-file reviews.
+    /// </summary>
+    internal string GetSingleFileSystemPrompt()
+        => _pipeline?.AssemblePrompt("single-file", _customInstructions) ?? _fallbackSingleFileSystemPrompt;
+
+    /// <summary>
+    /// Returns the system prompt for PR-level summary (Pass 1).
+    /// </summary>
+    internal string GetPrSummarySystemPrompt()
+        => _pipeline?.AssemblePrompt("pass-1") ?? _fallbackPrSummarySystemPrompt;
+
+    /// <summary>
+    /// Returns the system prompt for thread verification.
+    /// </summary>
+    internal string GetThreadVerificationSystemPrompt()
+        => _pipeline?.AssemblePrompt("thread-verification") ?? ThreadVerificationSystemPrompt;
+
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
-        var systemPrompt = _systemPrompt;
+        var systemPrompt = GetSystemPrompt();
         var userPrompt = BuildUserPrompt(pullRequest, fileChanges, workItems);
 
         _logger.LogInformation("Sending {FileCount} files to AI for review of PR #{PrId}",
@@ -165,7 +208,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         var messages = new List<ChatMessage>
         {
-            new SystemChatMessage(_singleFileSystemPrompt),
+            new SystemChatMessage(GetSingleFileSystemPrompt()),
             new UserChatMessage(userPrompt),
         };
 
@@ -266,7 +309,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         var messages = new List<ChatMessage>
         {
-            new SystemChatMessage(ThreadVerificationSystemPrompt),
+            new SystemChatMessage(GetThreadVerificationSystemPrompt()),
             new UserChatMessage(userPrompt),
         };
 
@@ -452,7 +495,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         var messages = new List<ChatMessage>
         {
-            new SystemChatMessage(_prSummarySystemPrompt),
+            new SystemChatMessage(GetPrSummarySystemPrompt()),
             new UserChatMessage(userPrompt),
         };
 
@@ -645,18 +688,16 @@ public class AzureOpenAiReviewService : ICodeReviewService
         return truncated + $"\n\n... [truncated: {lines.Length - maxLines} more lines] ...";
     }
 
-    private static string BuildSystemPrompt(string? instructionsPath)
+    private static string BuildSystemPrompt(string? customInstructions)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append(IdentityPreamble);
 
-        // Load optional custom instructions from file
-        var custom = LoadCustomInstructions(instructionsPath);
-        if (!string.IsNullOrWhiteSpace(custom))
+        if (!string.IsNullOrWhiteSpace(customInstructions))
         {
             sb.AppendLine();
             sb.AppendLine();
-            sb.AppendLine(custom);
+            sb.AppendLine(customInstructions);
         }
 
         sb.AppendLine();
@@ -666,17 +707,16 @@ public class AzureOpenAiReviewService : ICodeReviewService
         return sb.ToString();
     }
 
-    private static string BuildSingleFileSystemPrompt(string? instructionsPath)
+    private static string BuildSingleFileSystemPrompt(string? customInstructions)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append(IdentityPreamble);
 
-        var custom = LoadCustomInstructions(instructionsPath);
-        if (!string.IsNullOrWhiteSpace(custom))
+        if (!string.IsNullOrWhiteSpace(customInstructions))
         {
             sb.AppendLine();
             sb.AppendLine();
-            sb.AppendLine(custom);
+            sb.AppendLine(customInstructions);
         }
 
         sb.AppendLine();

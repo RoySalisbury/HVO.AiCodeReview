@@ -16,6 +16,13 @@ public class AiProviderSettings
     public int MaxParallelReviews { get; set; } = 5;
 
     /// <summary>
+    /// Default maximum number of source lines sent to AI per file.
+    /// Files longer than this are truncated with a marker.
+    /// Can be overridden per-provider via <see cref="ProviderConfig.MaxInputLinesPerFile"/>.
+    /// </summary>
+    public int MaxInputLinesPerFile { get; set; } = 5000;
+
+    /// <summary>
     /// The review mode: "single" uses one provider; "consensus" fans out to
     /// multiple providers and merges results.
     /// </summary>
@@ -77,4 +84,10 @@ public class ProviderConfig
     /// a provider without removing its config.
     /// </summary>
     public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Per-provider override for the maximum source lines sent to AI per file.
+    /// When null, the global <see cref="AiProviderSettings.MaxInputLinesPerFile"/> is used.
+    /// </summary>
+    public int? MaxInputLinesPerFile { get; set; }
 }

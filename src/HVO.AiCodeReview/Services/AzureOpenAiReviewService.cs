@@ -18,6 +18,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     private readonly ChatClient _chatClient;
     private readonly string _systemPrompt;
     private readonly string _singleFileSystemPrompt;
+    private readonly int _maxInputLinesPerFile;
 
     // ── Legacy constructor: used by direct DI registration via IOptions ──
 
@@ -29,7 +30,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
             settings.Value.ApiKey,
             settings.Value.DeploymentName,
             settings.Value.CustomInstructionsPath,
-            logger)
+            logger,
+            maxInputLinesPerFile: 5000)
     { }
 
     // ── Factory constructor: used by CodeReviewServiceFactory from ProviderConfig ──
@@ -39,10 +41,12 @@ public class AzureOpenAiReviewService : ICodeReviewService
         string apiKey,
         string modelName,
         string? customInstructionsPath,
-        ILogger<AzureOpenAiReviewService> logger)
+        ILogger<AzureOpenAiReviewService> logger,
+        int maxInputLinesPerFile = 5000)
     {
         _modelName = modelName;
         _logger = logger;
+        _maxInputLinesPerFile = maxInputLinesPerFile;
 
         var client = new AzureOpenAIClient(
             new Uri(endpoint),
@@ -53,8 +57,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
         // Build system prompts
         _systemPrompt = BuildSystemPrompt(customInstructionsPath);
         _singleFileSystemPrompt = BuildSingleFileSystemPrompt(customInstructionsPath);
-        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars)",
-            modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length);
+        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, max input lines/file: {MaxLines})",
+            modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length, _maxInputLinesPerFile);
     }
 
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
@@ -792,7 +796,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 to this file, omit the field entirely. If NO work items were provided, omit it.
             """;
 
-    private static string BuildUserPrompt(PullRequestInfo pr, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
+    private string BuildUserPrompt(PullRequestInfo pr, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -884,7 +888,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// Build a user prompt for reviewing a single file in isolation.
     /// Includes PR context for relevance but only contains one file's content.
     /// </summary>
-    private static string BuildSingleFileUserPrompt(PullRequestInfo pr, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
+    private string BuildSingleFileUserPrompt(PullRequestInfo pr, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -981,15 +985,16 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
     /// <summary>
     /// Truncate very large files to avoid exceeding token limits.
+    /// Uses the configured <see cref="_maxInputLinesPerFile"/> threshold.
     /// </summary>
-    private static string TruncateContent(string content, int maxLines = 500)
+    private string TruncateContent(string content)
     {
         var lines = content.Split('\n');
-        if (lines.Length <= maxLines)
+        if (lines.Length <= _maxInputLinesPerFile)
             return content;
 
-        var truncated = string.Join('\n', lines.Take(maxLines));
-        return truncated + $"\n\n... [truncated: {lines.Length - maxLines} more lines] ...";
+        var truncated = string.Join('\n', lines.Take(_maxInputLinesPerFile));
+        return truncated + $"\n\n... [truncated: {lines.Length - _maxInputLinesPerFile} more lines] ...";
     }
 
     /// <summary>

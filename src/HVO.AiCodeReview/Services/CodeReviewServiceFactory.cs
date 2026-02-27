@@ -41,6 +41,7 @@ public static class CodeReviewServiceFactory
             var settings = sp.GetRequiredService<IOptions<AiProviderSettings>>().Value;
             var reviewProfile = sp.GetRequiredService<IOptions<ReviewProfile>>().Value;
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var pipeline = sp.GetService<PromptAssemblyPipeline>();
 
             // ── Fallback: if no AiProvider section exists, use legacy AzureOpenAI ──
             if (settings.Providers.Count == 0)
@@ -59,7 +60,8 @@ public static class CodeReviewServiceFactory
                     legacySettings.CustomInstructionsPath,
                     logger,
                     maxInputLinesPerFile: ValidateMaxInputLines(settings.MaxInputLinesPerFile, "global (legacy fallback)"),
-                    reviewProfile: reviewProfile);
+                    reviewProfile: reviewProfile,
+                    pipeline: pipeline);
             }
 
             // Build all enabled providers
@@ -67,7 +69,7 @@ public static class CodeReviewServiceFactory
                 .Where(kv => kv.Value.Enabled)
                 .Select(kv => (
                     Name: kv.Value.DisplayName.Length > 0 ? kv.Value.DisplayName : kv.Key,
-                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile)))
+                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile, pipeline)))
                 .ToList();
 
             if (providers.Count == 0)
@@ -123,7 +125,7 @@ public static class CodeReviewServiceFactory
     /// </summary>
     private static ICodeReviewService CreateProvider(
         string key, ProviderConfig config, ILoggerFactory loggerFactory, int globalMaxInputLines,
-        ReviewProfile reviewProfile)
+        ReviewProfile reviewProfile, PromptAssemblyPipeline? pipeline = null)
     {
         var type = config.Type.ToLowerInvariant();
         var maxLines = ValidateMaxInputLines(
@@ -138,7 +140,8 @@ public static class CodeReviewServiceFactory
                 config.CustomInstructionsPath,
                 loggerFactory.CreateLogger<AzureOpenAiReviewService>(),
                 maxInputLinesPerFile: maxLines,
-                reviewProfile: reviewProfile),
+                reviewProfile: reviewProfile,
+                pipeline: pipeline),
 
             // ── Add new provider types here ──────────────────────────────
             // "github-copilot" => new GitHubCopilotReviewService(config, loggerFactory.CreateLogger<GitHubCopilotReviewService>()),

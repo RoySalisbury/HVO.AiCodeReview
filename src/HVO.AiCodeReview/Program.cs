@@ -27,6 +27,8 @@ builder.Services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>(client =
 // ---------------------------------------------------------------------------
 // AI code review service (single-provider or consensus — driven by config)
 // ---------------------------------------------------------------------------
+builder.Services.AddSingleton<PromptAssemblyPipeline>(sp =>
+    new PromptAssemblyPipeline(sp.GetRequiredService<ILoggerFactory>().CreateLogger<PromptAssemblyPipeline>()));
 builder.Services.AddCodeReviewService(builder.Configuration);
 builder.Services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
 builder.Services.AddScoped<ICodeReviewOrchestrator, CodeReviewOrchestrator>();

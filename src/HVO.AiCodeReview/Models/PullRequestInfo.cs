@@ -17,6 +17,13 @@ public class PullRequestInfo
     public string LastMergeTargetCommit { get; set; } = string.Empty;
     public bool IsDraft { get; set; }
     public List<PullRequestReviewer> Reviewers { get; set; } = new();
+
+    /// <summary>
+    /// Cross-file summary produced by Pass 1 of the two-pass review.
+    /// Injected by the orchestrator before dispatching per-file (Pass 2) reviews.
+    /// Null when Pass 1 was skipped or failed.
+    /// </summary>
+    public PrSummaryResult? CrossFileSummary { get; set; }
 }
 
 public class PullRequestReviewer

@@ -106,6 +106,18 @@ public class ConsensusReviewService : ICodeReviewService
         return merged;
     }
 
+    /// <summary>
+    /// For PR summary (Pass 1), use the first provider only — consensus
+    /// on high-level summaries adds cost without clear benefit.
+    /// </summary>
+    public async Task<PrSummaryResult?> GeneratePrSummaryAsync(
+        PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
+    {
+        var (name, service) = _providers[0];
+        _logger.LogInformation("GeneratePrSummaryAsync: delegating to first provider '{Provider}'", name);
+        return await service.GeneratePrSummaryAsync(pullRequest, fileChanges, workItems);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     //  Fan-out + merge internals
     // ═══════════════════════════════════════════════════════════════════════

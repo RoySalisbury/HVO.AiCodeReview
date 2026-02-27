@@ -413,7 +413,37 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             _logger.LogWarning(ex, "Failed to retrieve work items for PR #{PrId} — continuing without AC context", pullRequestId);
         }
 
-        // ── AI analysis (parallel per-file for accuracy) ──────────────
+        // ── Pass 1: PR-level summary (cross-file context) ────────────
+        PrSummaryResult? prSummary = null;
+        try
+        {
+            ReportProgress(progress, ReviewStep.AnalyzingCode,
+                "Pass 1: Generating cross-file PR summary...", 30);
+
+            prSummary = await _reviewService.GeneratePrSummaryAsync(prInfo, fileChanges, workItems);
+
+            if (prSummary != null)
+            {
+                _logger.LogInformation("[Pass 1] PR summary generated for PR #{PrId}: {Intent} ({Relationships} relationships, {Risks} risks)",
+                    pullRequestId,
+                    prSummary.Intent.Length > 80 ? prSummary.Intent[..80] + "…" : prSummary.Intent,
+                    prSummary.CrossFileRelationships.Count,
+                    prSummary.RiskAreas.Count);
+
+                // Attach the summary to the PR info so per-file prompts can reference it
+                prInfo.CrossFileSummary = prSummary;
+            }
+            else
+            {
+                _logger.LogInformation("[Pass 1] No PR summary generated for PR #{PrId} — proceeding without cross-file context", pullRequestId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Pass 1] PR summary failed for PR #{PrId} — per-file reviews will proceed without cross-file context", pullRequestId);
+        }
+
+        // ── Pass 2: AI analysis (parallel per-file for accuracy) ──────
         var maxParallel = Math.Max(1, _aiProviderSettings.MaxParallelReviews);
 
         ReportProgress(progress, ReviewStep.AnalyzingCode,
@@ -467,6 +497,19 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         // ── Merge per-file results ──────────────────────────────────────
         var reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);
+
+        // ── Add Pass 1 token usage to the merged total ──────────────────
+        if (prSummary != null)
+        {
+            reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (prSummary.PromptTokens ?? 0);
+            reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (prSummary.CompletionTokens ?? 0);
+            reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (prSummary.TotalTokens ?? 0);
+            reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (prSummary.AiDurationMs ?? 0);
+
+            // Store the PR summary intent as the merged description (which was otherwise empty)
+            if (!string.IsNullOrWhiteSpace(prSummary.Intent))
+                reviewResult.Summary.Description = prSummary.Intent;
+        }
 
         _logger.LogInformation("{Label} complete ({FileCount} files, parallel): {Verdict} with {InlineCount} inline comments",
             reviewLabel, fileChanges.Count,
@@ -721,7 +764,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
-            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles);
+            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -821,7 +864,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         if (simulationOnly)
         {
             var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
-                nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles);
+                nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary);
 
             totalSw.Stop();
 
@@ -1136,7 +1179,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
     internal static string BuildSummaryMarkdown(int pullRequestId, CodeReviewResult result, bool isReReview = false,
         int reviewNumber = 0, ReviewMetadata? priorMetadata = null, List<WorkItemInfo>? workItems = null,
-        List<FileChange>? skippedFiles = null)
+        List<FileChange>? skippedFiles = null, PrSummaryResult? prSummary = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
@@ -1183,6 +1226,47 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             var parts = grouped.Select(g => $"{g.Count()} {g.Key}{(g.Count() != 1 ? "s" : "")}");
             sb.AppendLine($"> :file_folder: **{skippedFiles.Count} file(s) excluded** from detailed review: {string.Join(", ", parts)}.");
             sb.AppendLine();
+        }
+
+        // Cross-file analysis from Pass 1 (if available)
+        if (prSummary != null)
+        {
+            sb.AppendLine("### Cross-File Analysis");
+            sb.AppendLine();
+
+            if (!string.IsNullOrWhiteSpace(prSummary.ArchitecturalImpact) &&
+                !prSummary.ArchitecturalImpact.Equals("None", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine($"**Architectural Impact**: {prSummary.ArchitecturalImpact}");
+                sb.AppendLine();
+            }
+
+            if (prSummary.CrossFileRelationships.Count > 0)
+            {
+                sb.AppendLine("**Cross-File Relationships**:");
+                foreach (var rel in prSummary.CrossFileRelationships)
+                    sb.AppendLine($"- {rel}");
+                sb.AppendLine();
+            }
+
+            if (prSummary.RiskAreas.Count > 0)
+            {
+                sb.AppendLine("**Risk Areas**:");
+                foreach (var risk in prSummary.RiskAreas)
+                    sb.AppendLine($"- **{risk.Area}**: {risk.Reason}");
+                sb.AppendLine();
+            }
+
+            if (prSummary.FileGroupings.Count > 0)
+            {
+                sb.AppendLine("**File Groupings**:");
+                foreach (var group in prSummary.FileGroupings)
+                {
+                    sb.AppendLine($"- **{group.GroupName}**: {group.Description}");
+                    sb.AppendLine($"  Files: {string.Join(", ", group.Files.Select(f => $"`{f}`"))}");
+                }
+                sb.AppendLine();
+            }
         }
 
         sb.AppendLine("---");

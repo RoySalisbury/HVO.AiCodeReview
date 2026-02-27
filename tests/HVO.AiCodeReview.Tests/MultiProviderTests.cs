@@ -191,6 +191,22 @@ public class MultiProviderTests
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    //  Consensus: Constructor Rejects Empty Providers
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    [ExpectedException(typeof(InvalidOperationException))]
+    public void Consensus_EmptyProviders_Throws()
+    {
+        var logger = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Warning))
+            .CreateLogger<ConsensusReviewService>();
+        var emptyProviders = new List<(string Name, ICodeReviewService Service)>();
+
+        // Should throw — at least one provider is required
+        _ = new ConsensusReviewService(emptyProviders, threshold: 1, logger);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     //  Consensus: Overlapping Comments from Two Providers Are Kept
     // ═══════════════════════════════════════════════════════════════════════
 

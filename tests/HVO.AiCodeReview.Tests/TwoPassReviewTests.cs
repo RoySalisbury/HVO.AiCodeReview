@@ -48,6 +48,76 @@ public class TwoPassReviewTests
     }
 
     [TestMethod]
+    public void BuildPrSummaryUserPrompt_RenameWithNoUnifiedDiff_IncludesModifiedContent()
+    {
+        var service = CreateService();
+        var pr = CreatePr();
+        var files = new List<FileChange>
+        {
+            new FileChange
+            {
+                FilePath = "/src/Renamed.cs",
+                ChangeType = "rename",
+                ModifiedContent = "public class Renamed { }",
+                UnifiedDiff = null,
+            }
+        };
+
+        var prompt = service.BuildPrSummaryUserPrompt(pr, files);
+
+        Assert.IsTrue(prompt.Contains("public class Renamed"),
+            "Rename with no diff should fall back to including ModifiedContent.");
+        Assert.IsFalse(prompt.Contains("```diff"),
+            "Should not include diff block when there is no unified diff.");
+    }
+
+    [TestMethod]
+    public void BuildPrSummaryUserPrompt_EditNoDiffNoContent_ShowsNoDiffMarker()
+    {
+        var service = CreateService();
+        var pr = CreatePr();
+        var files = new List<FileChange>
+        {
+            new FileChange
+            {
+                FilePath = "/src/Empty.cs",
+                ChangeType = "edit",
+                UnifiedDiff = null,
+                ModifiedContent = null,
+                OriginalContent = null,
+            }
+        };
+
+        var prompt = service.BuildPrSummaryUserPrompt(pr, files);
+
+        Assert.IsTrue(prompt.Contains("*(no diff or file content available for this change)*"),
+            "Edit with no diff and no content should show the 'no diff' marker.");
+    }
+
+    [TestMethod]
+    public void BuildPrSummaryUserPrompt_EditNoDiff_FallsBackToOriginalContent()
+    {
+        var service = CreateService();
+        var pr = CreatePr();
+        var files = new List<FileChange>
+        {
+            new FileChange
+            {
+                FilePath = "/src/OldOnly.cs",
+                ChangeType = "edit",
+                UnifiedDiff = null,
+                ModifiedContent = null,
+                OriginalContent = "public class OldOnly { }",
+            }
+        };
+
+        var prompt = service.BuildPrSummaryUserPrompt(pr, files);
+
+        Assert.IsTrue(prompt.Contains("public class OldOnly"),
+            "When no diff and no modified content, should fall back to OriginalContent.");
+    }
+
+    [TestMethod]
     public void BuildPrSummaryUserPrompt_IncludesDiffs()
     {
         var service = CreateService();

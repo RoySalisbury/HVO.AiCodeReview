@@ -18,6 +18,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     private readonly ChatClient _chatClient;
     private readonly string _systemPrompt;
     private readonly string _singleFileSystemPrompt;
+    private readonly string _prSummarySystemPrompt;
     private readonly int _maxInputLinesPerFile;
 
     // ── Legacy constructor: used by direct DI registration via IOptions ──
@@ -57,8 +58,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
         // Build system prompts
         _systemPrompt = BuildSystemPrompt(customInstructionsPath);
         _singleFileSystemPrompt = BuildSingleFileSystemPrompt(customInstructionsPath);
-        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, max input lines/file: {MaxLines})",
-            modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length, _maxInputLinesPerFile);
+        _prSummarySystemPrompt = BuildPrSummarySystemPrompt();
+        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines})",
+            modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length, _prSummarySystemPrompt.Length, _maxInputLinesPerFile);
     }
 
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
@@ -426,6 +428,194 @@ public class AzureOpenAiReviewService : ICodeReviewService
         2. Only output valid JSON. No markdown, no explanation text outside the JSON.
         3. Be conservative — when the evidence is ambiguous, default to isFixed: false.
         """;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Pass 1 — PR-Level Summary (Cross-File Context)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public async Task<PrSummaryResult?> GeneratePrSummaryAsync(
+        PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
+    {
+        if (fileChanges.Count == 0)
+            return null;
+
+        var userPrompt = BuildPrSummaryUserPrompt(pullRequest, fileChanges, workItems);
+
+        _logger.LogInformation("[Pass 1] Generating PR summary for PR #{PrId} ({FileCount} files, prompt ~{PromptLen} chars)",
+            pullRequest.PullRequestId, fileChanges.Count, userPrompt.Length);
+
+        var messages = new List<ChatMessage>
+        {
+            new SystemChatMessage(_prSummarySystemPrompt),
+            new UserChatMessage(userPrompt),
+        };
+
+        var options = new ChatCompletionOptions
+        {
+            Temperature = 0.1f,
+            MaxOutputTokenCount = 4000,
+            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
+        };
+
+        ClientResult<ChatCompletion> response;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            response = await _chatClient.CompleteChatAsync(messages, options);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Pass 1] PR summary generation failed for PR #{PrId} — per-file reviews will proceed without cross-file context",
+                pullRequest.PullRequestId);
+            return null;
+        }
+        sw.Stop();
+
+        var content = response.Value.Content[0].Text;
+        var usage = response.Value.Usage;
+
+        _logger.LogInformation("[Pass 1] PR summary received in {Duration}ms (tokens: {Prompt}/{Completion}/{Total})",
+            sw.ElapsedMilliseconds,
+            usage?.InputTokenCount, usage?.OutputTokenCount, usage?.TotalTokenCount);
+
+        try
+        {
+            var result = JsonSerializer.Deserialize<PrSummaryResult>(content, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (result == null)
+            {
+                _logger.LogWarning("[Pass 1] AI returned null/empty PR summary for PR #{PrId}", pullRequest.PullRequestId);
+                return null;
+            }
+
+            // Attach metrics
+            result.ModelName = _modelName;
+            result.PromptTokens = usage?.InputTokenCount;
+            result.CompletionTokens = usage?.OutputTokenCount;
+            result.TotalTokens = usage?.TotalTokenCount;
+            result.AiDurationMs = sw.ElapsedMilliseconds;
+
+            return result;
+        }
+        catch (JsonException jex)
+        {
+            _logger.LogWarning(jex, "[Pass 1] Failed to parse PR summary JSON for PR #{PrId}", pullRequest.PullRequestId);
+            return null;
+        }
+    }
+
+    private static string BuildPrSummarySystemPrompt()
+    {
+        return """
+        You are an expert code reviewer performing the FIRST PASS of a two-pass review process.
+        Your job is to analyze the ENTIRE pull request at a high level and identify:
+
+        1. **Intent**: What is this PR trying to accomplish? Summarize in one paragraph.
+        2. **Architectural Impact**: How do these changes affect the system architecture?
+        3. **Cross-File Relationships**: Which files depend on each other in this PR?
+           Example: "ServiceA.cs adds a new method → ControllerB.cs calls it → ModelC.cs provides the DTO"
+        4. **Risk Areas**: Which files or changes are highest risk and need careful review?
+        5. **File Groupings**: Group related files into logical change sets.
+
+        You are NOT producing inline comments or per-file verdicts — that happens in Pass 2.
+        Focus entirely on the big picture: relationships, patterns, risks.
+
+        Respond with valid JSON matching this schema:
+        {
+          "intent": "<one paragraph describing what the PR accomplishes>",
+          "architecturalImpact": "<how changes affect architecture — 'None' if trivial>",
+          "crossFileRelationships": [
+            "<description of a cross-file dependency or relationship>"
+          ],
+          "riskAreas": [
+            { "area": "<file or area name>", "reason": "<why this is risky>" }
+          ],
+          "fileGroupings": [
+            { "groupName": "<logical group>", "files": ["<path>"], "description": "<why grouped>" }
+          ]
+        }
+
+        Rules:
+        1. Only output valid JSON. No markdown, no explanation text outside the JSON.
+        2. Be concise — each description should be 1-2 sentences.
+        3. If the PR is small/trivial, it's fine to have short/empty arrays.
+        4. Focus on relationships the per-file reviewer would miss in isolation.
+        """;
+    }
+
+    /// <summary>
+    /// Build the user prompt for Pass 1 (PR-level summary).
+    /// Includes file names, change types, and truncated diffs.
+    /// </summary>
+    internal string BuildPrSummaryUserPrompt(PullRequestInfo pr, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine("# PR Summary Request (Pass 1)");
+        sb.AppendLine();
+        sb.AppendLine($"**PR #{pr.PullRequestId}**: {pr.Title}");
+        sb.AppendLine($"**Author**: {pr.CreatedBy}");
+        sb.AppendLine($"**Branches**: `{pr.SourceBranch}` → `{pr.TargetBranch}`");
+        if (!string.IsNullOrWhiteSpace(pr.Description))
+            sb.AppendLine($"**Description**: {pr.Description}");
+        sb.AppendLine();
+
+        // Include linked work items context if available
+        AppendWorkItemContext(sb, workItems);
+
+        sb.AppendLine($"## Files Changed ({fileChanges.Count} total)");
+        sb.AppendLine();
+
+        foreach (var file in fileChanges)
+        {
+            sb.AppendLine($"### `{file.FilePath}` ({file.ChangeType})");
+
+            // For Pass 1, include a truncated view — enough for cross-file understanding
+            // but not the full file (that's for Pass 2)
+            var summaryMaxLines = Math.Min(_maxInputLinesPerFile, 200); // Cap at 200 lines per file for Pass 1
+
+            if (!string.IsNullOrEmpty(file.UnifiedDiff))
+            {
+                var truncatedDiff = TruncateContentToLines(file.UnifiedDiff, summaryMaxLines);
+                sb.AppendLine("```diff");
+                sb.AppendLine(truncatedDiff);
+                sb.AppendLine("```");
+            }
+            else if (file.ChangeType == "add" && !string.IsNullOrEmpty(file.ModifiedContent))
+            {
+                var truncated = TruncateContentToLines(file.ModifiedContent, summaryMaxLines);
+                sb.AppendLine("```");
+                sb.AppendLine(truncated);
+                sb.AppendLine("```");
+            }
+            else if (file.ChangeType == "delete")
+            {
+                sb.AppendLine("*(file deleted)*");
+            }
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Truncate content to a specific number of lines.
+    /// Unlike <see cref="TruncateContent"/> (which uses the instance _maxInputLinesPerFile),
+    /// this takes an explicit limit — used for Pass 1 where we want shorter snippets.
+    /// </summary>
+    internal static string TruncateContentToLines(string content, int maxLines)
+    {
+        var lines = content.Split('\n');
+        if (lines.Length <= maxLines)
+            return content;
+
+        var truncated = string.Join('\n', lines.Take(maxLines));
+        return truncated + $"\n\n... [truncated: {lines.Length - maxLines} more lines] ...";
+    }
 
     private static string BuildSystemPrompt(string? instructionsPath)
     {
@@ -904,6 +1094,12 @@ public class AzureOpenAiReviewService : ICodeReviewService
         // Include linked work item context (AC/DoD)
         AppendWorkItemContext(sb, workItems);
 
+        // Include cross-file context from Pass 1 (if available)
+        if (pr.CrossFileSummary != null)
+        {
+            AppendCrossFileContext(sb, pr.CrossFileSummary, file.FilePath);
+        }
+
         sb.AppendLine($"This PR has {totalFilesInPr} changed files total. You are reviewing **one file** below.");
         sb.AppendLine();
 
@@ -1065,6 +1261,81 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 }
                 sb.AppendLine();
             }
+        }
+
+        sb.AppendLine("---");
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Append Pass 1 cross-file context to the per-file (Pass 2) user prompt.
+    /// Highlights relationships and risks relevant to the specific file being reviewed.
+    /// </summary>
+    private static void AppendCrossFileContext(System.Text.StringBuilder sb, PrSummaryResult summary, string currentFilePath)
+    {
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine("## Cross-File Context (from PR-level analysis)");
+        sb.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(summary.Intent))
+        {
+            sb.AppendLine($"**PR Intent**: {summary.Intent}");
+            sb.AppendLine();
+        }
+
+        if (!string.IsNullOrWhiteSpace(summary.ArchitecturalImpact) &&
+            !summary.ArchitecturalImpact.Equals("None", StringComparison.OrdinalIgnoreCase))
+        {
+            sb.AppendLine($"**Architectural Impact**: {summary.ArchitecturalImpact}");
+            sb.AppendLine();
+        }
+
+        // Show cross-file relationships
+        if (summary.CrossFileRelationships.Count > 0)
+        {
+            sb.AppendLine("**Cross-File Relationships** (watch for dependencies with the file you're reviewing):");
+            foreach (var rel in summary.CrossFileRelationships)
+            {
+                sb.AppendLine($"- {rel}");
+            }
+            sb.AppendLine();
+        }
+
+        // Highlight risks specific to this file
+        var fileRisks = summary.RiskAreas
+            .Where(r => r.Area.Contains(Path.GetFileName(currentFilePath), StringComparison.OrdinalIgnoreCase) ||
+                         currentFilePath.Contains(r.Area, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (fileRisks.Count > 0)
+        {
+            sb.AppendLine("**⚠ Risk flags for THIS file**:");
+            foreach (var risk in fileRisks)
+            {
+                sb.AppendLine($"- {risk.Reason}");
+            }
+            sb.AppendLine();
+        }
+
+        // Show which group this file belongs to
+        var fileGroup = summary.FileGroupings
+            .FirstOrDefault(g => g.Files.Any(f =>
+                f.Equals(currentFilePath, StringComparison.OrdinalIgnoreCase) ||
+                currentFilePath.EndsWith(f, StringComparison.OrdinalIgnoreCase)));
+
+        if (fileGroup != null)
+        {
+            sb.AppendLine($"**File Group**: {fileGroup.GroupName} — {fileGroup.Description}");
+            var otherFiles = fileGroup.Files
+                .Where(f => !f.Equals(currentFilePath, StringComparison.OrdinalIgnoreCase) &&
+                            !currentFilePath.EndsWith(f, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (otherFiles.Count > 0)
+            {
+                sb.AppendLine($"  Related files: {string.Join(", ", otherFiles.Select(f => $"`{f}`"))}");
+            }
+            sb.AppendLine();
         }
 
         sb.AppendLine("---");

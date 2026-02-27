@@ -94,6 +94,11 @@ public class FakeCodeReviewService : ICodeReviewService
     /// </summary>
     public Func<List<ThreadVerificationCandidate>, List<ThreadVerificationResult>>? VerificationResultFactory { get; set; }
 
+    /// <summary>
+    /// Override to return custom PR summary results. When null the default fake summary is used.
+    /// </summary>
+    public Func<PullRequestInfo, List<FileChange>, List<WorkItemInfo>?, PrSummaryResult?>? PrSummaryFactory { get; set; }
+
     public Task<List<ThreadVerificationResult>> VerifyThreadResolutionsAsync(List<ThreadVerificationCandidate> candidates)
     {
         if (VerificationResultFactory is not null)
@@ -108,6 +113,46 @@ public class FakeCodeReviewService : ICodeReviewService
         }).ToList();
 
         return Task.FromResult(results);
+    }
+
+    /// <summary>
+    /// Fake PR summary generation for Pass 1 of two-pass review.
+    /// Returns a deterministic summary or delegates to PrSummaryFactory.
+    /// </summary>
+    public Task<PrSummaryResult?> GeneratePrSummaryAsync(
+        PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
+    {
+        if (PrSummaryFactory is not null)
+            return Task.FromResult(PrSummaryFactory(pullRequest, fileChanges, workItems));
+
+        var result = new PrSummaryResult
+        {
+            Intent = $"Fake PR summary for PR #{pullRequest.PullRequestId} with {fileChanges.Count} files.",
+            ArchitecturalImpact = "None",
+            CrossFileRelationships = fileChanges.Count > 1
+                ? new List<string> { $"Files {fileChanges[0].FilePath} and {fileChanges[^1].FilePath} are part of the same change set." }
+                : new List<string>(),
+            RiskAreas = new List<RiskArea>
+            {
+                new RiskArea { Area = fileChanges[0].FilePath, Reason = "Fake risk for testing." }
+            },
+            FileGroupings = new List<FileGrouping>
+            {
+                new FileGrouping
+                {
+                    GroupName = "Test Group",
+                    Files = fileChanges.Select(f => f.FilePath).ToList(),
+                    Description = "All files grouped for testing.",
+                }
+            },
+            ModelName = "fake-model",
+            PromptTokens = 100,
+            CompletionTokens = 50,
+            TotalTokens = 150,
+            AiDurationMs = 10,
+        };
+
+        return Task.FromResult<PrSummaryResult?>(result);
     }
 
     /// <summary>

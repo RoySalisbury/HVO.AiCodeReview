@@ -36,4 +36,15 @@ public interface ICodeReviewService
     /// <param name="candidates">Candidate threads with original comment + current code context.</param>
     /// <returns>Verification results indicating which threads are truly fixed.</returns>
     Task<List<ThreadVerificationResult>> VerifyThreadResolutionsAsync(List<ThreadVerificationCandidate> candidates);
+
+    /// <summary>
+    /// Pass 1 of the two-pass review: generate a PR-level summary that captures
+    /// cross-file relationships, architectural impact, and risk areas.
+    /// The result is injected into each Pass 2 (per-file) review as context.
+    /// </summary>
+    /// <param name="pullRequest">PR metadata.</param>
+    /// <param name="fileChanges">All changed files in the PR.</param>
+    /// <param name="workItems">Linked work items (optional).</param>
+    /// <returns>PR-level summary, or null if summary generation is unsupported.</returns>
+    Task<PrSummaryResult?> GeneratePrSummaryAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null);
 }

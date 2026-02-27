@@ -15,12 +15,12 @@ public class FakeCodeReviewService : ICodeReviewService
     /// Override this to return custom results in a specific test.
     /// When null the default fake result is used.
     /// </summary>
-    public Func<PullRequestInfo, List<FileChange>, CodeReviewResult>? ResultFactory { get; set; }
+    public Func<PullRequestInfo, List<FileChange>, List<WorkItemInfo>?, CodeReviewResult>? ResultFactory { get; set; }
 
     public Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
         if (ResultFactory is not null)
-            return Task.FromResult(ResultFactory(pullRequest, fileChanges));
+            return Task.FromResult(ResultFactory(pullRequest, fileChanges, workItems));
 
         // Build a deterministic review result keyed off the actual file list
         var result = new CodeReviewResult

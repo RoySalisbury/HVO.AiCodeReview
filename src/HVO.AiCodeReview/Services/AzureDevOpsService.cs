@@ -513,6 +513,7 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
             var errorBody = await response.Content.ReadAsStringAsync();
             _logger.LogWarning("Failed to reply to thread {ThreadId}: {StatusCode} — {Body}",
                 threadId, (int)response.StatusCode, errorBody);
+            response.EnsureSuccessStatusCode();
         }
     }
 

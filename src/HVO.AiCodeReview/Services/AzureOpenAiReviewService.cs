@@ -630,7 +630,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                - If you encounter such a file, you may skip it from fileReviews entirely, or at most
                  include it with verdict "APPROVED" and a brief informational reviewText.
                - Focus your review exclusively on files that contain actual reviewable code or configuration.
-            18. ACCEPTANCE CRITERIA / DEFINITION OF DONE ANALYSIS:
+            17. ACCEPTANCE CRITERIA / DEFINITION OF DONE ANALYSIS:
                When linked work items with acceptance criteria are provided in the user prompt,
                you MUST populate the "acceptanceCriteriaAnalysis" object. For each AC item:
                a) State whether the PR code changes address it ("Addressed"), partially address
@@ -645,7 +645,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                   code quality even if some AC items are "Not Addressed" — those are separate concerns.
                   However, note unaddressed AC items in the verdictJustification as informational context.
                f) If work item discussion comments mention AC changes or scope decisions, factor those in.
-            19. EXAMPLE of a correct inline comment (given input file lines "  45 | public void Process() {" through "  70 | }"):
+            18. EXAMPLE of a correct inline comment (given input file lines "  45 | public void Process() {" through "  70 | }"):
                 {
                   "filePath": "/src/Services/MyService.cs",
                   "startLine": 45,

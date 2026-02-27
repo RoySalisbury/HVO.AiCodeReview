@@ -38,6 +38,9 @@ public interface IAzureDevOpsService : IDisposable
     /// <summary>Update a thread's status (e.g., mark as Fixed, Closed, Active).</summary>
     Task UpdateThreadStatusAsync(string project, string repository, int pullRequestId, int threadId, string status);
 
+    /// <summary>Reply to an existing comment thread (e.g., follow-up on a prior review comment).</summary>
+    Task ReplyToThreadAsync(string project, string repository, int pullRequestId, int threadId, string content);
+
     /// <summary>Count existing AI review summary comments (survives metadata clears).</summary>
     Task<int> CountReviewSummaryCommentsAsync(string project, string repository, int pullRequestId);
 
@@ -58,4 +61,13 @@ public interface IAzureDevOpsService : IDisposable
 
     /// <summary>Update the PR description (appends or replaces content).</summary>
     Task UpdatePrDescriptionAsync(string project, string repository, int pullRequestId, string newDescription);
+
+    /// <summary>Get the IDs of work items linked to a pull request.</summary>
+    Task<List<int>> GetLinkedWorkItemIdsAsync(string project, string repository, int pullRequestId);
+
+    /// <summary>Fetch work item details (title, type, description, acceptance criteria).</summary>
+    Task<WorkItemInfo?> GetWorkItemAsync(string project, int workItemId);
+
+    /// <summary>Fetch discussion comments for a work item.</summary>
+    Task<List<WorkItemComment>> GetWorkItemCommentsAsync(string project, int workItemId);
 }

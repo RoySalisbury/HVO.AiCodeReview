@@ -84,6 +84,27 @@ public class ExistingCommentThread
 
     /// <summary>True if this thread was posted by the AI reviewer (detected via attribution tag).</summary>
     public bool IsAiGenerated { get; set; }
+
+    /// <summary>The severity/lead-in extracted from the first comment (e.g., "Bug", "Concern", "Suggestion").</summary>
+    public string LeadIn { get; set; } = string.Empty;
+
+    /// <summary>Replies from other users (PR author, reviewers) within this thread.</summary>
+    public List<ThreadReply> Replies { get; set; } = new();
+}
+
+/// <summary>
+/// A reply within a comment thread, posted by a human (PR author or reviewer).
+/// </summary>
+public class ThreadReply
+{
+    /// <summary>Display name of the person who replied.</summary>
+    public string Author { get; set; } = string.Empty;
+
+    /// <summary>The reply text content.</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>When the reply was posted (UTC).</summary>
+    public DateTime CreatedDateUtc { get; set; }
 }
 
 /// <summary>
@@ -123,4 +144,7 @@ public class ThreadVerificationCandidate
 
     /// <summary>The current code around the commented lines (context window).</summary>
     public string CurrentCode { get; set; } = string.Empty;
+
+    /// <summary>Human replies within the thread (provides context like author explanations).</summary>
+    public List<ThreadReply> AuthorReplies { get; set; } = new();
 }

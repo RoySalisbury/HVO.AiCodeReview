@@ -20,5 +20,7 @@ public interface ICodeReviewOrchestrator
         string project,
         string repository,
         int pullRequestId,
-        IProgress<ReviewStatusUpdate>? progress = null);
+        IProgress<ReviewStatusUpdate>? progress = null,
+        bool forceReview = false,
+        bool simulationOnly = false);
 }

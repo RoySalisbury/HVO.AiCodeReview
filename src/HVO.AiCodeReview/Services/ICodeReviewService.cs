@@ -13,8 +13,9 @@ public interface ICodeReviewService
     /// </summary>
     /// <param name="pullRequest">PR metadata for context.</param>
     /// <param name="fileChanges">List of changed files with content.</param>
+    /// <param name="workItems">Linked work items with AC/DoD context (optional).</param>
     /// <returns>Structured review result ready for posting.</returns>
-    Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges);
+    Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null);
 
     /// <summary>
     /// Review a single file in isolation. The AI gets focused attention on ONE file,
@@ -23,8 +24,9 @@ public interface ICodeReviewService
     /// <param name="pullRequest">PR metadata for context.</param>
     /// <param name="file">The single file to review.</param>
     /// <param name="totalFilesInPr">Total files changed in the PR (for context).</param>
+    /// <param name="workItems">Linked work items with AC/DoD context (optional).</param>
     /// <returns>Review result scoped to this single file.</returns>
-    Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr);
+    Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null);
 
     /// <summary>
     /// Verify whether prior AI review comments have been addressed in the current code.

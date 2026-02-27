@@ -30,4 +30,10 @@ public class FileChange
     /// Used to filter inline comments to only target changed code.
     /// </summary>
     public List<(int Start, int End)> ChangedLineRanges { get; set; } = new();
+
+    /// <summary>
+    /// If non-null, the file was excluded from AI review. Contains the reason category
+    /// (e.g., "submodule reference", "lock file", "generated file").
+    /// </summary>
+    public string? SkipReason { get; set; }
 }

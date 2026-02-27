@@ -506,9 +506,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (prSummary.TotalTokens ?? 0);
             reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (prSummary.AiDurationMs ?? 0);
 
-            // Store the PR summary intent as the merged description (which was otherwise empty)
-            if (!string.IsNullOrWhiteSpace(prSummary.Intent))
+            // Store the PR summary intent as the merged description when it is otherwise empty
+            if (!string.IsNullOrWhiteSpace(prSummary.Intent)
+                && (string.IsNullOrWhiteSpace(reviewResult.Summary?.Description)))
+            {
+                reviewResult.Summary ??= new ReviewSummary();
                 reviewResult.Summary.Description = prSummary.Intent;
+            }
         }
 
         _logger.LogInformation("{Label} complete ({FileCount} files, parallel): {Verdict} with {InlineCount} inline comments",

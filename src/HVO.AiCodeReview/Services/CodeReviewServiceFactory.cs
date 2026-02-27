@@ -126,7 +126,14 @@ public static class CodeReviewServiceFactory
         ReviewProfile reviewProfile)
     {
         var type = config.Type.ToLowerInvariant();
-        var maxLines = config.MaxInputLinesPerFile ?? globalMaxInputLines;
+        var rawMaxLines = config.MaxInputLinesPerFile ?? globalMaxInputLines;
+        if (rawMaxLines <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Invalid MaxInputLinesPerFile configuration for provider '{key}'. " +
+                $"The effective value must be greater than 0, but was {rawMaxLines}.");
+        }
+        var maxLines = rawMaxLines;
 
         return type switch
         {

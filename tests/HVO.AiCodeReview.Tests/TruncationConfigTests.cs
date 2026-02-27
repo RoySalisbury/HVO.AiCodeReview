@@ -3,7 +3,6 @@ using AiCodeReview.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Tests;
 
@@ -96,7 +95,9 @@ public class TruncationConfigTests
         var result = InvokeTruncate(service, content);
 
         var resultLines = result.Split('\n');
-        // First 100 data lines + 1 blank + 1 marker = 102, but the marker is on its own line
+        // First 100 data lines + 1 blank + 1 marker = 102
+        Assert.AreEqual(102, resultLines.Length,
+            $"Expected 102 lines after truncation (100 data + blank + marker), but got {resultLines.Length}.");
         Assert.IsTrue(result.Contains("... [truncated: 150 more lines] ..."),
             $"Truncation marker must show 150 remaining lines. Got:\n{result[^200..]}");
         // Verify we kept exactly 100 source lines

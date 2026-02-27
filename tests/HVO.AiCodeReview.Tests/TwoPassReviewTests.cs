@@ -181,23 +181,12 @@ public class TwoPassReviewTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    public async Task Orchestrator_InjectsPass1Summary_IntoPerFileReviews()
+    public async Task Pass1_GeneratePrSummaryAsync_CalledAndReturnsSummary()
     {
-        // Arrange: use the fake service and verify CrossFileSummary is set when ReviewFileAsync is called
-
+        // Arrange: verify GeneratePrSummaryAsync is callable and returns expected results
         var fake = new FakeCodeReviewService();
-        // Override ReviewFileAsync to capture the CrossFileSummary from the PR info
-        var originalReviewFile = fake.ReviewFileAsync;
 
-        // We'll capture via the PrSummaryFactory — the fake service sets it on PrInfo
-        // But actually we need to capture the PullRequestInfo passed to ReviewFileAsync
-        // Let's use a custom approach: override the ResultFactory to capture context
-
-        var ctx = TestServiceBuilder.BuildWithFakeAi(fake);
-        var orchestrator = ctx.Orchestrator;
-
-        // We can't easily intercept ReviewFileAsync on a real orchestrator flow
-        // Instead, verify that the FakeCodeReviewService's GeneratePrSummaryAsync is called
+        // Verify that the FakeCodeReviewService's GeneratePrSummaryAsync is called
         bool pass1Called = false;
         fake.PrSummaryFactory = (pr, files, wi) =>
         {

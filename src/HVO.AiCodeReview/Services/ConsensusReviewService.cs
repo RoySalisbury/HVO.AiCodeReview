@@ -33,6 +33,10 @@ public class ConsensusReviewService : ICodeReviewService
         int threshold,
         ILogger<ConsensusReviewService> logger)
     {
+        if (providers.Count == 0)
+            throw new InvalidOperationException(
+                "ConsensusReviewService requires at least one provider.");
+
         _providers = providers;
         _threshold = Math.Max(1, Math.Min(threshold, providers.Count));
         _logger = logger;

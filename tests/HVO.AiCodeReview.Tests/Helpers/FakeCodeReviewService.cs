@@ -125,6 +125,9 @@ public class FakeCodeReviewService : ICodeReviewService
         if (PrSummaryFactory is not null)
             return Task.FromResult(PrSummaryFactory(pullRequest, fileChanges, workItems));
 
+        if (fileChanges.Count == 0)
+            return Task.FromResult<PrSummaryResult?>(null);
+
         var result = new PrSummaryResult
         {
             Intent = $"Fake PR summary for PR #{pullRequest.PullRequestId} with {fileChanges.Count} files.",

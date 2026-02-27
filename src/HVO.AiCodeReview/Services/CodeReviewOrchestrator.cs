@@ -346,7 +346,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             if (!simulationOnly)
             {
                 var skipDetail = skippedFiles.Count > 0
-                    ? $"\n\n> :file_folder: **{skippedFiles.Count} file(s) excluded from review:** {string.Join(", ", skippedFiles.GroupBy(f => f.SkipReason ?? "unknown").OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))}"
+                    ? $"\n\n> :file_folder: **{skippedFiles.Count} file(s) excluded from review:**\n\n" +
+                      string.Join("\n", skippedFiles.Select(f => $"> - `{f.FilePath}` — {f.SkipReason}"))
                     : "";
 
                 await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
@@ -830,9 +831,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             var completionMsg2 = $"Simulation complete: {reviewResult.Summary.Verdict} (nothing posted)";
             ReportProgress(progress, ReviewStep.Complete, completionMsg2, 100);
 
-            int simErrors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
-            int simWarnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
-            int simInfo = reviewResult.InlineComments.Count(c => c.LeadIn is "Suggestion" or "LGTM" or "Good catch" or "Important");
+            int simErrors = lineSpecificComments.Count(c => c.LeadIn is "Bug" or "Security");
+            int simWarnings = lineSpecificComments.Count(c => c.LeadIn is "Concern" or "Performance");
+            int simInfo = lineSpecificComments.Count(c => c.LeadIn is "Suggestion" or "LGTM" or "Good catch" or "Important");
 
             var simResponse = new ReviewResponse
             {

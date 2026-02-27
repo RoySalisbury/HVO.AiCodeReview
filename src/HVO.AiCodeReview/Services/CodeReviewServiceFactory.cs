@@ -52,7 +52,8 @@ public static class CodeReviewServiceFactory
                     legacySettings.ApiKey,
                     legacySettings.DeploymentName,
                     legacySettings.CustomInstructionsPath,
-                    logger);
+                    logger,
+                    maxInputLinesPerFile: settings.MaxInputLinesPerFile);
             }
 
             // Build all enabled providers
@@ -60,7 +61,7 @@ public static class CodeReviewServiceFactory
                 .Where(kv => kv.Value.Enabled)
                 .Select(kv => (
                     Name: kv.Value.DisplayName.Length > 0 ? kv.Value.DisplayName : kv.Key,
-                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory)))
+                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile)))
                 .ToList();
 
             if (providers.Count == 0)
@@ -115,9 +116,10 @@ public static class CodeReviewServiceFactory
     /// Extend this method when adding new provider types.
     /// </summary>
     private static ICodeReviewService CreateProvider(
-        string key, ProviderConfig config, ILoggerFactory loggerFactory)
+        string key, ProviderConfig config, ILoggerFactory loggerFactory, int globalMaxInputLines)
     {
         var type = config.Type.ToLowerInvariant();
+        var maxLines = config.MaxInputLinesPerFile ?? globalMaxInputLines;
 
         return type switch
         {
@@ -126,7 +128,8 @@ public static class CodeReviewServiceFactory
                 config.ApiKey,
                 config.Model,
                 config.CustomInstructionsPath,
-                loggerFactory.CreateLogger<AzureOpenAiReviewService>()),
+                loggerFactory.CreateLogger<AzureOpenAiReviewService>(),
+                maxInputLinesPerFile: maxLines),
 
             // ── Add new provider types here ──────────────────────────────
             // "github-copilot" => new GitHubCopilotReviewService(config, loggerFactory.CreateLogger<GitHubCopilotReviewService>()),

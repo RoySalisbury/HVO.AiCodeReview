@@ -345,8 +345,12 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
             if (!simulationOnly)
             {
+                var skipDetail = skippedFiles.Count > 0
+                    ? $"\n\n> :file_folder: **{skippedFiles.Count} file(s) excluded from review:** {string.Join(", ", skippedFiles.GroupBy(f => f.SkipReason ?? "unknown").OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))}"
+                    : "";
+
                 await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
-                    "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR.",
+                    "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR." + skipDetail,
                     "closed");
 
                 var noFilesHistory = new ReviewHistoryEntry
@@ -813,61 +817,70 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         } // end if (!simulationOnly)
 
         // ── Simulation path: build summary but don't post anything ──────
-        var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
-            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles);
-
-        totalSw.Stop();
-
-        var simVote = reviewResult.RecommendedVote;
-        var statusLabel = "Simulated";
-
-        var completionMsg2 = $"Simulation complete: {reviewResult.Summary.Verdict} (nothing posted)";
-        ReportProgress(progress, ReviewStep.Complete, completionMsg2, 100);
-
-        int simErrors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
-        int simWarnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
-        int simInfo = reviewResult.InlineComments.Count(c => c.LeadIn is "Suggestion" or "LGTM" or "Good catch" or "Important");
-
-        var simResponse = new ReviewResponse
+        if (simulationOnly)
         {
-            Status = statusLabel,
-            Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
-            Summary = simSummaryMarkdown,
-            IssueCount = reviewResult.InlineComments.Count,
-            ErrorCount = simErrors,
-            WarningCount = simWarnings,
-            InfoCount = simInfo,
-            Vote = simVote,
-            Verdict = reviewResult.Summary.Verdict,
-            VerdictJustification = reviewResult.Summary.VerdictJustification,
-            InlineComments = lineSpecificComments.Select(c => new InlineCommentDto
+            var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
+                nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles);
+
+            totalSw.Stop();
+
+            var simVote = reviewResult.RecommendedVote;
+            var statusLabel = "Simulated";
+
+            var completionMsg2 = $"Simulation complete: {reviewResult.Summary.Verdict} (nothing posted)";
+            ReportProgress(progress, ReviewStep.Complete, completionMsg2, 100);
+
+            int simErrors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
+            int simWarnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
+            int simInfo = reviewResult.InlineComments.Count(c => c.LeadIn is "Suggestion" or "LGTM" or "Good catch" or "Important");
+
+            var simResponse = new ReviewResponse
             {
-                FilePath = c.FilePath,
-                StartLine = c.StartLine,
-                EndLine = c.EndLine,
-                Severity = c.LeadIn,
-                Comment = c.Comment,
-                Status = c.Status,
-            }).ToList(),
-            FileReviews = reviewResult.FileReviews.Select(f => new FileReviewDto
-            {
-                FilePath = f.FilePath,
-                Verdict = f.Verdict,
-                ReviewText = f.ReviewText,
-            }).ToList(),
-            SkippedFiles = skippedFiles.Count > 0
-                ? skippedFiles.Select(f => new SkippedFileDto
+                Status = statusLabel,
+                Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
+                Summary = simSummaryMarkdown,
+                IssueCount = lineSpecificComments.Count,
+                ErrorCount = simErrors,
+                WarningCount = simWarnings,
+                InfoCount = simInfo,
+                Vote = simVote,
+                Verdict = reviewResult.Summary.Verdict,
+                VerdictJustification = reviewResult.Summary.VerdictJustification,
+                InlineComments = lineSpecificComments.Select(c => new InlineCommentDto
+                {
+                    FilePath = c.FilePath,
+                    StartLine = c.StartLine,
+                    EndLine = c.EndLine,
+                    Severity = c.LeadIn,
+                    Comment = c.Comment,
+                    Status = c.Status,
+                }).ToList(),
+                FileReviews = reviewResult.FileReviews.Select(f => new FileReviewDto
                 {
                     FilePath = f.FilePath,
-                    SkipReason = f.SkipReason!,
-                }).ToList()
-                : null,
-        };
+                    Verdict = f.Verdict,
+                    ReviewText = f.ReviewText,
+                }).ToList(),
+                SkippedFiles = skippedFiles.Count > 0
+                    ? skippedFiles.Select(f => new SkippedFileDto
+                    {
+                        FilePath = f.FilePath,
+                        SkipReason = f.SkipReason!,
+                    }).ToList()
+                    : null,
+            };
 
-        _logger.LogInformation("SIMULATION complete for PR #{PrId}: {Verdict} — {IssueCount} issues, {FileCount} files reviewed, {SkipCount} files skipped (nothing posted)",
-            pullRequestId, reviewResult.Summary.Verdict, reviewResult.InlineComments.Count, fileChanges.Count, skippedFiles.Count);
+            _logger.LogInformation("SIMULATION complete for PR #{PrId}: {Verdict} — {IssueCount} issues, {FileCount} files reviewed, {SkipCount} files skipped (nothing posted)",
+                pullRequestId, reviewResult.Summary.Verdict, lineSpecificComments.Count, fileChanges.Count, skippedFiles.Count);
 
-        return simResponse;
+            return simResponse;
+        }
+
+        // This path should be unreachable because all non-simulation flows
+        // are expected to return earlier in the method. If it is reached,
+        // fail fast rather than accidentally executing simulation behavior
+        // for a real review.
+        throw new InvalidOperationException("Reached end of HandleReviewAsync without returning — this is a bug.");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -1048,7 +1061,6 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     internal static string? ClassifyNonReviewableFile(FileChange file)
     {
         var fileName = Path.GetFileName(file.FilePath);
-        var ext = Path.GetExtension(file.FilePath).ToLowerInvariant();
 
         // 1. Lock files (auto-generated, huge, no human-written code)
         if (LockFileNames.Contains(fileName))
@@ -1721,7 +1733,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         if (allAcItems.Count > 0)
         {
-            // Deduplicate by criterion text (take the most informative status per criterion)
+            // Deduplicate by criterion text using a conservative merge strategy:
+            // if some files say "Addressed" but others disagree, downgrade to "Partially Addressed"
+            // to avoid misleading optimistic results when only one file partially covers a criterion.
             var statusPriority = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             {
                 ["Addressed"] = 3,
@@ -1734,14 +1748,34 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 .GroupBy(a => a.Criterion, StringComparer.OrdinalIgnoreCase)
                 .Select(g =>
                 {
-                    // If any file says "Addressed", the overall status should reflect that
-                    var best = g.OrderByDescending(a => statusPriority.GetValueOrDefault(a.Status, 0)).First();
+                    var items = g.ToList();
                     // Combine evidence from all files
-                    var allEvidence = g.Select(a => a.Evidence).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct();
+                    var allEvidence = items.Select(a => a.Evidence).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct();
+
+                    string mergedStatus;
+                    if (items.Count == 1)
+                    {
+                        mergedStatus = items[0].Status;
+                    }
+                    else
+                    {
+                        var statuses = items.Select(a => a.Status).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                        bool hasAddressed = statuses.Any(s => string.Equals(s, "Addressed", StringComparison.OrdinalIgnoreCase));
+                        bool hasConflicting = statuses.Any(s =>
+                            string.Equals(s, "Not Addressed", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(s, "Cannot Determine", StringComparison.OrdinalIgnoreCase));
+
+                        // Conservative: downgrade to "Partially Addressed" when files disagree
+                        if (hasAddressed && hasConflicting)
+                            mergedStatus = "Partially Addressed";
+                        else
+                            mergedStatus = items.OrderByDescending(a => statusPriority.GetValueOrDefault(a.Status, 0)).First().Status;
+                    }
+
                     return new AcceptanceCriteriaItem
                     {
-                        Criterion = best.Criterion,
-                        Status = best.Status,
+                        Criterion = g.Key,
+                        Status = mergedStatus,
                         Evidence = string.Join(" | ", allEvidence),
                     };
                 })

@@ -200,7 +200,7 @@ public class MultiProviderTests
         // Provider A flags file.cs lines 5-10
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED WITH SUGGESTIONS", Description = "A says suggestions" },
                 FileReviews = new List<FileReview> { new() { FilePath = "/file.cs", Verdict = "APPROVED" } },
@@ -215,7 +215,7 @@ public class MultiProviderTests
         // Provider B flags file.cs lines 6-11 (overlaps with A within tolerance)
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "B says approved" },
                 FileReviews = new List<FileReview> { new() { FilePath = "/file.cs", Verdict = "APPROVED" } },
@@ -262,7 +262,7 @@ public class MultiProviderTests
         // Provider A flags file.cs lines 5-10
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED WITH SUGGESTIONS", Description = "A" },
                 InlineComments = new List<InlineComment>
@@ -276,7 +276,7 @@ public class MultiProviderTests
         // Provider B flags file.cs lines 50-55 (no overlap)
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "B" },
                 InlineComments = new List<InlineComment>
@@ -317,7 +317,7 @@ public class MultiProviderTests
     {
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "A" },
                 InlineComments = new List<InlineComment>
@@ -330,7 +330,7 @@ public class MultiProviderTests
 
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "B" },
                 InlineComments = new List<InlineComment>
@@ -371,7 +371,7 @@ public class MultiProviderTests
     {
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "A" },
                 RecommendedVote = 10, // Approved
@@ -380,7 +380,7 @@ public class MultiProviderTests
 
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "NEEDS WORK", Description = "B" },
                 RecommendedVote = -5, // Rejected
@@ -416,7 +416,7 @@ public class MultiProviderTests
     {
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "All good." },
                 RecommendedVote = 10,
@@ -425,7 +425,7 @@ public class MultiProviderTests
 
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "REJECTED", Description = "Major issues." },
                 RecommendedVote = -10,
@@ -464,13 +464,13 @@ public class MultiProviderTests
         // Provider A always throws
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => throw new HttpRequestException("Simulated API failure"),
+            ResultFactory = (_, _, _) => throw new HttpRequestException("Simulated API failure"),
         };
 
         // Provider B returns normally
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "Good code." },
                 InlineComments = new List<InlineComment>
@@ -513,12 +513,12 @@ public class MultiProviderTests
     {
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => throw new HttpRequestException("A failed"),
+            ResultFactory = (_, _, _) => throw new HttpRequestException("A failed"),
         };
 
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => throw new TimeoutException("B timed out"),
+            ResultFactory = (_, _, _) => throw new TimeoutException("B timed out"),
         };
 
         var providers = new List<(string, ICodeReviewService)>
@@ -662,7 +662,7 @@ public class MultiProviderTests
     {
         var providerA = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "A" },
                 RecommendedVote = 10,
@@ -676,7 +676,7 @@ public class MultiProviderTests
 
         var providerB = new FakeCodeReviewService
         {
-            ResultFactory = (_, _) => new CodeReviewResult
+            ResultFactory = (_, _, _) => new CodeReviewResult
             {
                 Summary = new ReviewSummary { Verdict = "APPROVED", Description = "B" },
                 RecommendedVote = 10,

@@ -48,6 +48,76 @@ public class TwoPassReviewTests
     }
 
     [TestMethod]
+    public void BuildPrSummaryUserPrompt_RenameWithNoUnifiedDiff_IncludesModifiedContent()
+    {
+        var service = CreateService();
+        var pr = CreatePr();
+        var files = new List<FileChange>
+        {
+            new FileChange
+            {
+                FilePath = "/src/Renamed.cs",
+                ChangeType = "rename",
+                ModifiedContent = "public class Renamed { }",
+                UnifiedDiff = null,
+            }
+        };
+
+        var prompt = service.BuildPrSummaryUserPrompt(pr, files);
+
+        Assert.IsTrue(prompt.Contains("public class Renamed"),
+            "Rename with no diff should fall back to including ModifiedContent.");
+        Assert.IsFalse(prompt.Contains("```diff"),
+            "Should not include diff block when there is no unified diff.");
+    }
+
+    [TestMethod]
+    public void BuildPrSummaryUserPrompt_EditNoDiffNoContent_ShowsNoDiffMarker()
+    {
+        var service = CreateService();
+        var pr = CreatePr();
+        var files = new List<FileChange>
+        {
+            new FileChange
+            {
+                FilePath = "/src/Empty.cs",
+                ChangeType = "edit",
+                UnifiedDiff = null,
+                ModifiedContent = null,
+                OriginalContent = null,
+            }
+        };
+
+        var prompt = service.BuildPrSummaryUserPrompt(pr, files);
+
+        Assert.IsTrue(prompt.Contains("*(no diff or file content available for this change)*"),
+            "Edit with no diff and no content should show the 'no diff' marker.");
+    }
+
+    [TestMethod]
+    public void BuildPrSummaryUserPrompt_EditNoDiff_FallsBackToOriginalContent()
+    {
+        var service = CreateService();
+        var pr = CreatePr();
+        var files = new List<FileChange>
+        {
+            new FileChange
+            {
+                FilePath = "/src/OldOnly.cs",
+                ChangeType = "edit",
+                UnifiedDiff = null,
+                ModifiedContent = null,
+                OriginalContent = "public class OldOnly { }",
+            }
+        };
+
+        var prompt = service.BuildPrSummaryUserPrompt(pr, files);
+
+        Assert.IsTrue(prompt.Contains("public class OldOnly"),
+            "When no diff and no modified content, should fall back to OriginalContent.");
+    }
+
+    [TestMethod]
     public void BuildPrSummaryUserPrompt_IncludesDiffs()
     {
         var service = CreateService();
@@ -181,23 +251,12 @@ public class TwoPassReviewTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    public async Task Orchestrator_InjectsPass1Summary_IntoPerFileReviews()
+    public async Task Pass1_GeneratePrSummaryAsync_CalledAndReturnsSummary()
     {
-        // Arrange: use the fake service and verify CrossFileSummary is set when ReviewFileAsync is called
-
+        // Arrange: verify GeneratePrSummaryAsync is callable and returns expected results
         var fake = new FakeCodeReviewService();
-        // Override ReviewFileAsync to capture the CrossFileSummary from the PR info
-        var originalReviewFile = fake.ReviewFileAsync;
 
-        // We'll capture via the PrSummaryFactory — the fake service sets it on PrInfo
-        // But actually we need to capture the PullRequestInfo passed to ReviewFileAsync
-        // Let's use a custom approach: override the ResultFactory to capture context
-
-        var ctx = TestServiceBuilder.BuildWithFakeAi(fake);
-        var orchestrator = ctx.Orchestrator;
-
-        // We can't easily intercept ReviewFileAsync on a real orchestrator flow
-        // Instead, verify that the FakeCodeReviewService's GeneratePrSummaryAsync is called
+        // Verify that the FakeCodeReviewService's GeneratePrSummaryAsync is called
         bool pass1Called = false;
         fake.PrSummaryFactory = (pr, files, wi) =>
         {

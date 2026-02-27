@@ -249,10 +249,17 @@ public class ReviewProfileTests
     [TestMethod]
     public void AppSettingsJson_ContainsReviewProfileSection()
     {
+        // Discover the repo root by searching upward for the solution file
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "HVO.AiCodeReview.sln")))
+            dir = dir.Parent;
+        Assert.IsNotNull(dir, "Could not find repo root (HVO.AiCodeReview.sln) from test output directory.");
+
+        var appSettingsPath = Path.Combine(dir!.FullName, "src", "HVO.AiCodeReview", "appsettings.json");
+        Assert.IsTrue(File.Exists(appSettingsPath), $"appsettings.json not found at {appSettingsPath}");
+
         var config = new ConfigurationBuilder()
-            .SetBasePath(Path.GetFullPath(
-                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..",
-                    "src", "HVO.AiCodeReview")))
+            .SetBasePath(Path.GetDirectoryName(appSettingsPath)!)
             .AddJsonFile("appsettings.json")
             .Build();
 

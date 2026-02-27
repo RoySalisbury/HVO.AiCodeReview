@@ -58,7 +58,7 @@ public static class CodeReviewServiceFactory
                     legacySettings.DeploymentName,
                     legacySettings.CustomInstructionsPath,
                     logger,
-                    maxInputLinesPerFile: settings.MaxInputLinesPerFile,
+                    maxInputLinesPerFile: ValidateMaxInputLines(settings.MaxInputLinesPerFile, "global (legacy fallback)"),
                     reviewProfile: reviewProfile);
             }
 
@@ -126,7 +126,8 @@ public static class CodeReviewServiceFactory
         ReviewProfile reviewProfile)
     {
         var type = config.Type.ToLowerInvariant();
-        var maxLines = config.MaxInputLinesPerFile ?? globalMaxInputLines;
+        var maxLines = ValidateMaxInputLines(
+            config.MaxInputLinesPerFile ?? globalMaxInputLines, key);
 
         return type switch
         {
@@ -149,5 +150,18 @@ public static class CodeReviewServiceFactory
                 $"Supported types: azure-openai. " +
                 $"To add a new type, implement ICodeReviewService and register it in CodeReviewServiceFactory.CreateProvider()."),
         };
+    }
+
+    /// <summary>
+    /// Validate that the effective MaxInputLinesPerFile is greater than zero.
+    /// Shared by both the legacy fallback path and <see cref="CreateProvider"/>.
+    /// </summary>
+    private static int ValidateMaxInputLines(int value, string context)
+    {
+        if (value <= 0)
+            throw new InvalidOperationException(
+                $"Invalid MaxInputLinesPerFile configuration for '{context}'. " +
+                $"The effective value must be greater than 0, but was {value}.");
+        return value;
     }
 }

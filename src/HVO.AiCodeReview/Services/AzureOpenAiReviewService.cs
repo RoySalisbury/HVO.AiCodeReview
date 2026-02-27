@@ -26,7 +26,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
     public AzureOpenAiReviewService(
         IOptions<AzureOpenAISettings> settings,
-        ILogger<AzureOpenAiReviewService> logger)
+        ILogger<AzureOpenAiReviewService> logger,
+        IOptions<ReviewProfile>? reviewProfileOptions = null)
         : this(
             settings.Value.Endpoint,
             settings.Value.ApiKey,
@@ -34,7 +35,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
             settings.Value.CustomInstructionsPath,
             logger,
             maxInputLinesPerFile: 5000,
-            reviewProfile: null)
+            reviewProfile: reviewProfileOptions?.Value)
     { }
 
     // ── Factory constructor: used by CodeReviewServiceFactory from ProviderConfig ──
@@ -63,9 +64,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
         _systemPrompt = BuildSystemPrompt(customInstructionsPath);
         _singleFileSystemPrompt = BuildSingleFileSystemPrompt(customInstructionsPath);
         _prSummarySystemPrompt = BuildPrSummarySystemPrompt();
-        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines}, temperature: {Temp}, batch tokens: {BatchTok}, single-file tokens: {SFTok})",
+        _logger.LogInformation("[{Provider}] System prompts assembled (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines}, temperature: {Temp}, batch tokens: {BatchTok}, single-file tokens: {SFTok}, verification tokens: {VerTok}, pr-summary tokens: {PrTok})",
             modelName, _systemPrompt.Length, _singleFileSystemPrompt.Length, _prSummarySystemPrompt.Length,
-            _maxInputLinesPerFile, _reviewProfile.Temperature, _reviewProfile.MaxOutputTokensBatch, _reviewProfile.MaxOutputTokensSingleFile);
+            _maxInputLinesPerFile, _reviewProfile.Temperature, _reviewProfile.MaxOutputTokensBatch, _reviewProfile.MaxOutputTokensSingleFile, _reviewProfile.MaxOutputTokensVerification, _reviewProfile.MaxOutputTokensPrSummary);
     }
 
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
@@ -599,6 +600,28 @@ public class AzureOpenAiReviewService : ICodeReviewService
             else if (file.ChangeType == "delete")
             {
                 sb.AppendLine("*(file deleted)*");
+            }
+            else
+            {
+                // Fallback for rename/edit change types when no unified diff is available
+                if (!string.IsNullOrEmpty(file.ModifiedContent))
+                {
+                    var truncated = TruncateContentToLines(file.ModifiedContent, summaryMaxLines);
+                    sb.AppendLine("```");
+                    sb.AppendLine(truncated);
+                    sb.AppendLine("```");
+                }
+                else if (!string.IsNullOrEmpty(file.OriginalContent))
+                {
+                    var truncated = TruncateContentToLines(file.OriginalContent, summaryMaxLines);
+                    sb.AppendLine("```");
+                    sb.AppendLine(truncated);
+                    sb.AppendLine("```");
+                }
+                else
+                {
+                    sb.AppendLine("*(no diff or file content available for this change)*");
+                }
             }
 
             sb.AppendLine();

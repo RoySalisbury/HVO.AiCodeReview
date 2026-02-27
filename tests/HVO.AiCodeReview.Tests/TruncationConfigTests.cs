@@ -3,7 +3,6 @@ using AiCodeReview.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Tests;
 
@@ -96,7 +95,9 @@ public class TruncationConfigTests
         var result = InvokeTruncate(service, content);
 
         var resultLines = result.Split('\n');
-        // First 100 data lines + 1 blank + 1 marker = 102, but the marker is on its own line
+        // First 100 data lines + 1 blank + 1 marker = 102
+        Assert.AreEqual(102, resultLines.Length,
+            $"Expected 102 lines after truncation (100 data + blank + marker), but got {resultLines.Length}.");
         Assert.IsTrue(result.Contains("... [truncated: 150 more lines] ..."),
             $"Truncation marker must show 150 remaining lines. Got:\n{result[^200..]}");
         // Verify we kept exactly 100 source lines
@@ -191,6 +192,82 @@ public class TruncationConfigTests
         var result = InvokeTruncate(service, content);
         Assert.IsTrue(result.Contains("[truncated: 1 more lines]"),
             "Provider-level override (1000) should take precedence over global (5000).");
+    }
+
+    // ── AC-5: MaxInputLinesPerFile validation ──────────────────────────
+
+    [TestMethod]
+    [ExpectedException(typeof(InvalidOperationException))]
+    public void Factory_ThrowsOnZero_GlobalMaxInputLines()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiProvider:MaxInputLinesPerFile"] = "0",
+                ["AiProvider:Mode"] = "single",
+                ["AiProvider:ActiveProvider"] = "azure-openai",
+                ["AiProvider:Providers:azure-openai:Type"] = "azure-openai",
+                ["AiProvider:Providers:azure-openai:Endpoint"] = "https://fake.openai.azure.com/",
+                ["AiProvider:Providers:azure-openai:ApiKey"] = "fake-key",
+                ["AiProvider:Providers:azure-openai:Model"] = "gpt-4o",
+                ["AiProvider:Providers:azure-openai:Enabled"] = "true",
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
+        services.AddCodeReviewService(config);
+        var sp = services.BuildServiceProvider();
+        // Resolve triggers factory — should throw
+        sp.GetRequiredService<ICodeReviewService>();
+    }
+
+    [TestMethod]
+    [ExpectedException(typeof(InvalidOperationException))]
+    public void Factory_ThrowsOnNegative_PerProviderMaxInputLines()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiProvider:MaxInputLinesPerFile"] = "5000",
+                ["AiProvider:Mode"] = "single",
+                ["AiProvider:ActiveProvider"] = "azure-openai",
+                ["AiProvider:Providers:azure-openai:Type"] = "azure-openai",
+                ["AiProvider:Providers:azure-openai:Endpoint"] = "https://fake.openai.azure.com/",
+                ["AiProvider:Providers:azure-openai:ApiKey"] = "fake-key",
+                ["AiProvider:Providers:azure-openai:Model"] = "gpt-4o",
+                ["AiProvider:Providers:azure-openai:Enabled"] = "true",
+                ["AiProvider:Providers:azure-openai:MaxInputLinesPerFile"] = "-1",
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
+        services.AddCodeReviewService(config);
+        var sp = services.BuildServiceProvider();
+        sp.GetRequiredService<ICodeReviewService>();
+    }
+
+    [TestMethod]
+    [ExpectedException(typeof(InvalidOperationException))]
+    public void Factory_LegacyFallback_ThrowsOnZeroMaxInputLines()
+    {
+        // No providers — triggers legacy fallback path
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiProvider:MaxInputLinesPerFile"] = "0",
+                ["AzureOpenAI:Endpoint"] = "https://fake.openai.azure.com/",
+                ["AzureOpenAI:ApiKey"] = "fake-key",
+                ["AzureOpenAI:DeploymentName"] = "gpt-4o",
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
+        services.AddCodeReviewService(config);
+        var sp = services.BuildServiceProvider();
+        sp.GetRequiredService<ICodeReviewService>();
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────

@@ -27,6 +27,10 @@ public static class CodeReviewServiceFactory
         services.Configure<AiProviderSettings>(
             configuration.GetSection(AiProviderSettings.SectionName));
 
+        // Bind review profile (temperature, tokens, thresholds)
+        services.Configure<ReviewProfile>(
+            configuration.GetSection(ReviewProfile.SectionName));
+
         // Keep legacy AzureOpenAISettings binding for backward compatibility
         // (used by the legacy AzureOpenAiReviewService constructor)
         services.Configure<AzureOpenAISettings>(
@@ -35,6 +39,7 @@ public static class CodeReviewServiceFactory
         services.AddSingleton<ICodeReviewService>(sp =>
         {
             var settings = sp.GetRequiredService<IOptions<AiProviderSettings>>().Value;
+            var reviewProfile = sp.GetRequiredService<IOptions<ReviewProfile>>().Value;
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
 
             // ── Fallback: if no AiProvider section exists, use legacy AzureOpenAI ──
@@ -53,7 +58,8 @@ public static class CodeReviewServiceFactory
                     legacySettings.DeploymentName,
                     legacySettings.CustomInstructionsPath,
                     logger,
-                    maxInputLinesPerFile: settings.MaxInputLinesPerFile);
+                    maxInputLinesPerFile: settings.MaxInputLinesPerFile,
+                    reviewProfile: reviewProfile);
             }
 
             // Build all enabled providers
@@ -61,7 +67,7 @@ public static class CodeReviewServiceFactory
                 .Where(kv => kv.Value.Enabled)
                 .Select(kv => (
                     Name: kv.Value.DisplayName.Length > 0 ? kv.Value.DisplayName : kv.Key,
-                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile)))
+                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile)))
                 .ToList();
 
             if (providers.Count == 0)
@@ -116,7 +122,8 @@ public static class CodeReviewServiceFactory
     /// Extend this method when adding new provider types.
     /// </summary>
     private static ICodeReviewService CreateProvider(
-        string key, ProviderConfig config, ILoggerFactory loggerFactory, int globalMaxInputLines)
+        string key, ProviderConfig config, ILoggerFactory loggerFactory, int globalMaxInputLines,
+        ReviewProfile reviewProfile)
     {
         var type = config.Type.ToLowerInvariant();
         var maxLines = config.MaxInputLinesPerFile ?? globalMaxInputLines;
@@ -129,7 +136,8 @@ public static class CodeReviewServiceFactory
                 config.Model,
                 config.CustomInstructionsPath,
                 loggerFactory.CreateLogger<AzureOpenAiReviewService>(),
-                maxInputLinesPerFile: maxLines),
+                maxInputLinesPerFile: maxLines,
+                reviewProfile: reviewProfile),
 
             // ── Add new provider types here ──────────────────────────────
             // "github-copilot" => new GitHubCopilotReviewService(config, loggerFactory.CreateLogger<GitHubCopilotReviewService>()),

@@ -72,8 +72,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
         _chatClient = client.GetChatClient(modelName);
 
         // Build hardcoded fallback prompts (used when pipeline has no catalog)
-        _fallbackSystemPrompt = BuildSystemPrompt(customInstructionsPath);
-        _fallbackSingleFileSystemPrompt = BuildSingleFileSystemPrompt(customInstructionsPath);
+        _fallbackSystemPrompt = BuildSystemPrompt(_customInstructions);
+        _fallbackSingleFileSystemPrompt = BuildSingleFileSystemPrompt(_customInstructions);
         _fallbackPrSummarySystemPrompt = BuildPrSummarySystemPrompt();
 
         var batchPrompt = GetSystemPrompt();
@@ -688,18 +688,16 @@ public class AzureOpenAiReviewService : ICodeReviewService
         return truncated + $"\n\n... [truncated: {lines.Length - maxLines} more lines] ...";
     }
 
-    private static string BuildSystemPrompt(string? instructionsPath)
+    private static string BuildSystemPrompt(string? customInstructions)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append(IdentityPreamble);
 
-        // Load optional custom instructions from file
-        var custom = LoadCustomInstructions(instructionsPath);
-        if (!string.IsNullOrWhiteSpace(custom))
+        if (!string.IsNullOrWhiteSpace(customInstructions))
         {
             sb.AppendLine();
             sb.AppendLine();
-            sb.AppendLine(custom);
+            sb.AppendLine(customInstructions);
         }
 
         sb.AppendLine();
@@ -709,17 +707,16 @@ public class AzureOpenAiReviewService : ICodeReviewService
         return sb.ToString();
     }
 
-    private static string BuildSingleFileSystemPrompt(string? instructionsPath)
+    private static string BuildSingleFileSystemPrompt(string? customInstructions)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append(IdentityPreamble);
 
-        var custom = LoadCustomInstructions(instructionsPath);
-        if (!string.IsNullOrWhiteSpace(custom))
+        if (!string.IsNullOrWhiteSpace(customInstructions))
         {
             sb.AppendLine();
             sb.AppendLine();
-            sb.AppendLine(custom);
+            sb.AppendLine(customInstructions);
         }
 
         sb.AppendLine();

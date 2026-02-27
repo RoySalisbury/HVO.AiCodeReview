@@ -600,14 +600,21 @@ public class LayeredPromptTests
         var json = JsonSerializer.Serialize(catalog, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(path, json);
 
-        // Wait for FileSystemWatcher to detect the change + debounce
-        Thread.Sleep(500);
+        // Poll for FileSystemWatcher to detect the change (avoids flaky Thread.Sleep)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        bool reloaded = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            var prompt = pipeline.AssemblePrompt("batch");
+            if (prompt != null && prompt.Contains("NEW HOT-RELOADED RULE."))
+            {
+                reloaded = true;
+                break;
+            }
+            Thread.Sleep(100);
+        }
 
-        // The pipeline should have reloaded
-        var prompt2 = pipeline.AssemblePrompt("batch");
-        Assert.IsNotNull(prompt2);
-        Assert.IsTrue(prompt2!.Contains("NEW HOT-RELOADED RULE."),
-            "Hot-reloaded catalog should include the new rule");
+        Assert.IsTrue(reloaded, "Hot-reload should pick up the new rule within 5 seconds");
         Assert.AreEqual(3, pipeline.GetActiveRuleIds("batch").Count);
     }
 

@@ -69,11 +69,12 @@ public sealed class PromptAssemblyPipeline : IDisposable
     /// <returns>Assembled prompt string, or null if no catalog.</returns>
     public string? AssemblePrompt(string scope, string? customInstructions = null)
     {
-        if (_catalog == null)
+        var catalog = _catalog;
+        if (catalog == null)
             return null;
 
-        var cacheKey = $"{scope}|{customInstructions?.GetHashCode() ?? 0}";
-        return _cache.GetOrAdd(cacheKey, _ => BuildPrompt(scope, customInstructions));
+        var cacheKey = $"{scope}|{customInstructions ?? string.Empty}";
+        return _cache.GetOrAdd(cacheKey, _ => BuildPrompt(catalog, scope, customInstructions));
     }
 
     /// <summary>
@@ -82,10 +83,11 @@ public sealed class PromptAssemblyPipeline : IDisposable
     /// </summary>
     public List<string> GetActiveRuleIds(string scope)
     {
-        if (_catalog == null)
+        var catalog = _catalog;
+        if (catalog == null)
             return new List<string>();
 
-        return _catalog.Rules
+        return catalog.Rules
             .Where(r => r.Scope == scope && r.Enabled)
             .OrderBy(r => r.Priority)
             .Select(r => r.Id)
@@ -97,10 +99,11 @@ public sealed class PromptAssemblyPipeline : IDisposable
     /// </summary>
     public List<string> GetCategories()
     {
-        if (_catalog == null)
+        var catalog = _catalog;
+        if (catalog == null)
             return new List<string>();
 
-        return _catalog.Rules
+        return catalog.Rules
             .Select(r => r.Category)
             .Distinct()
             .OrderBy(c => c)
@@ -112,28 +115,26 @@ public sealed class PromptAssemblyPipeline : IDisposable
     /// </summary>
     public List<string> GetScopes()
     {
-        if (_catalog == null)
+        var catalog = _catalog;
+        if (catalog == null)
             return new List<string>();
 
-        return _catalog.Scopes.Keys.OrderBy(s => s).ToList();
+        return catalog.Scopes.Keys.OrderBy(s => s).ToList();
     }
 
     // ─── Assembly ────────────────────────────────────────────────────────
 
-    private string BuildPrompt(string scope, string? customInstructions)
+    private string BuildPrompt(ReviewRuleCatalog catalog, string scope, string? customInstructions)
     {
-        if (_catalog == null)
-            throw new InvalidOperationException("No catalog loaded");
-
-        if (!_catalog.Scopes.TryGetValue(scope, out var scopeConfig))
-            throw new ArgumentException($"Unknown prompt scope '{scope}'. Valid scopes: {string.Join(", ", _catalog.Scopes.Keys)}", nameof(scope));
+        if (!catalog.Scopes.TryGetValue(scope, out var scopeConfig))
+            throw new ArgumentException($"Unknown prompt scope '{scope}'. Valid scopes: {string.Join(", ", catalog.Scopes.Keys)}", nameof(scope));
 
         var sb = new StringBuilder();
 
         // Layer 1: Identity
-        if (scopeConfig.IncludeIdentity && !string.IsNullOrWhiteSpace(_catalog.Identity))
+        if (scopeConfig.IncludeIdentity && !string.IsNullOrWhiteSpace(catalog.Identity))
         {
-            sb.Append(_catalog.Identity);
+            sb.Append(catalog.Identity);
         }
 
         // Layer 2: Custom instructions
@@ -156,7 +157,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
         }
 
         // Layer 4: Numbered rules
-        var rules = _catalog.Rules
+        var rules = catalog.Rules
             .Where(r => r.Scope == scope && r.Enabled)
             .OrderBy(r => r.Priority)
             .ToList();
@@ -187,33 +188,48 @@ public sealed class PromptAssemblyPipeline : IDisposable
     {
         if (_catalogPath == null || !File.Exists(_catalogPath))
         {
-            _catalog = null;
+            _logger.LogWarning(
+                "Review rule catalog path '{Path}' is not available — keeping existing catalog (if any)",
+                _catalogPath);
             return;
         }
 
         try
         {
             var json = File.ReadAllText(_catalogPath);
-            _catalog = JsonSerializer.Deserialize<ReviewRuleCatalog>(json, new JsonSerializerOptions
+            var newCatalog = JsonSerializer.Deserialize<ReviewRuleCatalog>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             });
 
-            if (_catalog != null)
+            if (newCatalog == null)
             {
-                var ruleCount = _catalog.Rules.Count;
-                var scopeCount = _catalog.Scopes.Count;
-                var enabledCount = _catalog.Rules.Count(r => r.Enabled);
-
-                _logger.LogInformation(
-                    "Loaded review rule catalog v{Version}: {ScopeCount} scopes, {RuleCount} rules ({EnabledCount} enabled)",
-                    _catalog.Version, scopeCount, ruleCount, enabledCount);
+                _logger.LogWarning(
+                    "Deserialized review rule catalog from '{Path}' is null — keeping existing catalog",
+                    _catalogPath);
+                return;
             }
+
+            // Defensive null-guard: normalize null collections after deserialization
+            newCatalog.Scopes ??= new Dictionary<string, PromptScope>();
+            newCatalog.Rules ??= new List<ReviewRule>();
+
+            _catalog = newCatalog;
+
+            var ruleCount = newCatalog.Rules.Count;
+            var scopeCount = newCatalog.Scopes.Count;
+            var enabledCount = newCatalog.Rules.Count(r => r.Enabled);
+
+            _logger.LogInformation(
+                "Loaded review rule catalog v{Version}: {ScopeCount} scopes, {RuleCount} rules ({EnabledCount} enabled)",
+                newCatalog.Version, scopeCount, ruleCount, enabledCount);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load review rule catalog from '{Path}' — using hardcoded fallback", _catalogPath);
-            _catalog = null;
+            _logger.LogWarning(
+                ex,
+                "Failed to load review rule catalog from '{Path}' — keeping existing catalog (if any)",
+                _catalogPath);
         }
     }
 
@@ -234,11 +250,14 @@ public sealed class PromptAssemblyPipeline : IDisposable
         {
             _watcher = new FileSystemWatcher(dir, fileName)
             {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
                 EnableRaisingEvents = true,
             };
 
             _watcher.Changed += OnCatalogFileChanged;
+            _watcher.Created += OnCatalogFileChanged;
+            _watcher.Renamed += OnCatalogFileChanged;
+            _watcher.Deleted += OnCatalogFileChanged;
             _logger.LogInformation("Watching for changes to '{Path}'", _catalogPath);
         }
         catch (Exception ex)

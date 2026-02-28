@@ -201,7 +201,7 @@ HVO.AiCodeReview/
 │   └── copilot-session-context.md      # Copilot session context & project history
 │
 ├── scripts/
-│   ├── ai-code-review.ps1              # PowerShell pipeline script
+│   ├── ai-code-review.sh               # Bash pipeline script (curl/jq)
 │   └── azure-pipelines-template.yml    # Azure Pipelines YAML template
 │
 ├── docs/                               # Documentation

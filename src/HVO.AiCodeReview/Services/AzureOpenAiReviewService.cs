@@ -19,6 +19,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
     private readonly int _maxInputLinesPerFile;
     private readonly ReviewProfile _reviewProfile;
 
+    // Model adapter (per-model tuning) — null when no adapter is resolved
+    private readonly ModelAdapter? _modelAdapter;
+
     // Prompt pipeline (layered rule catalog) — null when no catalog is loaded
     private readonly PromptAssemblyPipeline? _pipeline;
     private readonly string? _customInstructions;
@@ -54,13 +57,22 @@ public class AzureOpenAiReviewService : ICodeReviewService
         ILogger<AzureOpenAiReviewService> logger,
         int maxInputLinesPerFile = 5000,
         ReviewProfile? reviewProfile = null,
-        PromptAssemblyPipeline? pipeline = null)
+        PromptAssemblyPipeline? pipeline = null,
+        ModelAdapter? modelAdapter = null)
     {
         _modelName = modelName;
         _logger = logger;
-        _maxInputLinesPerFile = maxInputLinesPerFile;
-        _reviewProfile = reviewProfile ?? new ReviewProfile();
         _pipeline = pipeline;
+        _modelAdapter = modelAdapter;
+
+        // Apply model adapter overrides (temperature, tokens, truncation)
+        var baseProfile = reviewProfile ?? new ReviewProfile();
+        _reviewProfile = modelAdapter != null
+            ? ModelAdapterResolver.ApplyOverrides(baseProfile, modelAdapter)
+            : baseProfile;
+        _maxInputLinesPerFile = modelAdapter != null
+            ? ModelAdapterResolver.GetEffectiveMaxInputLines(maxInputLinesPerFile, modelAdapter)
+            : maxInputLinesPerFile;
 
         // Load custom instructions once (used by both pipeline and fallback paths)
         _customInstructions = LoadCustomInstructions(customInstructionsPath);
@@ -80,8 +92,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
         var singlePrompt = GetSingleFileSystemPrompt();
         var prSummaryPrompt = GetPrSummarySystemPrompt();
         var source = _pipeline?.HasCatalog == true ? "catalog" : "hardcoded";
-        _logger.LogInformation("[{Provider}] System prompts assembled from {Source} (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines}, temperature: {Temp}, batch tokens: {BatchTok}, single-file tokens: {SFTok}, verification tokens: {VerTok}, pr-summary tokens: {PrTok})",
-            modelName, source, batchPrompt.Length, singlePrompt.Length, prSummaryPrompt.Length,
+        var adapterName = _modelAdapter?.Name ?? "none";
+        _logger.LogInformation("[{Provider}] System prompts assembled from {Source}, adapter: {Adapter} (multi-file: {MultiLen} chars, single-file: {SingleLen} chars, pr-summary: {SumLen} chars, max input lines/file: {MaxLines}, temperature: {Temp}, batch tokens: {BatchTok}, single-file tokens: {SFTok}, verification tokens: {VerTok}, pr-summary tokens: {PrTok})",
+            modelName, source, adapterName, batchPrompt.Length, singlePrompt.Length, prSummaryPrompt.Length,
             _maxInputLinesPerFile, _reviewProfile.Temperature, _reviewProfile.MaxOutputTokensBatch, _reviewProfile.MaxOutputTokensSingleFile, _reviewProfile.MaxOutputTokensVerification, _reviewProfile.MaxOutputTokensPrSummary);
     }
 
@@ -92,25 +105,25 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// Uses the pipeline catalog if available, otherwise falls back to hardcoded.
     /// </summary>
     internal string GetSystemPrompt()
-        => _pipeline?.AssemblePrompt("batch", _customInstructions) ?? _fallbackSystemPrompt;
+        => _pipeline?.AssemblePrompt("batch", _customInstructions, _modelAdapter?.Preamble) ?? _fallbackSystemPrompt;
 
     /// <summary>
     /// Returns the system prompt for single-file reviews.
     /// </summary>
     internal string GetSingleFileSystemPrompt()
-        => _pipeline?.AssemblePrompt("single-file", _customInstructions) ?? _fallbackSingleFileSystemPrompt;
+        => _pipeline?.AssemblePrompt("single-file", _customInstructions, _modelAdapter?.Preamble) ?? _fallbackSingleFileSystemPrompt;
 
     /// <summary>
     /// Returns the system prompt for PR-level summary (Pass 1).
     /// </summary>
     internal string GetPrSummarySystemPrompt()
-        => _pipeline?.AssemblePrompt("pass-1") ?? _fallbackPrSummarySystemPrompt;
+        => _pipeline?.AssemblePrompt("pass-1", modelPreamble: _modelAdapter?.Preamble) ?? _fallbackPrSummarySystemPrompt;
 
     /// <summary>
     /// Returns the system prompt for thread verification.
     /// </summary>
     internal string GetThreadVerificationSystemPrompt()
-        => _pipeline?.AssemblePrompt("thread-verification") ?? ThreadVerificationSystemPrompt;
+        => _pipeline?.AssemblePrompt("thread-verification", modelPreamble: _modelAdapter?.Preamble) ?? ThreadVerificationSystemPrompt;
 
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {

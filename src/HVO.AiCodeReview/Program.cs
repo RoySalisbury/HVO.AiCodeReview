@@ -29,6 +29,8 @@ builder.Services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>(client =
 // ---------------------------------------------------------------------------
 builder.Services.AddSingleton<PromptAssemblyPipeline>(sp =>
     new PromptAssemblyPipeline(sp.GetRequiredService<ILoggerFactory>().CreateLogger<PromptAssemblyPipeline>()));
+builder.Services.AddSingleton<ModelAdapterResolver>(sp =>
+    new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
 builder.Services.AddCodeReviewService(builder.Configuration);
 builder.Services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
 builder.Services.AddScoped<ICodeReviewOrchestrator, CodeReviewOrchestrator>();

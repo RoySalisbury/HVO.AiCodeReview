@@ -9,10 +9,11 @@ namespace AiCodeReview.Services;
 /// Assembles AI review prompts from the layered rule catalog.
 ///
 /// Layers (in order):
-///   1. Identity preamble (shared, when scope opts in)
-///   2. Custom instructions (per-provider, when scope opts in)
-///   3. Scope preamble (context + JSON schema)
-///   4. Numbered rules (filtered by scope, sorted by priority, enabled only)
+///   1.  Identity preamble (shared, when scope opts in)
+///   1½. Model adapter preamble (per-model, when provided)
+///   2.  Custom instructions (per-provider, when scope opts in)
+///   3.  Scope preamble (context + JSON schema)
+///   4.  Numbered rules (filtered by scope, sorted by priority, enabled only)
 ///
 /// Supports hot-reload: when the catalog file changes on disk, it is re-read
 /// and the prompt cache is invalidated.
@@ -66,15 +67,16 @@ public sealed class PromptAssemblyPipeline : IDisposable
     /// </summary>
     /// <param name="scope">Prompt scope: "batch", "single-file", "thread-verification", "pass-1".</param>
     /// <param name="customInstructions">Optional custom instructions text to inject.</param>
+    /// <param name="modelPreamble">Optional model adapter preamble (injected between Identity and Custom Instructions).</param>
     /// <returns>Assembled prompt string, or null if no catalog.</returns>
-    public string? AssemblePrompt(string scope, string? customInstructions = null)
+    public string? AssemblePrompt(string scope, string? customInstructions = null, string? modelPreamble = null)
     {
         var catalog = _catalog;
         if (catalog == null)
             return null;
 
-        var cacheKey = $"{scope}|{customInstructions ?? string.Empty}";
-        return _cache.GetOrAdd(cacheKey, _ => BuildPrompt(catalog, scope, customInstructions));
+        var cacheKey = $"{scope}|{customInstructions ?? string.Empty}|{modelPreamble ?? string.Empty}";
+        return _cache.GetOrAdd(cacheKey, _ => BuildPrompt(catalog, scope, customInstructions, modelPreamble));
     }
 
     /// <summary>
@@ -124,7 +126,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
 
     // ─── Assembly ────────────────────────────────────────────────────────
 
-    private string BuildPrompt(ReviewRuleCatalog catalog, string scope, string? customInstructions)
+    private string BuildPrompt(ReviewRuleCatalog catalog, string scope, string? customInstructions, string? modelPreamble = null)
     {
         if (!catalog.Scopes.TryGetValue(scope, out var scopeConfig))
             throw new ArgumentException($"Unknown prompt scope '{scope}'. Valid scopes: {string.Join(", ", catalog.Scopes.Keys)}", nameof(scope));
@@ -135,6 +137,17 @@ public sealed class PromptAssemblyPipeline : IDisposable
         if (scopeConfig.IncludeIdentity && !string.IsNullOrWhiteSpace(catalog.Identity))
         {
             sb.Append(catalog.Identity);
+        }
+
+        // Layer 1.5: Model adapter preamble
+        if (!string.IsNullOrWhiteSpace(modelPreamble))
+        {
+            if (sb.Length > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine();
+            }
+            sb.Append(modelPreamble);
         }
 
         // Layer 2: Custom instructions

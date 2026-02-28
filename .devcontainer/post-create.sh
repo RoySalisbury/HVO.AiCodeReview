@@ -32,7 +32,6 @@ echo "Checking additional toolbelt commands..."
 if command_exists node; then node --version || true; else echo "Warning: node not found"; fi
 if command_exists npm; then npm --version || true; else echo "Warning: npm not found"; fi
 if command_exists python3; then python3 --version || true; else echo "Warning: python3 not found"; fi
-if command_exists pwsh; then pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' || true; else echo "Warning: pwsh not found"; fi
 if command_exists java; then java -version || true; else echo "Warning: java not found"; fi
 if command_exists go; then go version || true; else echo "Warning: go not found"; fi
 if command_exists terraform; then terraform version || true; else echo "Warning: terraform not found"; fi

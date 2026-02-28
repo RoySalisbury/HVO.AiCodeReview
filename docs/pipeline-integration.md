@@ -101,5 +101,5 @@ The `scripts/` folder contains pipeline integration helpers:
 
 | File | Description |
 |------|-------------|
-| `ai-code-review.ps1` | PowerShell script for Azure Pipelines. Calls the review API, sets pipeline output variables (`AI_REVIEW_STATUS`, `AI_REVIEW_RECOMMENDATION`, `AI_REVIEW_ISSUE_COUNT`), and fails the pipeline on "Rejected" or warns on "NeedsWork". |
-| `azure-pipelines-template.yml` | Azure Pipelines YAML template with two options: inline PowerShell (Option A) or external script file (Option B). Conditionally runs on PR builds only. |
+| `ai-code-review.sh` | Bash script for Azure Pipelines. Calls the review API via `curl`/`jq`, sets pipeline output variables (`AI_REVIEW_STATUS`, `AI_REVIEW_RECOMMENDATION`, `AI_REVIEW_ISSUE_COUNT`), and fails the pipeline on "Rejected" or warns on "NeedsWork". |
+| `azure-pipelines-template.yml` | Azure Pipelines YAML template with two options: inline Bash (Option A) or external script file (Option B). Conditionally runs on PR builds only. |

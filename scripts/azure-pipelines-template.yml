@@ -6,6 +6,7 @@
 # Prerequisites:
 #   1. Deploy the AiCodeReview API service
 #   2. Set the CODE_REVIEW_API_URL variable (pipeline variable or variable group)
+#   3. For Bash options: jq must be available on the build agent (ubuntu-latest includes it)
 #
 # This template uses built-in Azure DevOps variables so it works across
 # any project and repository with zero per-repo configuration.
@@ -31,63 +32,76 @@
 
 steps:
   # ---------------------------------------------------------------------------
-  # Option A: Inline script (no external file dependency)
+  # Option A (recommended): Bash inline script
   # ---------------------------------------------------------------------------
-  - task: PowerShell@2
+  - task: Bash@3
     displayName: 'AI Code Review'
     condition: eq(variables['Build.Reason'], 'PullRequest')
     inputs:
       targetType: inline
-      pwsh: true
       script: |
-        $reviewStrategy = if ("$(REVIEW_STRATEGY)" -ne "") { "$(REVIEW_STRATEGY)" } else { "FileByFile" }
-        $body = @{
-            projectName    = "$(System.TeamProject)"
-            repositoryName = "$(Build.Repository.Name)"
-            pullRequestId  = [int]$(System.PullRequest.PullRequestId)
-            reviewStrategy = $reviewStrategy  # FileByFile (default) | Auto | Vector
-        } | ConvertTo-Json
+        set -euo pipefail
+        REVIEW_STRATEGY="${REVIEW_STRATEGY:-FileByFile}"
 
-        Write-Host "##vso[task.setprogress value=5]Submitting AI code review..."
-        Write-Host "Requesting review for PR #$(System.PullRequest.PullRequestId)..."
+        echo "##vso[task.setprogress value=5]Submitting AI code review..."
+        echo "Requesting review for PR #$(System.PullRequest.PullRequestId)..."
 
-        try {
-            $response = Invoke-RestMethod `
-                -Uri "$(CODE_REVIEW_API_URL)/api/review" `
-                -Method POST -Body $body `
-                -ContentType "application/json" `
-                -TimeoutSec 600
-
-            Write-Host "##vso[task.setprogress value=100]Review complete"
-            Write-Host ""
-            Write-Host "Status:  $($response.status)"
-            Write-Host "Verdict: $($response.recommendation)"
-            Write-Host "Issues:  $($response.issueCount) (E:$($response.errorCount) W:$($response.warningCount) I:$($response.infoCount))"
-
-            Write-Host "##vso[task.setvariable variable=AI_REVIEW_STATUS]$($response.status)"
-            Write-Host "##vso[task.setvariable variable=AI_REVIEW_RECOMMENDATION]$($response.recommendation)"
-
-            if ($response.recommendation -eq "Rejected") {
-                Write-Host "##vso[task.logissue type=error]AI Code Review: REJECTED"
-                Write-Host "##vso[task.complete result=Failed;]AI Code Review REJECTED"
-            }
-            elseif ($response.recommendation -eq "NeedsWork") {
-                Write-Host "##vso[task.logissue type=warning]AI Code Review: NEEDS WORK"
-            }
+        BODY=$(cat <<EOF
+        {
+            "projectName": "$(System.TeamProject)",
+            "repositoryName": "$(Build.Repository.Name)",
+            "pullRequestId": $(System.PullRequest.PullRequestId),
+            "reviewStrategy": "${REVIEW_STRATEGY}"
         }
-        catch {
-            Write-Host "##vso[task.logissue type=warning]AI Code Review unavailable: $($_.Exception.Message)"
-            # Don't fail the pipeline if the review service is down
+        EOF
+        )
+
+        RESPONSE=$(curl -s -S --fail \
+            --max-time 600 \
+            -H "Content-Type: application/json" \
+            -d "${BODY}" \
+            "$(CODE_REVIEW_API_URL)/api/review") || {
+            echo "##vso[task.logissue type=warning]AI Code Review unavailable: ${RESPONSE}"
+            exit 0
         }
 
+        STATUS=$(echo "${RESPONSE}" | jq -r '.status // "unknown"')
+        RECOMMENDATION=$(echo "${RESPONSE}" | jq -r '.recommendation // "unknown"')
+        ISSUE_COUNT=$(echo "${RESPONSE}" | jq -r '.issueCount // 0')
+        ERROR_COUNT=$(echo "${RESPONSE}" | jq -r '.errorCount // 0')
+        WARNING_COUNT=$(echo "${RESPONSE}" | jq -r '.warningCount // 0')
+        INFO_COUNT=$(echo "${RESPONSE}" | jq -r '.infoCount // 0')
+
+        echo "##vso[task.setprogress value=100]Review complete"
+        echo ""
+        echo "Status:  ${STATUS}"
+        echo "Verdict: ${RECOMMENDATION}"
+        echo "Issues:  ${ISSUE_COUNT} (E:${ERROR_COUNT} W:${WARNING_COUNT} I:${INFO_COUNT})"
+
+        echo "##vso[task.setvariable variable=AI_REVIEW_STATUS]${STATUS}"
+        echo "##vso[task.setvariable variable=AI_REVIEW_RECOMMENDATION]${RECOMMENDATION}"
+
+        case "${RECOMMENDATION}" in
+            Rejected)
+                echo "##vso[task.logissue type=error]AI Code Review: REJECTED"
+                echo "##vso[task.complete result=Failed;]AI Code Review REJECTED"
+                ;;
+            NeedsWork)
+                echo "##vso[task.logissue type=warning]AI Code Review: NEEDS WORK"
+                ;;
+        esac
+
   # ---------------------------------------------------------------------------
-  # Option B: External script file (if checked into the repo)
+  # Option B: External bash script file (if checked into the repo)
   # ---------------------------------------------------------------------------
-  # - task: PowerShell@2
+  # - task: Bash@3
   #   displayName: 'AI Code Review'
   #   condition: eq(variables['Build.Reason'], 'PullRequest')
+  #   env:
+  #     API_URL: $(CODE_REVIEW_API_URL)
+  #     PROJECT_NAME: $(System.TeamProject)
+  #     REPOSITORY_NAME: $(Build.Repository.Name)
+  #     PULL_REQUEST_ID: $(System.PullRequest.PullRequestId)
   #   inputs:
   #     targetType: filePath
-  #     filePath: '$(Build.SourcesDirectory)/pipeline/ai-code-review.ps1'
-  #     pwsh: true
-  #     arguments: '-ApiUrl "$(CODE_REVIEW_API_URL)"'
+  #     filePath: '$(Build.SourcesDirectory)/scripts/ai-code-review.sh'

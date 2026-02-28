@@ -14,6 +14,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private readonly AzureDevOpsSettings _devOpsSettings;
     private readonly AiProviderSettings _aiProviderSettings;
     private readonly AssistantsSettings _assistantsSettings;
+    private readonly SizeGuardrailsSettings _sizeGuardrails;
     private readonly IReviewRateLimiter _rateLimiter;
     private readonly IGlobalRateLimitSignal _globalRateLimitSignal;
     private readonly ILogger<CodeReviewOrchestrator> _logger;
@@ -26,6 +27,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IOptions<AzureDevOpsSettings> devOpsSettings,
         IOptions<AiProviderSettings> aiProviderSettings,
         IOptions<AssistantsSettings> assistantsSettings,
+        IOptions<SizeGuardrailsSettings> sizeGuardrails,
         IReviewRateLimiter rateLimiter,
         IGlobalRateLimitSignal globalRateLimitSignal,
         ILogger<CodeReviewOrchestrator> logger)
@@ -37,6 +39,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _devOpsSettings = devOpsSettings.Value;
         _aiProviderSettings = aiProviderSettings.Value;
         _assistantsSettings = assistantsSettings.Value;
+        _sizeGuardrails = sizeGuardrails.Value;
         _rateLimiter = rateLimiter;
         _globalRateLimitSignal = globalRateLimitSignal;
         _logger = logger;
@@ -386,6 +389,36 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Replace fileChanges with only reviewable files for AI analysis
         fileChanges = reviewableFiles;
 
+        // ── Size guardrails: warn if PR is large, optionally trim ────────
+        fileChanges = PrioritizeFiles(fileChanges);
+
+        var sizeWarning = EvaluateSizeGuardrails(fileChanges, _sizeGuardrails);
+        if (sizeWarning != null)
+        {
+            _logger.LogWarning("{Label}: {Warning}", reviewLabel, sizeWarning);
+        }
+
+        var deferredFiles = new List<FileChange>();
+        if (_sizeGuardrails.FocusModeEnabled
+            && _sizeGuardrails.FocusModeMaxFiles > 0
+            && fileChanges.Count > _sizeGuardrails.FocusModeMaxFiles)
+        {
+            deferredFiles = fileChanges.Skip(_sizeGuardrails.FocusModeMaxFiles).ToList();
+            fileChanges = fileChanges.Take(_sizeGuardrails.FocusModeMaxFiles).ToList();
+
+            foreach (var df in deferredFiles)
+                df.SkipReason = "deferred (focus mode)";
+            skippedFiles.AddRange(deferredFiles);
+
+            _logger.LogInformation("{Label}: Focus mode active — reviewing top {Kept} files, deferred {Deferred} lower-priority files",
+                reviewLabel, fileChanges.Count, deferredFiles.Count);
+
+            // Update the warning to mention focus-mode trimming
+            sizeWarning = (sizeWarning ?? "Large PR detected.") +
+                $" Focus mode is active — reviewing the top {fileChanges.Count} highest-priority files; " +
+                $"{deferredFiles.Count} lower-priority file(s) were deferred.";
+        }
+
         if (fileChanges.Count == 0)
         {
             _logger.LogWarning("No reviewable file changes found for PR #{PrId}", pullRequestId);
@@ -565,7 +598,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             var summaryMarkdown = await PostSummaryThreadAsync(
                 project, repository, pullRequestId, reviewResult,
                 isReReview, nextReviewNumber, metadata, workItems,
-                skippedFiles, prSummary, reviewDepth, deepAnalysis, progress);
+                skippedFiles, prSummary, reviewDepth, deepAnalysis, progress,
+                sizeWarning);
 
             // ── Cast reviewer vote ──────────────────────────────────────
             var vote = reviewResult.RecommendedVote;
@@ -598,7 +632,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         return BuildSimulationResponse(
             pullRequestId, reviewResult, lineSpecificComments,
             fileChanges, skippedFiles, isReReview, nextReviewNumber, metadata,
-            workItems, prSummary, reviewDepth, deepAnalysis, totalSw, progress);
+            workItems, prSummary, reviewDepth, deepAnalysis, totalSw, progress,
+            sizeWarning);
     }
 
     // ── Extracted helpers from HandleReviewAsync ────────────────────────────
@@ -888,14 +923,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         List<WorkItemInfo>? workItems, List<FileChange> skippedFiles,
         PrSummaryResult? prSummary, ReviewDepth reviewDepth,
         DeepAnalysisResult? deepAnalysis,
-        IProgress<ReviewStatusUpdate>? progress)
+        IProgress<ReviewStatusUpdate>? progress,
+        string? sizeWarning = null)
     {
         ReportProgress(progress, ReviewStep.PostingSummary,
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis);
+            reviewDepth, deepAnalysis, sizeWarning);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -1045,11 +1081,12 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         bool isReReview, int nextReviewNumber, ReviewMetadata metadata,
         List<WorkItemInfo>? workItems, PrSummaryResult? prSummary,
         ReviewDepth reviewDepth, DeepAnalysisResult? deepAnalysis,
-        Stopwatch totalSw, IProgress<ReviewStatusUpdate>? progress)
+        Stopwatch totalSw, IProgress<ReviewStatusUpdate>? progress,
+        string? sizeWarning = null)
     {
         var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis);
+            reviewDepth, deepAnalysis, sizeWarning);
 
         totalSw.Stop();
 
@@ -1796,10 +1833,89 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Counts the total number of changed lines across a set of files.
+    /// Uses <see cref="FileChange.ChangedLineRanges"/> for edits, and line-counts
+    /// of <see cref="FileChange.ModifiedContent"/> for adds (or <see cref="FileChange.OriginalContent"/> for deletes).
+    /// </summary>
+    internal static int CountChangedLines(IEnumerable<FileChange> files)
+    {
+        int total = 0;
+        foreach (var f in files)
+        {
+            total += CountFileChangedLines(f);
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// Counts changed lines for a single file. Uses <see cref="FileChange.ChangedLineRanges"/>
+    /// when available, otherwise falls back to counting non-empty content lines.
+    /// </summary>
+    internal static int CountFileChangedLines(FileChange f)
+    {
+        if (f.ChangedLineRanges.Count > 0)
+        {
+            return f.ChangedLineRanges.Sum(r => r.End - r.Start + 1);
+        }
+
+        // For adds/deletes with no explicit ranges, count content lines
+        var content = f.ModifiedContent ?? f.OriginalContent;
+        if (string.IsNullOrEmpty(content))
+            return 0;
+
+        // Count actual lines, ignoring a trailing newline that would produce an empty final element
+        var lines = content.Split('\n');
+        return lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
+    }
+
+    /// <summary>
+    /// Sorts files by review priority: new files first, then heavily-modified edits,
+    /// then minor edits, then deletes, then renames/moves. Within each category,
+    /// files are ordered by descending number of changed lines.
+    /// </summary>
+    internal static List<FileChange> PrioritizeFiles(List<FileChange> files)
+    {
+        return files
+            .OrderBy(f => ChangeTypePriority(f.ChangeType))
+            .ThenByDescending(f => CountFileChangedLines(f))
+            .ToList();
+
+        static int ChangeTypePriority(string changeType) => changeType.ToLowerInvariant() switch
+        {
+            "add" => 0,
+            "edit" => 1,
+            "delete" => 2,
+            "rename" => 3,
+            _ => 4,
+        };
+    }
+
+    /// <summary>
+    /// Evaluates size guardrails against the current set of reviewable files.
+    /// Returns a human-readable warning string if thresholds are exceeded, or <c>null</c> if within limits.
+    /// </summary>
+    internal static string? EvaluateSizeGuardrails(List<FileChange> reviewableFiles, SizeGuardrailsSettings settings)
+    {
+        var warnings = new List<string>();
+
+        if (settings.WarnFileCount > 0 && reviewableFiles.Count > settings.WarnFileCount)
+            warnings.Add($"{reviewableFiles.Count} reviewable files (threshold: {settings.WarnFileCount})");
+
+        var changedLines = CountChangedLines(reviewableFiles);
+        if (settings.WarnChangedLines > 0 && changedLines > settings.WarnChangedLines)
+            warnings.Add($"{changedLines:N0} changed lines (threshold: {settings.WarnChangedLines:N0})");
+
+        return warnings.Count > 0
+            ? $"Large PR detected — {string.Join("; ", warnings)}. Consider splitting into smaller PRs for more effective reviews."
+            : null;
+    }
+
     internal static string BuildSummaryMarkdown(int pullRequestId, CodeReviewResult result, bool isReReview = false,
         int reviewNumber = 0, ReviewMetadata? priorMetadata = null, List<WorkItemInfo>? workItems = null,
         List<FileChange>? skippedFiles = null, PrSummaryResult? prSummary = null,
-        ReviewDepth reviewDepth = ReviewDepth.Standard, DeepAnalysisResult? deepAnalysis = null)
+        ReviewDepth reviewDepth = ReviewDepth.Standard, DeepAnalysisResult? deepAnalysis = null,
+        string? sizeWarning = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
@@ -1844,6 +1960,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         sb.AppendLine("### Summary");
         sb.AppendLine($"{s.FilesChanged} files changed ({s.EditsCount} edits, {s.AddsCount} adds, {s.DeletesCount} deletes). {s.Description}");
         sb.AppendLine();
+
+        // Size guardrail warning
+        if (!string.IsNullOrWhiteSpace(sizeWarning))
+        {
+            sb.AppendLine($"> :warning: **PR Size Warning**: {sizeWarning}");
+            sb.AppendLine();
+        }
 
         // Note about skipped non-reviewable files
         if (skippedFiles != null && skippedFiles.Count > 0)

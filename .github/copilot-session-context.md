@@ -29,7 +29,7 @@ HVO.AiCodeReview/
 ├── README.md                           # Comprehensive docs (1004 lines)
 ├── docs/                               # Documentation (empty, ready for use)
 ├── scripts/
-│   ├── ai-code-review.ps1              # PowerShell pipeline integration script
+│   ├── ai-code-review.sh               # Bash pipeline integration script (curl/jq)
 │   └── azure-pipelines-template.yml    # Azure Pipelines template
 ├── src/
 │   └── HVO.AiCodeReview/               # Web API project

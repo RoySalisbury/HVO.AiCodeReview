@@ -3,6 +3,11 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "128gb"
+  },
   "features": {
     "ghcr.io/devcontainers/features/git:1": {
       "ppa": true,
@@ -14,21 +19,6 @@
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.12"
     },
-    "ghcr.io/devcontainers/features/java:1": {
-      "version": "21"
-    },
-    "ghcr.io/devcontainers/features/go:1": {
-      "version": "latest"
-    },
-    "ghcr.io/devcontainers/features/terraform:1": {
-      "version": "latest"
-    },
-    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
-      "version": "latest",
-      "helm": "latest",
-      "minikube": "none"
-    },
-    "ghcr.io/devcontainers/features/powershell:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {
       "installDirectlyFromGitHubRelease": true,
       "version": "latest"
@@ -80,13 +70,30 @@
         "editor.codeActionsOnSave": {
           "source.fixAll": "explicit",
           "source.organizeImports": "explicit"
-        }
+        },
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/bin/zsh"
+          },
+          "bash": {
+            "path": "/bin/bash"
+          }
+        },
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.terminal.activateEnvInCurrentTerminal": true,
+        "python.terminal.activateEnvironment": true
       }
     }
   },
-  // Environment variables for dev container (non-sensitive only)
-  // Secrets should be provided via User Secrets or .devcontainer/devcontainer.local.env (gitignored)
-  // See docs/security/secrets-guide.md for comprehensive secret management
+  // Environment variables for the dev container.
+  // The Postgres/Redis passwords below are throwaway dev-only values for the
+  // local dependency containers (bound to 127.0.0.1, never published).
+  // Docker may warn "SecretsUsedInArgOrEnv" — that lint rule targets production
+  // images pushed to registries; this devcontainer image is purely local.
+  // Real secrets (PATs, API keys) belong in User Secrets or
+  // .devcontainer/devcontainer.local.env (gitignored).
+  // See docs/security/secrets-guide.md for comprehensive secret management.
   "containerEnv": {
     "ASPNETCORE_ENVIRONMENT": "Development",
     "DOTNET_ENVIRONMENT": "Development",
@@ -105,15 +112,14 @@
     "LOGGING_LOGLEVEL_DEFAULT": "Information",
     "LOGGING_LOGLEVEL_MICROSOFT_ASPNETCORE": "Warning"
   },
-  "remoteEnv": {},
-  // Port mappings with allInterfaces for Docker-from-Docker accessibility
-  // 5000-5001: Main HVO.SkyMonitor app (HTTP/HTTPS)
-  // 5010-5011: Camera Agent (HTTP/HTTPS)
+  "remoteEnv": {
+    // Forward GitHub token from host so gh CLI works without re-auth
+    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
+    "GH_TOKEN": "${localEnv:GH_TOKEN}"
+  },
+  // Port mappings
+  // 5000-5001: HVO.AiCodeReview API (HTTP/HTTPS)
   // 5432: PostgreSQL, 6379: Redis
-  // 9000-9001: MinIO (API/Console)
-  // 7096: Logic Host HTTPS (dotnet run)
-  // 5174: SkyMonitor container mode (HTTP)
-  // 5130: Camera agent container mode
   "forwardPorts": [
     5000,
     5001,

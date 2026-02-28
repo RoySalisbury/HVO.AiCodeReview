@@ -82,6 +82,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `ThreadManagementTests.cs` | 17 | Unit | Comment thread lifecycle: deduplication, status transitions, fixed-thread resolution, attribution tags. |
 | `BuildSummaryMarkdownTests.cs` | 10 | Unit | Summary thread Markdown formatting: file inventory, verdict display, observation tables. |
 | `RaceConditionTests.cs` | 3 | Unit | Concurrency and thread-safety tests for shared state and parallel review operations. |
+| `ResilienceTests.cs` | 7 | Unit | Azure DevOps HTTP resilience: transient 5xx retry, 429 retry with Retry-After, 408 retry, non-transient 4xx no-retry, retry exhaustion, multiple 429s, DI wiring. |
 | `VectorStoreReviewServiceTests.cs` | 24 | Unit | Vector Store review service: file upload, vector store creation, assistant lifecycle, response parsing, cleanup, error handling. |
 | `VectorStoreIntegrationTest.cs` | 1 | LiveAI | Live Vector Store integration test against real Azure OpenAI Assistants API. |
 | `ModelBenchmarkTests.cs` | 8 | Benchmark | Model quality comparison: 5 individual model tests + 3 all-model comparison tests (one per depth). Runs against 10 known-bad-code issues. Produces comparison tables and cost estimates. |

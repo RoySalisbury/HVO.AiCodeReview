@@ -21,7 +21,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 | [API Reference](docs/api-reference.md) | `POST /api/review`, `GET /api/review/metrics`, `GET /api/review/health` — request/response formats, status codes, field reference. |
 | [Architecture](docs/architecture.md) | Review depth modes (Quick/Standard/Deep), review strategies (FileByFile/Vector/Auto), two-pass architecture, review decision logic, review history & tracking, rate limiting, RPM-aware throttling & cost estimation. |
 | [Pipeline Integration](docs/pipeline-integration.md) | Azure DevOps pipeline YAML, pipeline variables, optional fail-on-NeedsWork, optional gate-with-status, scripts. |
-| [Testing](docs/testing.md) | Disposable test repositories, 6-layer safety system, test categories (337 tests), test infrastructure, running tests, manual utilities, test configuration, test roadmap. |
+| [Testing](docs/testing.md) | Disposable test repositories, 6-layer safety system, test categories (347 tests), test infrastructure, running tests, manual utilities, test configuration, test roadmap. |
 | [Model Benchmarks](docs/model-benchmarks.md) | Known-bad-code test issues, model comparison table, depth → model mapping, running benchmarks. |
 
 ---
@@ -264,7 +264,7 @@ HVO.AiCodeReview/
 │           └── launchSettings.json     # Dev launch profiles
 │
 └── tests/
-    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (337 total)
+    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (347 total)
         ├── HVO.AiCodeReview.Tests.csproj
         ├── appsettings.Test.json           # Test config (gitignored)
         ├── appsettings.Test.template.json  # Test config template
@@ -302,7 +302,7 @@ HVO.AiCodeReview/
 
 ## Testing
 
-337 tests across unit, integration, LiveAI, and benchmark categories. Tests run against disposable Azure DevOps repositories with a 6-layer safety system to prevent accidental deletion.
+347 tests across unit, integration, LiveAI, and benchmark categories. Tests run against disposable Azure DevOps repositories with a 6-layer safety system to prevent accidental deletion.
 
 ```bash
 # All automated tests (fake AI — fast, no API cost)

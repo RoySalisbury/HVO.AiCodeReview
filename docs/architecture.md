@@ -298,6 +298,19 @@ This prevents the thundering-herd problem where multiple concurrent file reviews
 
 ## RPM-Aware Throttling & Cost Estimation
 
+### Azure DevOps HTTP Resilience (Polly)
+
+All Azure DevOps REST API calls go through `Microsoft.Extensions.Http.Resilience` (Polly v8), configured via `AddStandardResilienceHandler` in `Program.cs`. This provides automatic resilience for transient network failures:
+
+| Layer | Configuration | Description |
+|-------|---------------|-------------|
+| **Retry** | 5 attempts, exponential backoff (2s base) with jitter | Retries on 408, 429, 5xx, `HttpRequestException`, and `TimeoutRejectedException`. Respects `Retry-After` headers from 429 responses. |
+| **Circuit Breaker** | 90% failure ratio, 5 min throughput, 15s break | Opens circuit after sustained failures to prevent cascading load on a degraded Azure DevOps instance. |
+| **Total Timeout** | 3 minutes | Outer timeout spanning all retry attempts — prevents indefinite waits. |
+| **Attempt Timeout** | 60 seconds | Per-attempt timeout — cancels individual requests that hang. |
+
+This layer is transparent to application code — `AzureDevOpsService` methods (`Get/Post/SendAsync`) automatically benefit from retry and circuit-breaking without any code changes.
+
 ### RPM-Aware Throttling
 
 During Pass 2 (per-file review), the orchestrator automatically throttles API calls based on the model's RPM (requests per minute) limit from the model adapter metadata:

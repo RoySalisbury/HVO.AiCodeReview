@@ -262,7 +262,7 @@ HVO.AiCodeReview/
 │       │   ├── ICodeReviewServiceResolver.cs # Pass-aware service resolution interface
 │       │   ├── ICodeReviewService.cs       # AI service interface (provider-agnostic)
 │       │   ├── AzureDevOpsService.cs       # Azure DevOps REST API client
-│       │   ├── IAzureDevOpsService.cs      # DevOps service interface
+│       │   ├── IDevOpsService.cs           # DevOps service interface (provider-agnostic)
 │       │   ├── PromptAssemblyPipeline.cs   # Layered prompt assembly with hot-reload
 │       │   ├── ModelAdapterResolver.cs     # Per-model adapter preamble + metadata resolver
 │       │   ├── ReviewRateLimiter.cs        # In-memory PR-level rate limiter
@@ -305,7 +305,8 @@ HVO.AiCodeReview/
         ├── ReviewFlowIntegrationTests.cs   # 3 legacy lifecycle (Ignored)
         └── Helpers/
             ├── FakeCodeReviewService.cs    # Deterministic AI replacement
-            ├── TestServiceBuilder.cs       # Shared DI builder (FakeAi + RealAi)
+            ├── FakeDevOpsService.cs        # In-memory DevOps fake (no real backend)
+            ├── TestServiceBuilder.cs       # Shared DI builder (FakeAi / FullyFake / RealAi)
             └── TestPullRequestHelper.cs    # Disposable repo + 6-layer safety
 ```
 

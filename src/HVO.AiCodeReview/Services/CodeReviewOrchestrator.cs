@@ -7,7 +7,7 @@ namespace AiCodeReview.Services;
 
 public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 {
-    private readonly IAzureDevOpsService _devOpsService;
+    private readonly IDevOpsService _devOpsService;
     private readonly ICodeReviewServiceResolver _passResolver;
     private readonly VectorStoreReviewService _vectorService;
     private readonly ModelAdapterResolver _modelAdapterResolver;
@@ -19,7 +19,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private readonly ILogger<CodeReviewOrchestrator> _logger;
 
     public CodeReviewOrchestrator(
-        IAzureDevOpsService devOpsService,
+        IDevOpsService devOpsService,
         ICodeReviewServiceResolver passResolver,
         VectorStoreReviewService vectorService,
         ModelAdapterResolver modelAdapterResolver,

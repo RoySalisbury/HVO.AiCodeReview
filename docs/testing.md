@@ -98,9 +98,10 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 
 | Component | Purpose |
 |-----------|---------|
-| `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. |
+| `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildFullyFake()` registers both `FakeCodeReviewService` and `FakeDevOpsService` for pure-logic tests with no external dependencies. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. |
 | `TestPullRequestHelper.cs` | Creates/manages disposable test repos with the 6-layer safety system (instance tracking, never-delete list, name prefix, marker file, creation recency, PAT ACL verification). Supports single-file (`PushNewCommitAsync`) and multi-file (`PushMultipleFilesAsync`) pushes for cross-file analysis testing. |
 | `FakeCodeReviewService.cs` | Deterministic fake with `ResultFactory`, `VerificationResultFactory`, and `DeepAnalysisFactory` for custom per-test behavior. Supports `ModelNameOverride` for per-pass model routing tests. Produces 2 stable inline comments per file for dedup testing. |
+| `FakeDevOpsService.cs` | In-memory fake `IDevOpsService` that stores all state locally. Lets tests exercise the full orchestrator + dedup + metadata pipeline without calling a real Azure DevOps backend. Supports seed methods and factory overrides for custom test data. |
 
 ## Running Tests
 

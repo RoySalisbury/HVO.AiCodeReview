@@ -9,12 +9,12 @@ namespace AiCodeReview.Controllers;
 public class ReviewController : ControllerBase
 {
     private readonly ICodeReviewOrchestrator _orchestrator;
-    private readonly IAzureDevOpsService _devOpsService;
+    private readonly IDevOpsService _devOpsService;
     private readonly ILogger<ReviewController> _logger;
 
     public ReviewController(
         ICodeReviewOrchestrator orchestrator,
-        IAzureDevOpsService devOpsService,
+        IDevOpsService devOpsService,
         ILogger<ReviewController> logger)
     {
         _orchestrator = orchestrator;

@@ -148,7 +148,7 @@ public class ResilienceTests
         Assert.AreEqual(3, handler.CallCount, "Expected 2 retries + 1 success = 3 total calls");
     }
 
-    // ── Verify DI wiring produces a working IAzureDevOpsService ─────────
+    // ── Verify DI wiring produces a working IDevOpsService ─────────
 
     [TestMethod]
     [TestCategory("Unit")]
@@ -162,7 +162,7 @@ public class ResilienceTests
             o.PersonalAccessToken = "fake-pat";
         });
 
-        services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>(client =>
+        services.AddHttpClient<IDevOpsService, AzureDevOpsService>(client =>
         {
             client.Timeout = TimeSpan.FromMinutes(5);
         })
@@ -183,9 +183,9 @@ public class ResilienceTests
         });
 
         var sp = services.BuildServiceProvider();
-        var devOps = sp.GetService<IAzureDevOpsService>();
+        var devOps = sp.GetService<IDevOpsService>();
 
-        Assert.IsNotNull(devOps, "IAzureDevOpsService should be resolvable with resilience handler");
+        Assert.IsNotNull(devOps, "IDevOpsService should be resolvable with resilience handler");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -193,11 +193,11 @@ public class ResilienceTests
     // ═══════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Builds an <see cref="IAzureDevOpsService"/> with the standard resilience handler
+    /// Builds an <see cref="IDevOpsService"/> with the standard resilience handler
     /// and a custom <see cref="HttpMessageHandler"/> for controlled responses.
     /// Uses minimal retry delays for fast test execution.
     /// </summary>
-    private static IAzureDevOpsService BuildServiceWithResilience(FakeResponseHandler handler)
+    private static IDevOpsService BuildServiceWithResilience(FakeResponseHandler handler)
     {
         var services = new ServiceCollection();
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
@@ -207,7 +207,7 @@ public class ResilienceTests
             o.PersonalAccessToken = "fake-pat";
         });
 
-        services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>()
+        services.AddHttpClient<IDevOpsService, AzureDevOpsService>()
             .ConfigurePrimaryHttpMessageHandler(() => handler)
             .AddStandardResilienceHandler(options =>
             {
@@ -227,7 +227,7 @@ public class ResilienceTests
             });
 
         var sp = services.BuildServiceProvider();
-        return sp.GetRequiredService<IAzureDevOpsService>();
+        return sp.GetRequiredService<IDevOpsService>();
     }
 
     /// <summary>

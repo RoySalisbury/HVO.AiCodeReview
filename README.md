@@ -14,6 +14,11 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
   - [Multi-Provider AI Configuration](#multi-provider-ai-configuration)
   - [Environment Variables](#environment-variables)
   - [Custom Review Instructions](#custom-review-instructions)
+  - [Prompt Layers](#prompt-layers-in-order)
+  - [Prompt Scopes](#prompt-scopes)
+  - [Rule Catalog](#rule-catalog-review-rulesjson)
+  - [Model Adapters](#model-adapters)
+  - [Legacy Custom Instructions](#legacy-custom-instructions)
 - [Running the Service](#running-the-service)
   - [Local Development](#local-development)
   - [Docker / Container](#docker--container)
@@ -23,6 +28,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
   - [GET /api/review/metrics](#get-apireviewmetrics)
   - [GET /api/review/health](#get-apireviewhealth)
 - [Azure DevOps Pipeline Integration](#azure-devops-pipeline-integration)
+- [Two-Pass Review Architecture](#two-pass-review-architecture)
 - [Review Decision Logic](#review-decision-logic)
 - [Review History & Tracking](#review-history--tracking)
 - [Rate Limiting](#rate-limiting)
@@ -45,16 +51,23 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 | Feature | Description |
 |---------|-------------|
 | **AI-Powered Review** | Uses Azure OpenAI with a configurable model deployment to analyze diffs and produce structured reviews with per-file verdicts, inline comments, and observations. |
+| **Two-Pass Architecture** | Pass 1 generates a cross-file PR summary for context. Pass 2 reviews each file individually with that context injected, improving accuracy for multi-file changes. |
+| **Layered Prompt Architecture** | System prompts are assembled from a versioned rule catalog (`review-rules.json`) with scoped rules, priorities, hot-reload, and per-scope identity/custom-instruction toggles. |
+| **Per-Model Adapter** | Model-specific preambles (`ModelAdapterResolver`) tune each AI model's behavior — e.g., adjusting verbosity, severity calibration, or output format hints per deployment. |
 | **Inline PR Comments** | Posts targeted inline comments on specific lines with severity levels (Bug, Security, Concern, Performance, Suggestion). |
 | **Summary Thread** | Posts a comprehensive review summary as a PR comment thread with file inventory, per-file reviews, observations, and overall verdict. |
 | **Reviewer Vote** | Automatically adds itself as a reviewer with a vote (Approved / Approved with Suggestions / Waiting for Author / Rejected) on non-draft PRs. |
 | **Smart Re-Review** | Detects new commits and only re-reviews when code has actually changed. Deduplicates inline comments to avoid repeating feedback. |
 | **Draft PR Awareness** | Reviews draft PRs without voting. Automatically submits a vote when a draft transitions to active (vote-only flow). |
-| **Review History** | Full history stored in PR properties (source of truth) and appended as a visible table in the PR description. |
+| **Review History** | Full history stored in PR properties (source of truth) and appended as a visible table in the PR description. History is automatically pruned to stay within Azure DevOps property size limits. |
 | **AI Metrics** | Captures token counts (prompt, completion, total), model name, AI latency, and total review duration per review. |
 | **Metrics API** | Dedicated endpoint returns full review history and aggregated AI metrics for any PR. |
+| **Multi-Provider Consensus** | Fan-out to multiple AI models; only comments that meet the agreement threshold are posted. Each comment shows which models flagged it. |
+| **Configurable Review Profile** | Adjust severity thresholds, comment density limits, file truncation size, and parallel review concurrency via `appsettings.json`. |
 | **Rate Limiting** | In-memory cooldown prevents the same PR from being reviewed too frequently. Configurable interval; blocks early before any API calls. |
 | **Configurable Prompt** | Domain-specific review instructions loaded from a JSON file, injected between the fixed identity preamble and response format rules. |
+| **Health Check** | `/api/review/health` verifies Azure DevOps connectivity and reports degraded status if dependencies are unreachable. |
+| **CancellationToken Support** | API endpoints propagate cancellation tokens so disconnected callers don't continue consuming AI tokens. |
 | **Tag / Label** | Applies a decorative `ai-code-review` label to reviewed PRs for easy filtering in the PR list. |
 | **Swagger UI** | Interactive API documentation available at `/swagger` in development mode. |
 
@@ -63,50 +76,59 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 ## Architecture
 
 ```
-┌─────────────────────┐       ┌──────────────────────────────┐
-│  Azure DevOps       │       │  AI Code Review Service       │
-│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API (.NET 8)│
-└─────────────────────┘       │                              │
-                              │  ┌────────────────────────┐  │
-                              │  │ ReviewController        │  │
-                              │  └───────────┬────────────┘  │
-                              │              │               │
-                              │  ┌───────────▼────────────┐  │
-                              │  │ CodeReviewOrchestrator  │  │
-                              │  └──┬────────────────┬────┘  │
-                              │     │                │       │
-                              │  ┌──▼───┐   ┌────────▼────┐  │
-                              │  │Azure │   │ CodeReview  │  │
-                              │  │DevOps│   │ Service     │  │
-                              │  │Svc   │   │ Factory     │  │
-                              │  └──┬───┘   └──┬──────┬───┘  │
-                              │     │          │      │      │
-                              │     │    ┌─────▼┐  ┌──▼────┐ │
-                              │     │    │Single│  │Consen-│ │
-                              │     │    │ AI   │  │sus    │ │
-                              │     │    │Review│  │Review │ │
-                              │     │    └──┬───┘  └──┬────┘ │
-                              └─────┼───────┼─────────┼──────┘
-                                    │       │         │
-                              ┌─────▼─────┐ │  ┌──────▼─────┐
-                              │ Azure     │ │  │ Multiple   │
-                              │ DevOps    │ └──▶ AI Models  │
-                              │ REST API  │    │ (fan-out)  │
-                              └───────────┘    └────────────┘
+┌─────────────────────┐       ┌──────────────────────────────────┐
+│  Azure DevOps       │       │  AI Code Review Service           │
+│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API (.NET 8)    │
+└─────────────────────┘       │                                  │
+                              │  ┌────────────────────────────┐  │
+                              │  │ ReviewController            │  │
+                              │  │ (CancellationToken support) │  │
+                              │  └───────────┬────────────────┘  │
+                              │              │                   │
+                              │  ┌───────────▼────────────────┐  │
+                              │  │ CodeReviewOrchestrator      │  │
+                              │  │ (Two-Pass Architecture)     │  │
+                              │  └──┬────────┬────────┬───────┘  │
+                              │     │        │        │          │
+                              │  ┌──▼───┐ ┌──▼─────┐ ┌▼───────┐ │
+                              │  │Azure │ │Prompt  │ │Code    │ │
+                              │  │DevOps│ │Assembly│ │Review  │ │
+                              │  │Svc   │ │Pipeline│ │Factory │ │
+                              │  └──┬───┘ └──┬─────┘ └┬────┬──┘ │
+                              │     │        │        │    │    │
+                              │     │   ┌────▼────┐   │    │    │
+                              │     │   │Model    │   │    │    │
+                              │     │   │Adapter  │   │    │    │
+                              │     │   │Resolver │   │    │    │
+                              │     │   └─────────┘   │    │    │
+                              │     │           ┌─────▼┐ ┌─▼──┐ │
+                              │     │           │Single│ │Con-│ │
+                              │     │           │ AI   │ │sen-│ │
+                              │     │           │Review│ │sus │ │
+                              │     │           └──┬───┘ └─┬──┘ │
+                              └─────┼──────────────┼───────┼────┘
+                                    │              │       │
+                              ┌─────▼─────┐        │ ┌─────▼────┐
+                              │ Azure     │        │ │ Multiple │
+                              │ DevOps    │        └─▶ AI Models│
+                              │ REST API  │          │ (fan-out)│
+                              └───────────┘          └──────────┘
 ```
 
 **Flow:**
 
-1. A pipeline task (or manual call) sends `POST /api/review` with the PR details.
+1. A pipeline task (or manual call) sends `POST /api/review` with the PR details. CancellationToken is propagated from the HTTP request.
 2. The **Rate Limiter** checks if the PR was reviewed too recently — rejects immediately if so.
 3. The **Orchestrator** fetches PR state and metadata from Azure DevOps, then decides the action:
-   - **Full Review** — first review; calls the AI, posts comments, votes.
+   - **Full Review** — first review; calls the AI in two passes, posts comments, votes.
    - **Re-Review** — new commits detected; calls the AI again, deduplicates comments, resolves fixed threads via AI verification.
    - **Vote Only** — draft-to-active transition with no code changes; submits vote only.
    - **Skip** — no changes since last review; records a skip event in history.
-4. The **CodeReviewServiceFactory** creates either a single-provider or **ConsensusReviewService** (fan-out to multiple AI models, merge by agreement threshold).
-5. Each file is reviewed in parallel (controlled by `MaxParallelReviews`). AI responses are validated, inline comments are filtered by changed-line proximity and density thresholds, and false positives are detected.
-6. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
+4. **Pass 1** generates a PR-level summary (cross-file context, work item alignment) using full diff context.
+5. **Pass 2** reviews each file in parallel (controlled by `MaxParallelReviews`), injecting the Pass 1 summary for cross-file awareness. The **PromptAssemblyPipeline** builds prompts from the versioned rule catalog; the **ModelAdapterResolver** injects model-specific tuning.
+6. The **CodeReviewServiceFactory** creates either a single-provider or **ConsensusReviewService** (fan-out to multiple AI models, merge by agreement threshold).
+7. AI responses are validated, inline comments are filtered by changed-line proximity and density thresholds, and false positives are detected.
+8. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
 
 ---
 
@@ -303,13 +325,88 @@ This is the recommended approach for production / CI environments — avoid stor
 
 ### Custom Review Instructions
 
-The AI system prompt is assembled from three parts:
+The AI system prompt is assembled by the **Prompt Assembly Pipeline** from a layered rule catalog:
 
-1. **Identity Preamble** (hardcoded) — Establishes the AI as a senior code reviewer.
-2. **Custom Instructions** (optional, from file) — Domain-specific review guidance.
-3. **Response Format Rules** (hardcoded) — Mandates the structured JSON output schema.
+#### Prompt Layers (in order)
 
-To customize what the AI checks, edit `custom-instructions.json`:
+| Layer | Source | Description |
+|-------|--------|-------------|
+| 1. Identity | `review-rules.json` → `identity` | Establishes the AI as a senior code reviewer. Shared across scopes that opt in. |
+| 1½. Model Adapter | `ModelAdapterResolver` | Per-model tuning preamble (e.g., adjusting verbosity for GPT-4o vs GPT-4.1). Loaded from `model-adapters.json` catalog file. |
+| 2. Custom Instructions | `custom-instructions.json` | Domain-specific review guidance (per-provider). Injected for scopes that opt in. |
+| 3. Scope Preamble | `review-rules.json` → `scopes.{scope}.preamble` | Context and JSON schema for the specific prompt scope. |
+| 4. Numbered Rules | `review-rules.json` → `rules[]` | Filtered by scope, sorted by priority, enabled-only. Numbered automatically. |
+
+#### Prompt Scopes
+
+| Scope | Used For |
+|-------|----------|
+| `pass-1` | PR-level summary generation (cross-file context) |
+| `single-file` | Per-file AI review (Pass 2) |
+| `batch` | Legacy batch review (backward compatible) |
+| `thread-verification` | Verifying whether prior comments are still valid |
+
+#### Rule Catalog (`review-rules.json`)
+
+The rule catalog is a versioned JSON file with hot-reload support (FileSystemWatcher-based debounce):
+
+```json
+{
+  "version": "1.0",
+  "identity": "You are a senior code reviewer...",
+  "scopes": {
+    "single-file": {
+      "preamble": "Review this single file...",
+      "rulesHeader": "## Review Rules",
+      "includeIdentity": true,
+      "includeCustomInstructions": true
+    }
+  },
+  "rules": [
+    {
+      "id": "SEC-001",
+      "scope": "single-file",
+      "category": "Security",
+      "priority": 1,
+      "text": "Flag hardcoded secrets, API keys, or connection strings.",
+      "enabled": true
+    }
+  ]
+}
+```
+
+Rules can be toggled, reordered, or scoped without restarting the service. The pipeline caches assembled prompts and invalidates on file change.
+
+#### Model Adapters
+
+The `ModelAdapterResolver` loads model-specific preambles from a single `model-adapters.json` catalog file:
+
+```json
+{
+  "adapters": [
+    {
+      "name": "gpt-4o-tuning",
+      "modelPattern": "gpt-4o",
+      "promptStyle": "imperative",
+      "preamble": "You tend to be verbose. Keep inline comments concise (1-2 sentences max).",
+      "quirks": ["Tends to over-explain obvious issues"]
+    },
+    {
+      "name": "gpt-4.1-tuning",
+      "modelPattern": "gpt-4\\.1",
+      "promptStyle": "imperative",
+      "preamble": "Be thorough but avoid repeating the same concern across multiple files.",
+      "quirks": []
+    }
+  ]
+}
+```
+
+Adapters are evaluated in order; the first adapter whose `modelPattern` regex matches (case-insensitive) wins. If no adapter matches, a built-in default is used. The file is resolved from the application base directory (`model-adapters.json` next to the executable).
+
+#### Legacy Custom Instructions
+
+For simpler setups, you can still use `custom-instructions.json` directly:
 
 ```json
 {
@@ -317,7 +414,7 @@ To customize what the AI checks, edit `custom-instructions.json`:
 }
 ```
 
-If the file doesn't exist or the path is empty, no custom instructions are injected — the AI still performs a thorough review using its base instructions.
+If no `review-rules.json` catalog exists, the pipeline falls back to hardcoded prompts. If the file doesn't exist or the path is empty, no custom instructions are injected — the AI still performs a thorough review using its base instructions.
 
 ---
 
@@ -559,7 +656,7 @@ GET /api/review/metrics?project=OneVision&repository=MyRepo&pullRequestId=12345
 
 ### GET /api/review/health
 
-Simple health check endpoint.
+Health check endpoint. Verifies the service is running and can reach Azure DevOps.
 
 **Request:**
 
@@ -567,14 +664,30 @@ Simple health check endpoint.
 GET /api/review/health
 ```
 
-**Response:**
+**Response (healthy):**
 
 ```json
 {
   "status": "healthy",
-  "timestamp": "2026-02-14T00:55:00.000Z"
+  "timestamp": "2026-02-14T00:55:00.000Z",
+  "azureDevOps": "connected"
 }
 ```
+
+**Response (degraded):**
+
+```json
+{
+  "status": "degraded",
+  "timestamp": "2026-02-14T00:55:00.000Z",
+  "azureDevOps": "unreachable: Connection refused"
+}
+```
+
+| Code | Status | When |
+|------|--------|------|
+| `200` | healthy | Service running, Azure DevOps reachable |
+| `503` | degraded | Service running, Azure DevOps unreachable |
 
 ---
 
@@ -674,6 +787,31 @@ If you want the pipeline to pass even when the AI review finds issues (advisory 
               exit 1
             fi
 ```
+
+---
+
+## Two-Pass Review Architecture
+
+When a full review or re-review is triggered, the orchestrator uses a two-pass architecture for higher-quality results:
+
+### Pass 1: PR Summary (Cross-File Context)
+
+- Sends the complete PR diff (all files) to the AI in a single call
+- Generates a PR-level summary: overall assessment, cross-file dependencies, work item alignment
+- Uses the `pass-1` prompt scope (lightweight rules, no per-file verdicts)
+- Result is cached and injected as context into every Pass 2 call
+
+### Pass 2: Per-File Review (Parallel)
+
+- Each file is reviewed individually in parallel (up to `MaxParallelReviews` concurrent)
+- The Pass 1 summary is injected into each file's prompt, giving the AI cross-file awareness
+- Uses the `single-file` prompt scope (full rule set, detailed verdicts)
+- Results are merged and deduplicated before posting
+
+This architecture provides better accuracy than single-pass batch review because:
+1. Each file gets the AI's full attention (no context window competition)
+2. Cross-file context is provided via the Pass 1 summary
+3. Parallel execution maintains performance despite reviewing files individually
 
 ---
 
@@ -801,9 +939,10 @@ HVO.AiCodeReview/
 │       ├── appsettings.Development.json        # Dev overrides (gitignored)
 │       ├── appsettings.Development.template.json # Dev config template
 │       ├── custom-instructions.json    # Optional AI review instructions
+│       ├── review-rules.json           # Layered prompt rule catalog (hot-reloadable)
 │       │
 │       ├── Controllers/
-│       │   └── CodeReviewController.cs # API endpoints
+│       │   └── CodeReviewController.cs # API endpoints (w/ CancellationToken)
 │       │
 │       ├── Models/
 │       │   ├── AiProviderSettings.cs       # Multi-provider AI configuration
@@ -814,12 +953,13 @@ HVO.AiCodeReview/
 │       │   ├── PullRequestInfo.cs          # PR info from Azure DevOps
 │       │   ├── ReviewMetadata.cs           # PR properties metadata
 │       │   ├── ReviewMetricsResponse.cs    # Metrics API response DTO
+│       │   ├── ReviewProfile.cs            # Configurable review profile (thresholds, density)
 │       │   ├── ReviewRequest.cs            # POST request DTO
 │       │   ├── ReviewResponse.cs           # POST response DTO
 │       │   └── ReviewStatusUpdate.cs       # Progress tracking model
 │       │
 │       ├── Services/
-│       │   ├── CodeReviewOrchestrator.cs   # Main review flow orchestration
+│       │   ├── CodeReviewOrchestrator.cs   # Two-pass review flow orchestration
 │       │   ├── ICodeReviewOrchestrator.cs  # Orchestrator interface
 │       │   ├── AzureOpenAiReviewService.cs # Azure OpenAI provider implementation
 │       │   ├── ConsensusReviewService.cs   # Multi-provider consensus aggregator
@@ -827,20 +967,30 @@ HVO.AiCodeReview/
 │       │   ├── ICodeReviewService.cs       # AI service interface (provider-agnostic)
 │       │   ├── AzureDevOpsService.cs       # Azure DevOps REST API client
 │       │   ├── IAzureDevOpsService.cs      # DevOps service interface
+│       │   ├── PromptAssemblyPipeline.cs   # Layered prompt assembly with hot-reload
+│       │   ├── ModelAdapterResolver.cs     # Per-model adapter preamble resolver
 │       │   └── ReviewRateLimiter.cs        # In-memory rate limiter
 │       │
 │       └── Properties/
 │           └── launchSettings.json     # Dev launch profiles
 │
 └── tests/
-    └── HVO.AiCodeReview.Tests/         # MSTest integration tests
+    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (219 total)
         ├── HVO.AiCodeReview.Tests.csproj
         ├── appsettings.Test.json           # Test config (gitignored)
         ├── appsettings.Test.template.json  # Test config template
         ├── ReviewLifecycleTests.cs         # 5 parallel lifecycle tests
         ├── ServiceIntegrationTests.cs      # 7 service-level tests
         ├── UnifiedDiffTests.cs             # 9 diff algorithm unit tests
-        ├── MultiProviderTests.cs           # 17 factory + consensus tests
+        ├── MultiProviderTests.cs           # 18 factory + consensus tests
+        ├── LayeredPromptTests.cs           # 38 prompt pipeline tests
+        ├── ModelAdapterTests.cs            # 35 model adapter tests
+        ├── TwoPassReviewTests.cs           # 21 two-pass architecture tests
+        ├── ReviewProfileTests.cs           # 13 review profile tests
+        ├── TruncationConfigTests.cs        # 14 truncation config tests
+        ├── FileClassificationTests.cs      # 24 file classification tests
+        ├── ThreadManagementTests.cs        # 17 thread management tests
+        ├── BuildSummaryMarkdownTests.cs    # 10 summary formatting tests
         ├── AiQualityVerificationTests.cs   # 3 known-bad-code LiveAI tests
         ├── AiSmokeTest.cs                 # 2 manual AI smoke tests
         ├── ReviewFlowIntegrationTests.cs  # Legacy lifecycle (Ignored)
@@ -925,10 +1075,18 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `ReviewLifecycleTests.cs` | 5 | Integration | Independent, parallelizable lifecycle tests: first review, skip, re-review dedup, draft→active vote-only, reset + re-review. Each test creates its own disposable repo. |
 | `ServiceIntegrationTests.cs` | 7 | Integration | History round-trips, ReviewCount, description table, tag resilience, metrics API, property read/write, description PATCH. Each test gets its own disposable repo. |
 | `UnifiedDiffTests.cs` | 9 | Unit | LCS-based unified diff computation and `@@ hunk @@` header parsing. Pure unit tests — no external dependencies. |
-| `MultiProviderTests.cs` | 17 | Unit | Factory tests (fallback, single, consensus, unknown type, disabled provider), consensus aggregation (overlap detection, threshold, voting, metrics), and settings binding. No external dependencies. |
+| `MultiProviderTests.cs` | 18 | Unit | Factory tests (fallback, single, consensus, unknown type, disabled provider), consensus aggregation (overlap detection, threshold, voting, metrics), and settings binding. No external dependencies. |
+| `LayeredPromptTests.cs` | 38 | Unit | Prompt assembly pipeline tests: scope filtering, rule ordering, identity/custom-instruction toggles, cache behavior, hot-reload, model adapter injection, and edge cases. |
+| `ModelAdapterTests.cs` | 35 | Unit | Model adapter resolver tests: pattern matching, file loading, fallback behavior, multi-adapter scenarios, and caching. |
+| `TwoPassReviewTests.cs` | 21 | Unit | Two-pass architecture: Pass 1 summary generation, Pass 2 cross-file context injection, merge logic, and fallback when Pass 1 fails. |
+| `ReviewProfileTests.cs` | 13 | Unit | Configurable review profile: severity thresholds, density settings, truncation limits, and defaults. |
+| `TruncationConfigTests.cs` | 14 | Unit | File truncation limit configuration: default 5000 lines, configurable override, edge cases. |
+| `FileClassificationTests.cs` | 24 | Unit | File type detection, binary exclusion, generated-file detection, language categorization. |
+| `ThreadManagementTests.cs` | 17 | Unit | Comment thread lifecycle: deduplication, status transitions, fixed-thread resolution, attribution tags. |
+| `BuildSummaryMarkdownTests.cs` | 10 | Unit | Summary thread Markdown formatting: file inventory, verdict display, observation tables. |
 | `AiQualityVerificationTests.cs` | 3 | LiveAI | Push code with **known, deliberate issues** (hardcoded secrets, SQL injection, null derefs, resource leaks) and verify the real AI flags them. Includes a fix-and-reverify cycle. Run with `--filter TestCategory=LiveAI`. |
 | `AiSmokeTest.cs` | 2 | Manual | Manual-only tests that call real Azure OpenAI (basic prompt + JSON mode). Run with `--filter TestCategory=Manual`. |
-| `ReviewFlowIntegrationTests.cs` | 1 (Ignored) | — | Legacy monolithic 7-scenario lifecycle test. Replaced by `ReviewLifecycleTests.cs`. Kept for reference. |
+| `ReviewFlowIntegrationTests.cs` | 3 (Ignored) | — | Legacy monolithic lifecycle test. Replaced by `ReviewLifecycleTests.cs`. Kept for reference. |
 
 ### Test Infrastructure
 

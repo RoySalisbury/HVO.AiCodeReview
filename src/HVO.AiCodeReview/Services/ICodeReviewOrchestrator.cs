@@ -22,5 +22,6 @@ public interface ICodeReviewOrchestrator
         int pullRequestId,
         IProgress<ReviewStatusUpdate>? progress = null,
         bool forceReview = false,
-        bool simulationOnly = false);
+        bool simulationOnly = false,
+        CancellationToken cancellationToken = default);
 }

@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AiCodeReview.Models;
 using Microsoft.Extensions.Options;
 
@@ -12,6 +13,15 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
     private readonly AzureDevOpsSettings _settings;
     private readonly ILogger<AzureDevOpsService> _logger;
     private const string ApiVersion = "api-version=7.1";
+
+    // ── Pre-compiled HTML-stripping regexes (avoid re-creating per call) ─
+    private static readonly Regex BrRegex = new(@"<br\s*/?>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex LiOpenRegex = new(@"<li>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex LiCloseRegex = new(@"</li>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex PCloseRegex = new(@"</p>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex DivCloseRegex = new(@"</div>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex AllTagsRegex = new(@"<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex MultiNewlineRegex = new(@"\n{3,}", RegexOptions.Compiled);
 
     // Lazy-resolved identity ID -- populated from config or auto-discovered from PAT
     private string? _resolvedIdentityId;
@@ -81,6 +91,12 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
 
     private string BaseUrl(string project, string repository) =>
         $"https://dev.azure.com/{_settings.Organization}/{project}/_apis/git/repositories/{repository}";
+
+    /// <inheritdoc />
+    public async Task<string?> ResolveServiceIdentityAsync()
+    {
+        return await GetIdentityIdAsync();
+    }
 
     public async Task<PullRequestInfo> GetPullRequestAsync(string project, string repository, int pullRequestId)
     {
@@ -316,11 +332,26 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
         var history = await GetReviewHistoryAsync(project, repository, pullRequestId);
         history.Add(entry);
 
-        var historyJson = JsonSerializer.Serialize(history, new JsonSerializerOptions
+        var jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false,
-        });
+        };
+
+        var historyJson = JsonSerializer.Serialize(history, jsonOptions);
+
+        // Azure DevOps PR properties have a ~4 KB limit per value.
+        // If the serialized history exceeds the threshold, prune the oldest entries
+        // (keeping the first and last entries for bookend context).
+        const int MaxPropertyLength = 3800; // leave headroom for JSON-Patch envelope
+        while (historyJson.Length > MaxPropertyLength && history.Count > 2)
+        {
+            _logger.LogWarning(
+                "Review history for PR #{PrId} exceeds {Max} chars ({Len}) — pruning oldest entry (#{Num})",
+                pullRequestId, MaxPropertyLength, historyJson.Length, history[1].ReviewNumber);
+            history.RemoveAt(1); // keep index 0 (first review) for reference
+            historyJson = JsonSerializer.Serialize(history, jsonOptions);
+        }
 
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/properties?{PropsApiVersion}";
 
@@ -900,6 +931,7 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
 
     /// <summary>
     /// Strip HTML tags from Azure DevOps rich-text fields, converting to plain text.
+    /// Uses pre-compiled static Regex instances for performance.
     /// </summary>
     internal static string StripHtml(string html)
     {
@@ -907,20 +939,20 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
             return string.Empty;
 
         // Convert common block elements to newlines
-        var text = System.Text.RegularExpressions.Regex.Replace(html, @"<br\s*/?>", "\n");
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"<li>", "- ");
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"</li>", "\n");
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"</p>", "\n");
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"</div>", "\n");
+        var text = BrRegex.Replace(html, "\n");
+        text = LiOpenRegex.Replace(text, "- ");
+        text = LiCloseRegex.Replace(text, "\n");
+        text = PCloseRegex.Replace(text, "\n");
+        text = DivCloseRegex.Replace(text, "\n");
 
         // Strip remaining tags
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"<[^>]+>", "");
+        text = AllTagsRegex.Replace(text, "");
 
         // Decode HTML entities
         text = System.Net.WebUtility.HtmlDecode(text);
 
         // Normalize whitespace: collapse multiple blank lines
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"\n{3,}", "\n\n");
+        text = MultiNewlineRegex.Replace(text, "\n\n");
 
         return text.Trim();
     }

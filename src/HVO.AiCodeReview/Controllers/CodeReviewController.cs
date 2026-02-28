@@ -33,7 +33,7 @@ public class ReviewController : ControllerBase
     [ProducesResponseType(typeof(ReviewResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> PostReview([FromBody] ReviewRequest request)
+    public async Task<IActionResult> PostReview([FromBody] ReviewRequest request, CancellationToken cancellationToken)
     {
         _logger.LogInformation(
             "Review requested: {Project}/{Repo} PR #{PrId}{Simulation}",
@@ -53,7 +53,8 @@ public class ReviewController : ControllerBase
             request.PullRequestId,
             progress,
             request.ForceReview,
-            request.SimulationOnly);
+            request.SimulationOnly,
+            cancellationToken);
 
         if (response.Status == "Error")
         {
@@ -112,11 +113,31 @@ public class ReviewController : ControllerBase
     }
 
     /// <summary>
-    /// Health check endpoint.
+    /// Health check endpoint. Verifies the service is running and can reach Azure DevOps.
     /// </summary>
     [HttpGet("health")]
-    public IActionResult Health()
+    public async Task<IActionResult> Health(CancellationToken cancellationToken)
     {
-        return Ok(new { status = "healthy", timestamp = DateTime.UtcNow });
+        var result = new Dictionary<string, object>
+        {
+            ["status"] = "healthy",
+            ["timestamp"] = DateTime.UtcNow,
+        };
+
+        try
+        {
+            // Verify Azure DevOps connectivity by resolving the service identity
+            var identity = await _devOpsService.ResolveServiceIdentityAsync();
+            result["azureDevOps"] = identity != null ? "connected" : "identity-unknown";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Azure DevOps health check failed");
+            result["status"] = "degraded";
+            result["azureDevOps"] = "unreachable";
+        }
+
+        var statusCode = result["status"] is "healthy" ? 200 : 503;
+        return StatusCode(statusCode, result);
     }
 }

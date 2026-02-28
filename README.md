@@ -36,6 +36,8 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 - [Review Decision Logic](#review-decision-logic)
 - [Review History & Tracking](#review-history--tracking)
 - [Rate Limiting](#rate-limiting)
+  - [PR-Level Cooldown](#pr-level-cooldown)
+  - [API-Level Rate-Limit Handling (429 Retry)](#api-level-rate-limit-handling-429-retry)
 - [RPM-Aware Throttling & Cost Estimation](#rpm-aware-throttling--cost-estimation)
 - [Model Benchmarks & Selection](#model-benchmarks--selection)
 - [Project Structure](#project-structure)
@@ -77,7 +79,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 | **Metrics API** | Dedicated endpoint returns full review history and aggregated AI metrics for any PR. |
 | **Multi-Provider Consensus** | Fan-out to multiple AI models; only comments that meet the agreement threshold are posted. Each comment shows which models flagged it. |
 | **Configurable Review Profile** | Adjust severity thresholds, comment density limits, file truncation size, and parallel review concurrency via `appsettings.json`. |
-| **Rate Limiting** | In-memory cooldown prevents the same PR from being reviewed too frequently. Configurable interval; blocks early before any API calls. |
+| **Rate Limiting** | Two-tier rate limiting: (1) In-memory PR-level cooldown prevents the same PR from being reviewed too frequently; (2) API-level retry with `Retry-After` header parsing, global cooldown signal, and up to 5 retries with a 5-minute cumulative cap for Azure OpenAI 429 responses. |
 | **Configurable Prompt** | Domain-specific review instructions loaded from a JSON file, injected between the fixed identity preamble and response format rules. |
 | **Health Check** | `/api/review/health` verifies Azure DevOps connectivity and reports degraded status if dependencies are unreachable. |
 | **CancellationToken Support** | API endpoints propagate cancellation tokens so disconnected callers don't continue consuming AI tokens. |
@@ -1130,7 +1132,11 @@ Each history entry also captures AI metrics (when an AI call was made):
 
 ## Rate Limiting
 
-The service includes an in-memory rate limiter that prevents the same PR from being reviewed too frequently. This protects against misuse and unnecessary AI API costs.
+The service implements **two tiers** of rate limiting to protect against both misuse and Azure OpenAI API throttling.
+
+### PR-Level Cooldown
+
+Prevents the same PR from being reviewed too frequently. This protects against misuse and unnecessary AI API costs.
 
 **How it works:**
 
@@ -1146,6 +1152,38 @@ The service includes an in-memory rate limiter that prevents the same PR from be
 | `MinReviewIntervalMinutes` | `5` | Minutes to wait between reviews on the same PR. Set to `0` to disable. |
 
 > **Note:** The rate limiter is in-memory and resets when the service restarts. This is by design for simplicity; if you need persistent rate limiting across restarts or multiple instances, consider using Redis or a similar distributed cache.
+
+### API-Level Rate-Limit Handling (429 Retry)
+
+When Azure OpenAI returns an HTTP 429 (Too Many Requests), the service automatically retries with intelligent back-off:
+
+**Retry delay resolution (in priority order):**
+
+1. **`Retry-After` HTTP header** — Parsed from the raw response via `ClientResultException.GetRawResponse().Headers`. Supports both integer seconds and RFC 1123 HTTP-date formats.
+2. **Exception message regex** — Falls back to parsing `"retry after N seconds"` from the error message text.
+3. **Default 30 seconds** — Used when neither header nor message contains retry information.
+
+The computed delay is clamped to `[1, 120]` seconds and a 5-second buffer is added above the `Retry-After` value to reduce the chance of an immediate second 429.
+
+**Retry budget:**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Max retries | 5 | Per API call (up from previous 3) |
+| Max cumulative wait | 5 minutes | Stops retrying if total delay exceeds this |
+| Default delay | 30 seconds | When no `Retry-After` data is available |
+| Max per-retry delay | 120 seconds | Clamp to prevent indefinitely long waits |
+| Buffer | 5 seconds | Added above `Retry-After` to avoid re-throttling |
+
+**Global cooldown signal (`GlobalRateLimitSignal`):**
+
+When **any** concurrent caller receives a 429, a singleton `IGlobalRateLimitSignal` broadcasts a global cooldown to **all** callers:
+
+- All in-flight file reviews pause until the cooldown expires before making their next API call.
+- Lock-free implementation via `Interlocked.CompareExchange` — if two 429s arrive simultaneously, the longer cooldown wins.
+- The orchestrator checks `WaitIfCoolingDownAsync()` before each `ReviewFileAsync` call in Pass 2.
+
+This prevents the thundering-herd problem where multiple concurrent file reviews all independently retry against a rate-limited endpoint.
 
 ---
 
@@ -1319,13 +1357,15 @@ HVO.AiCodeReview/
 │       │   ├── IAzureDevOpsService.cs      # DevOps service interface
 │       │   ├── PromptAssemblyPipeline.cs   # Layered prompt assembly with hot-reload
 │       │   ├── ModelAdapterResolver.cs     # Per-model adapter preamble + metadata resolver
-│       │   └── ReviewRateLimiter.cs        # In-memory rate limiter
+│       │   ├── ReviewRateLimiter.cs        # In-memory PR-level rate limiter
+│       │   ├── RateLimitHelper.cs          # Retry-After header parsing + retry delay computation
+│       │   └── GlobalRateLimitSignal.cs    # Singleton global cooldown signal for 429 responses
 │       │
 │       └── Properties/
 │           └── launchSettings.json     # Dev launch profiles
 │
 └── tests/
-    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (315 total)
+    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (327 total)
         ├── HVO.AiCodeReview.Tests.csproj
         ├── appsettings.Test.json           # Test config (gitignored)
         ├── appsettings.Test.template.json  # Test config template
@@ -1344,6 +1384,7 @@ HVO.AiCodeReview/
         ├── BuildSummaryMarkdownTests.cs    # 10 summary formatting tests
         ├── ReviewDepthTests.cs             # 22 depth mode + integration tests
         ├── RaceConditionTests.cs           # 3 concurrency / thread-safety tests
+        ├── RateLimitTests.cs               # 22 rate-limit helper + global signal tests
         ├── VectorStoreReviewServiceTests.cs # 24 vector store unit tests
         ├── VectorStoreIntegrationTest.cs   # 1 live vector store integration test
         ├── ModelBenchmarkTests.cs          # 8 model benchmark tests (5 models × 3 depths)

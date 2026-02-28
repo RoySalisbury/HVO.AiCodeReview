@@ -536,7 +536,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         if (!simulationOnly)
         {
             // ── Post inline comments (with thread resolution + dedup) ────
-            var (resolvedThreads, postedComments, skippedDuplicates, repliedInThread) =
+            var (_, postedComments, _, _) =
                 await PostInlineCommentsAsync(
                     project, repository, pullRequestId, fileChanges,
                     lineSpecificComments, reviewResult,

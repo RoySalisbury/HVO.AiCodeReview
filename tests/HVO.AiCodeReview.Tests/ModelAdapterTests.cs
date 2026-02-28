@@ -335,6 +335,28 @@ public class ModelAdapterTests
     }
 
     [TestMethod]
+    public void ApplyOverrides_PreservesVerdictThresholds()
+    {
+        var baseProfile = new ReviewProfile
+        {
+            Temperature = 0.5f,
+            VerdictThresholds = new VerdictThresholds
+            {
+                RejectOnCriticalCount = 5,
+                NeedsWorkOnWarningCount = 10,
+            },
+        };
+
+        var adapter = new ModelAdapter { Temperature = 0.1f };
+
+        var result = ModelAdapterResolver.ApplyOverrides(baseProfile, adapter);
+
+        Assert.AreEqual(0.1f, result.Temperature);
+        Assert.AreEqual(5, result.VerdictThresholds.RejectOnCriticalCount);
+        Assert.AreEqual(10, result.VerdictThresholds.NeedsWorkOnWarningCount);
+    }
+
+    [TestMethod]
     public void GetEffectiveMaxInputLines_WithOverride_UsesAdapter()
     {
         var adapter = new ModelAdapter { MaxInputLinesPerFile = 3000 };
@@ -352,6 +374,62 @@ public class ModelAdapterTests
         var result = ModelAdapterResolver.GetEffectiveMaxInputLines(5000, adapter);
 
         Assert.AreEqual(5000, result);
+    }
+
+    [TestMethod]
+    public void GetEffectiveMaxInputLines_ZeroOverride_FallsBackToDefault()
+    {
+        var adapter = new ModelAdapter { MaxInputLinesPerFile = 0 };
+
+        var result = ModelAdapterResolver.GetEffectiveMaxInputLines(5000, adapter);
+
+        Assert.AreEqual(5000, result);
+    }
+
+    [TestMethod]
+    public void GetEffectiveMaxInputLines_NegativeOverride_FallsBackToDefault()
+    {
+        var adapter = new ModelAdapter { MaxInputLinesPerFile = -1 };
+
+        var result = ModelAdapterResolver.GetEffectiveMaxInputLines(5000, adapter);
+
+        Assert.AreEqual(5000, result);
+    }
+
+    [TestMethod]
+    public void Resolve_NullQuirks_DoesNotThrow()
+    {
+        var config = new ModelAdapterConfig
+        {
+            Adapters = new List<ModelAdapter>
+            {
+                new() { Name = "null-quirks", ModelPattern = ".*", Quirks = null! },
+            },
+        };
+        var path = WriteAdapters(config);
+        var resolver = new ModelAdapterResolver(ResolverLogger, path);
+
+        // Should not throw NRE
+        var adapter = resolver.Resolve("gpt-4o");
+        Assert.AreEqual("null-quirks", adapter.Name);
+    }
+
+    [TestMethod]
+    public void Resolve_NullModelPattern_SkipsAdapter()
+    {
+        var config = new ModelAdapterConfig
+        {
+            Adapters = new List<ModelAdapter>
+            {
+                new() { Name = "null-pattern", ModelPattern = null! },
+                new() { Name = "fallback", ModelPattern = ".*" },
+            },
+        };
+        var path = WriteAdapters(config);
+        var resolver = new ModelAdapterResolver(ResolverLogger, path);
+
+        var adapter = resolver.Resolve("gpt-4o");
+        Assert.AreEqual("fallback", adapter.Name);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

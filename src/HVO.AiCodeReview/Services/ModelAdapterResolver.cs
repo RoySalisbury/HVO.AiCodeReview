@@ -55,19 +55,29 @@ public sealed class ModelAdapterResolver
 
         foreach (var adapter in _adapters)
         {
+            if (string.IsNullOrWhiteSpace(adapter.ModelPattern))
+            {
+                _logger.LogWarning(
+                    "Adapter '{Adapter}' has null or empty model pattern — skipping",
+                    adapter.Name);
+                continue;
+            }
+
             try
             {
                 if (Regex.IsMatch(modelName, adapter.ModelPattern, RegexOptions.IgnoreCase))
                 {
+                    var quirks = adapter.Quirks ?? new List<string>();
+
                     _logger.LogInformation(
                         "Model '{Model}' matched adapter '{Adapter}' (pattern: {Pattern}, style: {Style}, quirks: {QuirkCount})",
-                        modelName, adapter.Name, adapter.ModelPattern, adapter.PromptStyle, adapter.Quirks.Count);
+                        modelName, adapter.Name, adapter.ModelPattern, adapter.PromptStyle, quirks.Count);
 
-                    if (adapter.Quirks.Count > 0)
+                    if (quirks.Count > 0)
                     {
                         _logger.LogDebug(
                             "Adapter '{Adapter}' quirks: {Quirks}",
-                            adapter.Name, string.Join("; ", adapter.Quirks));
+                            adapter.Name, string.Join("; ", quirks));
                     }
 
                     return adapter;
@@ -101,6 +111,8 @@ public sealed class ModelAdapterResolver
             MaxOutputTokensSingleFile = adapter.MaxOutputTokensSingleFile ?? baseProfile.MaxOutputTokensSingleFile,
             MaxOutputTokensVerification = adapter.MaxOutputTokensVerification ?? baseProfile.MaxOutputTokensVerification,
             MaxOutputTokensPrSummary = adapter.MaxOutputTokensPrSummary ?? baseProfile.MaxOutputTokensPrSummary,
+            // Preserve non-adapter-controlled properties from the base profile
+            VerdictThresholds = baseProfile.VerdictThresholds,
         };
     }
 
@@ -110,7 +122,12 @@ public sealed class ModelAdapterResolver
     /// </summary>
     public static int GetEffectiveMaxInputLines(int currentMaxLines, ModelAdapter adapter)
     {
-        return adapter.MaxInputLinesPerFile ?? currentMaxLines;
+        if (adapter.MaxInputLinesPerFile.HasValue && adapter.MaxInputLinesPerFile.Value > 0)
+        {
+            return adapter.MaxInputLinesPerFile.Value;
+        }
+
+        return currentMaxLines;
     }
 
     // ─── Loading ─────────────────────────────────────────────────────────
@@ -136,6 +153,12 @@ public sealed class ModelAdapterResolver
             _logger.LogInformation(
                 "Loaded {Count} model adapters from '{Path}'",
                 adapters.Count, path);
+
+            // Normalize null collections after deserialization
+            foreach (var a in adapters)
+            {
+                a.Quirks ??= new List<string>();
+            }
 
             foreach (var a in adapters)
             {

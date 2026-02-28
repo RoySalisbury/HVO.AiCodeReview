@@ -44,6 +44,7 @@ steps:
             projectName    = "$(System.TeamProject)"
             repositoryName = "$(Build.Repository.Name)"
             pullRequestId  = [int]$(System.PullRequest.PullRequestId)
+            reviewStrategy = "$(REVIEW_STRATEGY)"  # FileByFile (default) | Auto | Vector
         } | ConvertTo-Json
 
         Write-Host "##vso[task.setprogress value=5]Submitting AI code review..."

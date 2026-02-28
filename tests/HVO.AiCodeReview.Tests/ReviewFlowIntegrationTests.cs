@@ -58,11 +58,14 @@ public class ReviewFlowIntegrationTests
         services.Configure<AzureDevOpsSettings>(config.GetSection("AzureDevOps"));
         services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
+        services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
         services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
+        services.AddHttpClient();
 
         var fakeReview = new FakeCodeReviewService();
         services.AddSingleton<ICodeReviewService>(fakeReview);
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
         await using var sp = services.BuildServiceProvider();
@@ -272,10 +275,13 @@ public class ReviewFlowIntegrationTests
         services.Configure<AzureDevOpsSettings>(config.GetSection("AzureDevOps"));
         services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
+        services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
         services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
+        services.AddHttpClient();
         var fakeReview = new FakeCodeReviewService();
         services.AddSingleton<ICodeReviewService>(fakeReview);
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
         await using var sp = services.BuildServiceProvider();

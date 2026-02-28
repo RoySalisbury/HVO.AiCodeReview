@@ -16,6 +16,10 @@ builder.Services.Configure<AiProviderSettings>(
 builder.Services.Configure<AzureOpenAISettings>(
     builder.Configuration.GetSection(AzureOpenAISettings.SectionName));
 
+// Assistants API settings for Vector Store review strategy
+builder.Services.Configure<AssistantsSettings>(
+    builder.Configuration.GetSection(AssistantsSettings.SectionName));
+
 // ---------------------------------------------------------------------------
 // HTTP client for Azure DevOps API calls
 // ---------------------------------------------------------------------------
@@ -33,6 +37,10 @@ builder.Services.AddSingleton<ModelAdapterResolver>(sp =>
     new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
 builder.Services.AddCodeReviewService(builder.Configuration);
 builder.Services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+
+// Vector Store review service (Assistants API — called directly by orchestrator)
+builder.Services.AddScoped<VectorStoreReviewService>();
+
 builder.Services.AddScoped<ICodeReviewOrchestrator, CodeReviewOrchestrator>();
 
 // ---------------------------------------------------------------------------

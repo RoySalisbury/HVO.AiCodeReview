@@ -38,4 +38,11 @@ public class ReviewRequest
     /// Default: Standard (backward compatible — the current full pipeline).
     /// </summary>
     public ReviewDepth ReviewDepth { get; set; } = ReviewDepth.Standard;
+
+    /// <summary>
+    /// Pass 2 review strategy: FileByFile (default per-file), Auto (smart selection),
+    /// or Vector (Assistants API + Vector Store for cross-file awareness).
+    /// Only applies when ReviewDepth is Standard or Deep.
+    /// </summary>
+    public ReviewStrategy ReviewStrategy { get; set; } = ReviewStrategy.FileByFile;
 }

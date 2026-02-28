@@ -41,6 +41,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (simulationOnly)
                 _logger.LogInformation("SIMULATION MODE — review will NOT post anything to PR #{PrId}", pullRequestId);
 
@@ -105,7 +107,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     return await HandleReviewAsync(
                         project, repository, pullRequestId, prInfo, metadata,
                         currentIteration, action == ReviewAction.ReReview, progress,
-                        simulationOnly);
+                        simulationOnly, cancellationToken);
 
                 default:
                     throw new InvalidOperationException($"Unexpected review action: {action}");
@@ -290,8 +292,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         PullRequestInfo prInfo, ReviewMetadata metadata,
         int currentIteration, bool isReReview,
         IProgress<ReviewStatusUpdate>? progress,
-        bool simulationOnly = false)
+        bool simulationOnly = false,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var totalSw = Stopwatch.StartNew();
         var reviewLabel = isReReview ? "Re-review" : "Review";
 
@@ -445,6 +449,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
 
         // ── Pass 2: AI analysis (parallel per-file for accuracy) ──────
+        cancellationToken.ThrowIfCancellationRequested();
+
         var maxParallel = Math.Max(1, _aiProviderSettings.MaxParallelReviews);
 
         ReportProgress(progress, ReviewStep.AnalyzingCode,
@@ -461,7 +467,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         {
         var tasks = fileChanges.Select(async (file, index) =>
         {
-            await semaphore.WaitAsync();
+            await semaphore.WaitAsync(cancellationToken);
             try
             {
                 var result = await _reviewService.ReviewFileAsync(prInfo, file, fileChanges.Count, workItems);
@@ -684,6 +690,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
 
         // ── Post inline comments (with semantic deduplication) ─────────
+        cancellationToken.ThrowIfCancellationRequested();
         ReportProgress(progress, ReviewStep.PostingInlineComments,
             $"Posting inline comments (deduplicating against existing threads)...", 65);
 
@@ -781,6 +788,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
         // ── Tag + metadata ──────────────────────────────────────────────
+        cancellationToken.ThrowIfCancellationRequested();
         ReportProgress(progress, ReviewStep.SubmittingVote,
             "Updating review metadata...", 85);
 

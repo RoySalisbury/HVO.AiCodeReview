@@ -76,8 +76,7 @@ public class ReviewController : ControllerBase
     public async Task<IActionResult> GetMetrics(
         [FromQuery] string project,
         [FromQuery] string repository,
-        [FromQuery] int pullRequestId,
-        CancellationToken cancellationToken)
+        [FromQuery] int pullRequestId)
     {
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repository) || pullRequestId <= 0)
         {
@@ -133,8 +132,9 @@ public class ReviewController : ControllerBase
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Azure DevOps health check failed");
             result["status"] = "degraded";
-            result["azureDevOps"] = $"unreachable: {ex.Message}";
+            result["azureDevOps"] = "unreachable";
         }
 
         var statusCode = result["status"] is "healthy" ? 200 : 503;

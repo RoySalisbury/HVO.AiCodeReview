@@ -332,7 +332,7 @@ The AI system prompt is assembled by the **Prompt Assembly Pipeline** from a lay
 | Layer | Source | Description |
 |-------|--------|-------------|
 | 1. Identity | `review-rules.json` → `identity` | Establishes the AI as a senior code reviewer. Shared across scopes that opt in. |
-| 1½. Model Adapter | `ModelAdapterResolver` | Per-model tuning preamble (e.g., adjusting verbosity for GPT-4o vs GPT-4.1). Loaded from `model-adapters/` directory. |
+| 1½. Model Adapter | `ModelAdapterResolver` | Per-model tuning preamble (e.g., adjusting verbosity for GPT-4o vs GPT-4.1). Loaded from `model-adapters.json` catalog file. |
 | 2. Custom Instructions | `custom-instructions.json` | Domain-specific review guidance (per-provider). Injected for scopes that opt in. |
 | 3. Scope Preamble | `review-rules.json` → `scopes.{scope}.preamble` | Context and JSON schema for the specific prompt scope. |
 | 4. Numbered Rules | `review-rules.json` → `rules[]` | Filtered by scope, sorted by priority, enabled-only. Numbered automatically. |
@@ -379,18 +379,30 @@ Rules can be toggled, reordered, or scoped without restarting the service. The p
 
 #### Model Adapters
 
-The `ModelAdapterResolver` loads model-specific preambles from JSON files in the `model-adapters/` directory:
+The `ModelAdapterResolver` loads model-specific preambles from a single `model-adapters.json` catalog file:
 
 ```json
-// model-adapters/gpt-4o.json
 {
-  "modelPattern": "gpt-4o",
-  "preamble": "You tend to be verbose. Keep inline comments concise (1-2 sentences max).",
-  "description": "Tuning for GPT-4o: reduce verbosity"
+  "adapters": [
+    {
+      "name": "gpt-4o-tuning",
+      "modelPattern": "gpt-4o",
+      "promptStyle": "imperative",
+      "preamble": "You tend to be verbose. Keep inline comments concise (1-2 sentences max).",
+      "quirks": ["Tends to over-explain obvious issues"]
+    },
+    {
+      "name": "gpt-4.1-tuning",
+      "modelPattern": "gpt-4\\.1",
+      "promptStyle": "imperative",
+      "preamble": "Be thorough but avoid repeating the same concern across multiple files.",
+      "quirks": []
+    }
+  ]
 }
 ```
 
-Adapters are matched by model deployment name. If no adapter matches, no preamble is injected.
+Adapters are evaluated in order; the first adapter whose `modelPattern` regex matches (case-insensitive) wins. If no adapter matches, a built-in default is used. The file is resolved from the application base directory (`model-adapters.json` next to the executable).
 
 #### Legacy Custom Instructions
 

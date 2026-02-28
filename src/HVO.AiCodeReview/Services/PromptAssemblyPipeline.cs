@@ -27,6 +27,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
     private readonly ConcurrentDictionary<string, string> _cache = new();
     private readonly object _reloadLock = new();
     private Timer? _debounceTimer;
+    private volatile bool _disposed;
 
     /// <summary>
     /// Initializes the pipeline using a catalog file.
@@ -293,11 +294,16 @@ public sealed class PromptAssemblyPipeline : IDisposable
     {
         // FileSystemWatcher fires multiple events for a single save.
         // Use a timer-based debounce (200 ms) so we don't block a ThreadPool thread with Thread.Sleep.
-        _debounceTimer?.Dispose();
-        _debounceTimer = new Timer(_ =>
+        // Use Interlocked.Exchange to atomically swap the timer — prevents race when
+        // multiple FSW events fire concurrently.
+        var newTimer = new Timer(_ =>
         {
+            if (_disposed) return;
+
             lock (_reloadLock)
             {
+                if (_disposed) return;
+
                 try
                 {
                     _logger.LogInformation("Review rule catalog changed on disk — reloading");
@@ -310,6 +316,9 @@ public sealed class PromptAssemblyPipeline : IDisposable
                 }
             }
         }, null, dueTime: 200, period: Timeout.Infinite);
+
+        var oldTimer = Interlocked.Exchange(ref _debounceTimer, newTimer);
+        oldTimer?.Dispose();
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
@@ -332,7 +341,11 @@ public sealed class PromptAssemblyPipeline : IDisposable
 
     public void Dispose()
     {
-        _debounceTimer?.Dispose();
+        _disposed = true;
+
+        var timer = Interlocked.Exchange(ref _debounceTimer, null);
+        timer?.Dispose();
+
         _watcher?.Dispose();
     }
 }

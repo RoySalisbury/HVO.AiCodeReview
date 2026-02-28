@@ -36,6 +36,33 @@ public static class CodeReviewServiceFactory
         services.Configure<AzureOpenAISettings>(
             configuration.GetSection(AzureOpenAISettings.SectionName));
 
+        // Provider instance cache — ensures the same provider key reuses a single
+        // ICodeReviewService instance across DepthModelResolver, PassModelResolver,
+        // and the active-provider registration. Avoids duplicate clients, prompt
+        // loading, and startup overhead.
+        var providerCache = new Dictionary<string, ICodeReviewService>(StringComparer.OrdinalIgnoreCase);
+
+        ICodeReviewService GetOrCreateProvider(
+            string providerKey,
+            ProviderConfig providerConfig,
+            ILoggerFactory loggerFactory,
+            int maxInputLinesPerFile,
+            ReviewProfile reviewProfile,
+            PromptAssemblyPipeline? pipeline,
+            ModelAdapterResolver? adapterResolver,
+            IGlobalRateLimitSignal? rateLimitSignal)
+        {
+            if (providerCache.TryGetValue(providerKey, out var cached))
+                return cached;
+
+            var service = CreateProvider(
+                providerKey, providerConfig, loggerFactory,
+                maxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
+
+            providerCache[providerKey] = service;
+            return service;
+        }
+
         // Register depth-model resolver (per-depth model selection)
         services.AddSingleton<DepthModelResolver>(sp =>
         {
@@ -78,7 +105,7 @@ public static class CodeReviewServiceFactory
                         continue;
                     }
 
-                    var service = CreateProvider(
+                    var service = GetOrCreateProvider(
                         providerKey, providerConfig, loggerFactory,
                         settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
 
@@ -93,6 +120,65 @@ public static class CodeReviewServiceFactory
 
             return new DepthModelResolver(depthServices, defaultService, logger);
         });
+
+        // Register pass-model resolver (per-pass model routing)
+        services.AddSingleton<PassModelResolver>(sp =>
+        {
+            var settings = sp.GetRequiredService<IOptions<AiProviderSettings>>().Value;
+            var reviewProfile = sp.GetRequiredService<IOptions<ReviewProfile>>().Value;
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var pipeline = sp.GetService<PromptAssemblyPipeline>();
+            var adapterResolver = sp.GetService<ModelAdapterResolver>();
+            var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
+            var depthResolver = sp.GetRequiredService<DepthModelResolver>();
+            var logger = loggerFactory.CreateLogger<PassModelResolver>();
+
+            var passServices = new Dictionary<ReviewPass, ICodeReviewService>();
+
+            if (settings.PassRouting.Count > 0)
+            {
+                foreach (var (passName, providerKey) in settings.PassRouting)
+                {
+                    if (!Enum.TryParse<ReviewPass>(passName, ignoreCase: true, out var pass))
+                    {
+                        logger.LogWarning(
+                            "PassRouting: unknown pass '{Pass}' — skipping (valid: {Valid})",
+                            passName, string.Join(", ", Enum.GetNames<ReviewPass>()));
+                        continue;
+                    }
+
+                    if (!settings.Providers.TryGetValue(providerKey, out var providerConfig))
+                    {
+                        logger.LogWarning(
+                            "PassRouting: provider '{Provider}' for pass {Pass} not found in Providers — using fallback",
+                            providerKey, pass);
+                        continue;
+                    }
+
+                    if (!providerConfig.Enabled)
+                    {
+                        logger.LogWarning(
+                            "PassRouting: provider '{Provider}' for pass {Pass} is disabled — using fallback",
+                            providerKey, pass);
+                        continue;
+                    }
+
+                    var service = GetOrCreateProvider(
+                        providerKey, providerConfig, loggerFactory,
+                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
+
+                    passServices[pass] = service;
+
+                    var displayName = providerConfig.DisplayName.Length > 0 ? providerConfig.DisplayName : providerKey;
+                    logger.LogInformation(
+                        "PassRouting: {Pass} → '{Provider}' (model: {Model})",
+                        pass, displayName, providerConfig.Model);
+                }
+            }
+
+            return new PassModelResolver(passServices, depthResolver, logger);
+        });
+        services.AddSingleton<ICodeReviewServiceResolver>(sp => sp.GetRequiredService<PassModelResolver>());
 
         services.AddSingleton<ICodeReviewService>(sp =>
         {

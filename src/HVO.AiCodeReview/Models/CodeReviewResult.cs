@@ -46,6 +46,15 @@ public class CodeReviewResult
     /// <summary>Time spent waiting for the AI response, in milliseconds.</summary>
     [JsonIgnore]
     public long? AiDurationMs { get; set; }
+
+    /// <summary>
+    /// Per-pass model usage information. Maps pass names (e.g., "PrSummary",
+    /// "PerFileReview", "DeepReview", "ThreadVerification") to the model/deployment
+    /// used for that pass. Populated by the orchestrator whenever it records per-pass
+    /// model usage, including scenarios where all passes share the same model via fallback.
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<string, string>? PassModels { get; set; }
 }
 
 public class ReviewSummary

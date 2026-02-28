@@ -29,11 +29,16 @@
                               │     │   │Resolver │   │   │     │
                               │     │   └─────────┘   │   │     │
                               │     │        ┌────────▼┐  │     │
-                              │     │        │Depth    │  │     │
-                              │     │        │Model    │  │     │
-                              │     │        │Resolver │  │     │
-                              │     │        └────┬────┘  │     │
-                              │     │       ┌─────▼┐ ┌────▼───┐ │
+                              │     │        │Pass    │  │     │
+                              │     │        │Model   │  │     │
+                              │     │        │Resolver│  │     │
+                              │     │        └───┬────┘  │     │
+                              │     │        ┌───▼────┐  │     │
+                              │     │        │Depth   │  │     │
+                              │     │        │Model   │  │     │
+                              │     │        │Resolver│  │     │
+                              │     │        └────┬───┘  │     │
+                              │     │       ┌─────▼┐ ┌───▼────┐ │
                               │     │       │Single│ │Con-    │ │
                               │     │       │ AI   │ │sensus  │ │
                               │     │       │Review│ │Review  │ │
@@ -103,6 +108,36 @@ Runs all of Standard mode, then adds **Pass 3**: a holistic re-evaluation that:
 5. **Recommendations** — Actionable next steps for the PR author
 
 The deep analysis section is appended to the PR summary with a 🔍 badge. If the verdict consistency check finds the overall verdict is inconsistent with the per-file results, the verdict is automatically overridden.
+
+---
+
+## Per-Pass Model Routing
+
+While **depth modes** control *which passes* execute, **per-pass model routing** controls *which AI model* handles each pass. This enables cost optimization by assigning lightweight models to simple tasks and reasoning models to complex analysis.
+
+### How It Works
+
+The `PassModelResolver` sits between the orchestrator and the `DepthModelResolver`, resolving the AI service for each review pass independently:
+
+```
+HandleReviewAsync()
+  ├── Pass 1 (PR Summary)     → GetServiceForPass(PrSummary, depth)     → gpt-4o-mini
+  ├── Pass 2 (Per-File)        → GetServiceForPass(PerFileReview, depth) → gpt-4o
+  ├── Pass 3 (Deep Analysis)   → GetServiceForPass(DeepReview, depth)    → o4-mini
+  └── Thread Verification      → GetServiceForPass(ThreadVerification, depth) → gpt-4o-mini
+```
+
+Each pass can use a different model. The `PassModels` dictionary in the review result tracks which model handled each pass for auditability.
+
+### Resolution Order
+
+1. **PassRouting** — If `AiProvider:PassRouting` has a mapping for the current pass, use that provider.
+2. **DepthModels** — Fall back to the depth-based model if no pass-specific routing exists.
+3. **ActiveProvider** — Use the default provider if neither pass nor depth routing is configured.
+
+### Configuration
+
+See [Configuration → Per-Pass Model Routing](configuration.md#per-pass-model-routing-passrouting) for the full configuration reference and examples.
 
 ---
 

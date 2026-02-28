@@ -41,6 +41,12 @@ public class ReviewProfile
     public int MaxOutputTokensPrSummary { get; set; } = 4000;
 
     /// <summary>
+    /// Maximum output tokens for Pass 3 Deep Analysis (holistic re-evaluation).
+    /// Default: 6000.
+    /// </summary>
+    public int MaxOutputTokensDeepAnalysis { get; set; } = 6000;
+
+    /// <summary>
     /// Verdict threshold configuration for future system-level verdict overrides.
     /// Currently aspirational — the AI determines the verdict in its JSON response.
     /// </summary>

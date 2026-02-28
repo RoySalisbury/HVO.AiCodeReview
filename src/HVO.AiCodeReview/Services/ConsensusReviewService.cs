@@ -122,6 +122,20 @@ public class ConsensusReviewService : ICodeReviewService
         return await service.GeneratePrSummaryAsync(pullRequest, fileChanges, workItems);
     }
 
+    /// <summary>
+    /// Deep analysis delegates to the first provider (same rationale as PR summary).
+    /// </summary>
+    public async Task<DeepAnalysisResult?> GenerateDeepAnalysisAsync(
+        PullRequestInfo pullRequest,
+        PrSummaryResult? prSummary,
+        CodeReviewResult reviewResult,
+        List<FileChange> fileChanges)
+    {
+        var (name, service) = _providers[0];
+        _logger.LogInformation("GenerateDeepAnalysisAsync: delegating to first provider '{Provider}'", name);
+        return await service.GenerateDeepAnalysisAsync(pullRequest, prSummary, reviewResult, fileChanges);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     //  Fan-out + merge internals
     // ═══════════════════════════════════════════════════════════════════════

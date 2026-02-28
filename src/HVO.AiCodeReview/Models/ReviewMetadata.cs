@@ -64,6 +64,9 @@ public class ReviewHistoryEntry
     public int? TotalTokens { get; set; }
     public long? AiDurationMs { get; set; }
     public long? TotalDurationMs { get; set; }
+
+    /// <summary>Review depth mode used: Quick, Standard, or Deep.</summary>
+    public string? ReviewDepth { get; set; }
 }
 
 /// <summary>

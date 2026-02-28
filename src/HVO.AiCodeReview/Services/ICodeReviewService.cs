@@ -47,4 +47,21 @@ public interface ICodeReviewService
     /// <param name="workItems">Linked work items (optional).</param>
     /// <returns>PR-level summary, or null if summary generation is unsupported.</returns>
     Task<PrSummaryResult?> GeneratePrSummaryAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null);
+
+    /// <summary>
+    /// Pass 3 of the deep review: holistically re-evaluate the merged review results.
+    /// Receives the PR summary, all per-file review results, and inline comments,
+    /// then identifies cross-file issues, validates verdict consistency, and produces
+    /// an executive summary.
+    /// </summary>
+    /// <param name="pullRequest">PR metadata.</param>
+    /// <param name="prSummary">Pass 1 PR-level summary (may be null if Pass 1 failed).</param>
+    /// <param name="reviewResult">Merged review result from Pass 2.</param>
+    /// <param name="fileChanges">All reviewed file changes.</param>
+    /// <returns>Deep analysis result, or null if generation fails.</returns>
+    Task<DeepAnalysisResult?> GenerateDeepAnalysisAsync(
+        PullRequestInfo pullRequest,
+        PrSummaryResult? prSummary,
+        CodeReviewResult reviewResult,
+        List<FileChange> fileChanges);
 }

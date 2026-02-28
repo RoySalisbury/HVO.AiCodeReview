@@ -28,6 +28,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
   - [GET /api/review/metrics](#get-apireviewmetrics)
   - [GET /api/review/health](#get-apireviewhealth)
 - [Azure DevOps Pipeline Integration](#azure-devops-pipeline-integration)
+- [Review Depth Modes](#review-depth-modes)
 - [Two-Pass Review Architecture](#two-pass-review-architecture)
 - [Review Decision Logic](#review-decision-logic)
 - [Review History & Tracking](#review-history--tracking)
@@ -52,6 +53,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 |---------|-------------|
 | **AI-Powered Review** | Uses Azure OpenAI with a configurable model deployment to analyze diffs and produce structured reviews with per-file verdicts, inline comments, and observations. |
 | **Two-Pass Architecture** | Pass 1 generates a cross-file PR summary for context. Pass 2 reviews each file individually with that context injected, improving accuracy for multi-file changes. |
+| **Review Depth Modes** | Three review depths — **Quick** (Pass 1 only, no inline comments), **Standard** (Pass 1 + Pass 2, default), and **Deep** (Pass 1 + Pass 2 + Pass 3 holistic re-evaluation with cross-file issue detection, verdict consistency check, and executive summary). |
 | **Layered Prompt Architecture** | System prompts are assembled from a versioned rule catalog (`review-rules.json`) with scoped rules, priorities, hot-reload, and per-scope identity/custom-instruction toggles. |
 | **Per-Model Adapter** | Model-specific preambles (`ModelAdapterResolver`) tune each AI model's behavior — e.g., adjusting verbosity, severity calibration, or output format hints per deployment. |
 | **Inline PR Comments** | Posts targeted inline comments on specific lines with severity levels (Bug, Security, Concern, Performance, Suggestion). |
@@ -124,11 +126,13 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
    - **Re-Review** — new commits detected; calls the AI again, deduplicates comments, resolves fixed threads via AI verification.
    - **Vote Only** — draft-to-active transition with no code changes; submits vote only.
    - **Skip** — no changes since last review; records a skip event in history.
-4. **Pass 1** generates a PR-level summary (cross-file context, work item alignment) using full diff context.
-5. **Pass 2** reviews each file in parallel (controlled by `MaxParallelReviews`), injecting the Pass 1 summary for cross-file awareness. The **PromptAssemblyPipeline** builds prompts from the versioned rule catalog; the **ModelAdapterResolver** injects model-specific tuning.
-6. The **CodeReviewServiceFactory** creates either a single-provider or **ConsensusReviewService** (fan-out to multiple AI models, merge by agreement threshold).
-7. AI responses are validated, inline comments are filtered by changed-line proximity and density thresholds, and false positives are detected.
-8. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
+4. The review depth (`Quick`, `Standard`, or `Deep`) determines which passes are executed. See [Review Depth Modes](#review-depth-modes).
+5. **Pass 1** generates a PR-level summary (cross-file context, work item alignment) using full diff context. In **Quick** mode, the orchestrator derives a verdict from risk areas and returns immediately — no inline comments.
+6. **Pass 2** (Standard and Deep only) reviews each file in parallel (controlled by `MaxParallelReviews`), injecting the Pass 1 summary for cross-file awareness. The **PromptAssemblyPipeline** builds prompts from the versioned rule catalog; the **ModelAdapterResolver** injects model-specific tuning.
+7. **Pass 3** (Deep only) performs a holistic re-evaluation of the entire PR — executive summary, cross-file issues, verdict consistency check, risk level, and recommendations. Can override the verdict if inconsistent.
+8. The **CodeReviewServiceFactory** creates either a single-provider or **ConsensusReviewService** (fan-out to multiple AI models, merge by agreement threshold).
+9. AI responses are validated, inline comments are filtered by changed-line proximity and density thresholds, and false positives are detected.
+10. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
 
 ---
 
@@ -481,15 +485,17 @@ Content-Type: application/json
 {
   "projectName": "OneVision",
   "repositoryName": "MyRepo",
-  "pullRequestId": 12345
+  "pullRequestId": 12345,
+  "reviewDepth": "Standard"
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `projectName` | string | Yes | Azure DevOps project name. |
-| `repositoryName` | string | Yes | Repository name or GUID. |
-| `pullRequestId` | int | Yes | Pull request ID (must be > 0). |
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `projectName` | string | Yes | — | Azure DevOps project name. |
+| `repositoryName` | string | Yes | — | Repository name or GUID. |
+| `pullRequestId` | int | Yes | — | Pull request ID (must be > 0). |
+| `reviewDepth` | string | No | `"Standard"` | Review depth mode: `"Quick"`, `"Standard"`, or `"Deep"`. See [Review Depth Modes](#review-depth-modes). |
 
 **Response — Reviewed (Full Review or Re-Review):**
 
@@ -503,6 +509,7 @@ Content-Type: application/json
   "warningCount": 1,
   "infoCount": 3,
   "errorMessage": null,
+  "reviewDepth": "Standard",
   "vote": 5
 }
 ```
@@ -575,6 +582,7 @@ Content-Type: application/json
 | `warningCount` | int | Concern / Performance severity comments. |
 | `infoCount` | int | Suggestion / LGTM / Info severity comments. |
 | `errorMessage` | string? | Error details if `status` is `"Error"`. |
+| `reviewDepth` | string? | The review depth used: `"Quick"`, `"Standard"`, or `"Deep"`. `null` for non-reviewed responses. |
 | `vote` | int? | Vote cast: `10` (Approved), `5` (Approved w/ Suggestions), `-5` (Waiting for Author), `-10` (Rejected), or `null`. |
 
 ---
@@ -790,6 +798,42 @@ If you want the pipeline to pass even when the AI review finds issues (advisory 
 
 ---
 
+## Review Depth Modes
+
+The service supports three review depth modes, controlled by the `reviewDepth` field in the API request:
+
+| Mode | Passes | Inline Comments | Summary | Use Case |
+|------|--------|----------------|---------|----------|
+| **Quick** ⚡ | Pass 1 only | No | Abbreviated summary with risk areas, derived verdict | Fast triage — large PRs, draft reviews, cost-sensitive runs |
+| **Standard** | Pass 1 + Pass 2 | Yes | Full summary with per-file verdicts and inline comments | Default mode — balanced depth and cost |
+| **Deep** 🔍 | Pass 1 + Pass 2 + Pass 3 | Yes | Full summary + deep analysis section (executive summary, cross-file issues, verdict consistency, risk level, recommendations) | Critical PRs, release branches, security-sensitive changes |
+
+### Quick Mode
+
+Skips Pass 2 entirely. After Pass 1 (PR summary), the orchestrator derives a verdict from the risk areas identified in the summary:
+- **0 risks** → APPROVED (vote 10)
+- **1–2 risks** → APPROVED WITH SUGGESTIONS (vote 5)
+- **3+ risks** → NEEDS WORK (vote −5)
+
+All file verdicts are marked `SKIPPED` and no inline comments are posted. This mode is the fastest and cheapest option.
+
+### Standard Mode (Default)
+
+The default behavior — Pass 1 (PR summary) followed by Pass 2 (per-file parallel review). This is the two-pass architecture described below.
+
+### Deep Mode
+
+Runs all of Standard mode, then adds **Pass 3**: a holistic re-evaluation that:
+1. **Executive Summary** — High-level assessment of the entire PR
+2. **Cross-File Issues** — Detects issues that span multiple files (e.g., interface changes without updating all callers)
+3. **Verdict Consistency** — Checks whether the per-file verdicts collectively justify the overall verdict; can override the verdict if inconsistent
+4. **Risk Level** — Overall risk assessment (Low / Medium / High / Critical)
+5. **Recommendations** — Actionable next steps for the PR author
+
+The deep analysis section is appended to the PR summary with a 🔍 badge. If the verdict consistency check finds the overall verdict is inconsistent with the per-file results, the verdict is automatically overridden.
+
+---
+
 ## Two-Pass Review Architecture
 
 When a full review or re-review is triggered, the orchestrator uses a two-pass architecture for higher-quality results:
@@ -878,7 +922,8 @@ Every review action generates a `ReviewHistoryEntry` stored in two places:
 Each history entry also captures AI metrics (when an AI call was made):
 
 - **ModelName** — The model deployment used (e.g., `gpt-4o-2024-08-06`).
-- **Token Counts** — Prompt tokens, completion tokens, total tokens.
+- **Token Counts** — Prompt tokens, completion tokens, total tokens (aggregated across all passes).
+- **Review Depth** — The depth mode used (`Quick`, `Standard`, or `Deep`).
 - **Timing** — AI response time (`aiDurationMs`) and total end-to-end duration (`totalDurationMs`).
 
 ---
@@ -1079,6 +1124,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `LayeredPromptTests.cs` | 38 | Unit | Prompt assembly pipeline tests: scope filtering, rule ordering, identity/custom-instruction toggles, cache behavior, hot-reload, model adapter injection, and edge cases. |
 | `ModelAdapterTests.cs` | 35 | Unit | Model adapter resolver tests: pattern matching, file loading, fallback behavior, multi-adapter scenarios, and caching. |
 | `TwoPassReviewTests.cs` | 21 | Unit | Two-pass architecture: Pass 1 summary generation, Pass 2 cross-file context injection, merge logic, and fallback when Pass 1 fails. |
+| `ReviewDepthTests.cs` | 23 | Unit + Integration | Review depth modes: enum parsing, JSON serialization, Quick/Standard/Deep summary badges, deep analysis rendering, verdict override, Quick/Standard/Deep integration tests with disposable repos. |
 | `ReviewProfileTests.cs` | 13 | Unit | Configurable review profile: severity thresholds, density settings, truncation limits, and defaults. |
 | `TruncationConfigTests.cs` | 14 | Unit | File truncation limit configuration: default 5000 lines, configurable override, edge cases. |
 | `FileClassificationTests.cs` | 24 | Unit | File type detection, binary exclusion, generated-file detection, language categorization. |
@@ -1094,7 +1140,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 |-----------|---------|
 | `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. |
 | `TestPullRequestHelper.cs` | Creates/manages disposable test repos with the 6-layer safety system (instance tracking, never-delete list, name prefix, marker file, creation recency, PAT ACL verification). |
-| `FakeCodeReviewService.cs` | Deterministic fake with `ResultFactory` and `VerificationResultFactory` for custom per-test behavior. Produces 2 stable inline comments per file for dedup testing. |
+| `FakeCodeReviewService.cs` | Deterministic fake with `ResultFactory`, `VerificationResultFactory`, and `DeepAnalysisFactory` for custom per-test behavior. Produces 2 stable inline comments per file for dedup testing. |
 
 ### Running Tests
 

@@ -37,6 +37,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IProgress<ReviewStatusUpdate>? progress = null,
         bool forceReview = false,
         bool simulationOnly = false,
+        ReviewDepth reviewDepth = ReviewDepth.Standard,
         CancellationToken cancellationToken = default)
     {
         try
@@ -107,7 +108,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     return await HandleReviewAsync(
                         project, repository, pullRequestId, prInfo, metadata,
                         currentIteration, action == ReviewAction.ReReview, progress,
-                        simulationOnly, cancellationToken);
+                        simulationOnly, reviewDepth, cancellationToken);
 
                 default:
                     throw new InvalidOperationException($"Unexpected review action: {action}");
@@ -293,6 +294,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int currentIteration, bool isReReview,
         IProgress<ReviewStatusUpdate>? progress,
         bool simulationOnly = false,
+        ReviewDepth reviewDepth = ReviewDepth.Standard,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -448,6 +450,31 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             _logger.LogWarning(ex, "[Pass 1] PR summary failed for PR #{PrId} — per-file reviews will proceed without cross-file context", pullRequestId);
         }
 
+        // ── Quick mode: Pass 1 only — skip per-file reviews ────────────
+        CodeReviewResult reviewResult;
+        DeepAnalysisResult? deepAnalysis = null;
+
+        if (reviewDepth == ReviewDepth.Quick)
+        {
+            _logger.LogInformation("[Quick] Skipping Pass 2 (per-file reviews) for PR #{PrId} — Quick mode uses Pass 1 summary only", pullRequestId);
+
+            reviewResult = BuildQuickModeResult(prSummary, fileChanges, skippedFiles);
+
+            // Add Pass 1 token usage
+            if (prSummary != null)
+            {
+                reviewResult.PromptTokens = prSummary.PromptTokens;
+                reviewResult.CompletionTokens = prSummary.CompletionTokens;
+                reviewResult.TotalTokens = prSummary.TotalTokens;
+                reviewResult.AiDurationMs = prSummary.AiDurationMs;
+                reviewResult.ModelName = prSummary.ModelName;
+            }
+
+            _logger.LogInformation("[Quick] PR #{PrId}: {Verdict} (no inline comments — Quick mode)", pullRequestId, reviewResult.Summary.Verdict);
+        }
+        else
+        {
+
         // ── Pass 2: AI analysis (parallel per-file for accuracy) ──────
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -510,7 +537,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
 
         // ── Merge per-file results ──────────────────────────────────────
-        var reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);
+        reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);
 
         // ── Add Pass 1 token usage to the merged total ──────────────────
         if (prSummary != null)
@@ -532,6 +559,64 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _logger.LogInformation("{Label} complete ({FileCount} files, parallel): {Verdict} with {InlineCount} inline comments",
             reviewLabel, fileChanges.Count,
             reviewResult.Summary.Verdict, reviewResult.InlineComments.Count);
+
+        // ── Pass 3: Deep holistic re-evaluation (Deep mode only) ────────
+        if (reviewDepth == ReviewDepth.Deep)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                ReportProgress(progress, ReviewStep.AnalyzingCode,
+                    "Pass 3: Deep holistic re-evaluation...", 62);
+
+                deepAnalysis = await _reviewService.GenerateDeepAnalysisAsync(
+                    prInfo, prSummary, reviewResult, fileChanges);
+
+                if (deepAnalysis != null)
+                {
+                    _logger.LogInformation(
+                        "[Pass 3] Deep analysis complete for PR #{PrId}: {Risk} risk, {IssueCount} cross-file issues, verdict consistent={Consistent}",
+                        pullRequestId,
+                        deepAnalysis.OverallRiskLevel,
+                        deepAnalysis.CrossFileIssues.Count,
+                        deepAnalysis.VerdictConsistency.IsConsistent);
+
+                    // Apply verdict override if deep analysis disagrees
+                    if (!deepAnalysis.VerdictConsistency.IsConsistent
+                        && !string.IsNullOrWhiteSpace(deepAnalysis.VerdictConsistency.RecommendedVerdict))
+                    {
+                        _logger.LogInformation(
+                            "[Pass 3] Verdict override: {OldVerdict} → {NewVerdict} (reason: {Reason})",
+                            reviewResult.Summary.Verdict,
+                            deepAnalysis.VerdictConsistency.RecommendedVerdict,
+                            deepAnalysis.VerdictConsistency.Explanation);
+
+                        reviewResult.Summary.Verdict = deepAnalysis.VerdictConsistency.RecommendedVerdict;
+                        reviewResult.Summary.VerdictJustification = deepAnalysis.VerdictConsistency.Explanation;
+
+                        if (deepAnalysis.VerdictConsistency.RecommendedVote.HasValue)
+                            reviewResult.RecommendedVote = deepAnalysis.VerdictConsistency.RecommendedVote.Value;
+                    }
+
+                    // Add Pass 3 token usage to the total
+                    reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (deepAnalysis.PromptTokens ?? 0);
+                    reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (deepAnalysis.CompletionTokens ?? 0);
+                    reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (deepAnalysis.TotalTokens ?? 0);
+                    reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (deepAnalysis.AiDurationMs ?? 0);
+                }
+                else
+                {
+                    _logger.LogInformation("[Pass 3] No deep analysis generated for PR #{PrId} — proceeding with Standard results", pullRequestId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Pass 3] Deep analysis failed for PR #{PrId} — proceeding with Standard results", pullRequestId);
+            }
+        }
+
+        } // end else (Standard/Deep — Pass 2+)
 
         // ── Validate & sanitize inline comments from AI ─────────────────
         var validatedComments = ValidateInlineComments(reviewResult.InlineComments, fileChanges);
@@ -783,7 +868,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
-            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary);
+            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
+            reviewDepth, deepAnalysis);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -844,6 +930,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             TotalTokens = reviewResult.TotalTokens,
             AiDurationMs = reviewResult.AiDurationMs,
             TotalDurationMs = totalSw.ElapsedMilliseconds,
+            ReviewDepth = reviewDepth.ToString(),
         };
         await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration,
             !voteFailed && !voteSkipped, historyEntry);
@@ -866,6 +953,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         return new ReviewResponse
         {
             Status = "Reviewed",
+            ReviewDepth = reviewDepth.ToString(),
             Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
             Summary = summaryMarkdown,
             IssueCount = reviewResult.InlineComments.Count,
@@ -884,7 +972,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         if (simulationOnly)
         {
             var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
-                nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary);
+                nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
+                reviewDepth, deepAnalysis);
 
             totalSw.Stop();
 
@@ -901,6 +990,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             var simResponse = new ReviewResponse
             {
                 Status = statusLabel,
+                ReviewDepth = reviewDepth.ToString(),
                 Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
                 Summary = simSummaryMarkdown,
                 IssueCount = lineSpecificComments.Count,
@@ -948,6 +1038,77 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Build a CodeReviewResult from Pass 1 (PR summary) only, for Quick mode.
+    /// No per-file reviews or inline comments — just a PR-level verdict.
+    /// </summary>
+    private static CodeReviewResult BuildQuickModeResult(
+        PrSummaryResult? prSummary, List<FileChange> fileChanges, List<FileChange> skippedFiles)
+    {
+        var result = new CodeReviewResult
+        {
+            Summary = new ReviewSummary
+            {
+                FilesChanged = fileChanges.Count,
+                Description = prSummary?.Intent ?? "Quick mode review — PR-level summary only.",
+                Verdict = DeriveQuickVerdict(prSummary),
+                VerdictJustification = DeriveQuickJustification(prSummary),
+            },
+            // No inline comments in Quick mode
+            InlineComments = new List<InlineComment>(),
+            // No detailed file reviews in Quick mode
+            FileReviews = fileChanges.Select(f => new FileReview
+            {
+                FilePath = f.FilePath,
+                Verdict = "SKIPPED",
+                ReviewText = "Per-file review skipped (Quick mode).",
+            }).ToList(),
+            RecommendedVote = DeriveQuickVote(prSummary),
+        };
+
+        return result;
+    }
+
+    private static string DeriveQuickVerdict(PrSummaryResult? prSummary)
+    {
+        if (prSummary == null)
+            return "APPROVED";
+
+        // Use risk areas to determine verdict
+        var highRiskCount = prSummary.RiskAreas.Count;
+        return highRiskCount switch
+        {
+            0 => "APPROVED",
+            1 or 2 => "APPROVED WITH SUGGESTIONS",
+            _ => "NEEDS WORK",
+        };
+    }
+
+    private static string DeriveQuickJustification(PrSummaryResult? prSummary)
+    {
+        if (prSummary == null)
+            return "Quick review — limited analysis without per-file review.";
+
+        if (prSummary.RiskAreas.Count == 0)
+            return $"Quick review — no significant risks identified. {prSummary.Intent}";
+
+        var risks = string.Join("; ", prSummary.RiskAreas.Select(r => $"{r.Area}: {r.Reason}"));
+        return $"Quick review — {prSummary.RiskAreas.Count} risk area(s) identified: {risks}";
+    }
+
+    private static int DeriveQuickVote(PrSummaryResult? prSummary)
+    {
+        if (prSummary == null)
+            return 5; // approve with suggestions (limited analysis)
+
+        return prSummary.RiskAreas.Count switch
+        {
+            0 => 10,  // approve
+            1 or 2 => 5,  // approve with suggestions
+            _ => -5,  // wait for author
+        };
+    }
 
     private async Task UpdateMetadataAndTag(
         string project, string repository, int pullRequestId,
@@ -1199,15 +1360,22 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
     internal static string BuildSummaryMarkdown(int pullRequestId, CodeReviewResult result, bool isReReview = false,
         int reviewNumber = 0, ReviewMetadata? priorMetadata = null, List<WorkItemInfo>? workItems = null,
-        List<FileChange>? skippedFiles = null, PrSummaryResult? prSummary = null)
+        List<FileChange>? skippedFiles = null, PrSummaryResult? prSummary = null,
+        ReviewDepth reviewDepth = ReviewDepth.Standard, DeepAnalysisResult? deepAnalysis = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
         var reviewLabel = reviewNumber > 0 ? $" (Review {reviewNumber})" : "";
+        var depthBadge = reviewDepth switch
+        {
+            ReviewDepth.Quick => " :zap: Quick",
+            ReviewDepth.Deep => " :mag: Deep",
+            _ => "",
+        };
 
         if (isReReview)
         {
-            sb.AppendLine($"## Re-Review{reviewLabel} -- PR {pullRequestId}");
+            sb.AppendLine($"## Re-Review{reviewLabel}{depthBadge} -- PR {pullRequestId}");
             sb.AppendLine();
 
             // Include prior review data in the blockquote
@@ -1232,7 +1400,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
         else
         {
-            sb.AppendLine($"## Code Review{reviewLabel} -- PR {pullRequestId}");
+            sb.AppendLine($"## Code Review{reviewLabel}{depthBadge} -- PR {pullRequestId}");
         }
         sb.AppendLine();
         sb.AppendLine("### Summary");
@@ -1285,6 +1453,47 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     sb.AppendLine($"- **{group.GroupName}**: {group.Description}");
                     sb.AppendLine($"  Files: {string.Join(", ", group.Files.Select(f => $"`{f}`"))}");
                 }
+                sb.AppendLine();
+            }
+        }
+
+        // Deep Analysis section from Pass 3 (Deep mode only)
+        if (deepAnalysis != null)
+        {
+            sb.AppendLine("### Deep Analysis (Pass 3 — Holistic Re-evaluation)");
+            sb.AppendLine();
+
+            if (!string.IsNullOrWhiteSpace(deepAnalysis.ExecutiveSummary))
+            {
+                sb.AppendLine($"**Executive Summary**: {deepAnalysis.ExecutiveSummary}");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine($"**Overall Risk Level**: {deepAnalysis.OverallRiskLevel}");
+            sb.AppendLine();
+
+            if (deepAnalysis.CrossFileIssues.Count > 0)
+            {
+                sb.AppendLine("**Cross-File Issues** (not visible in per-file reviews):");
+                foreach (var issue in deepAnalysis.CrossFileIssues)
+                {
+                    var files = string.Join(", ", issue.Files.Select(f => $"`{f}`"));
+                    sb.AppendLine($"- **[{issue.Severity}]** {issue.Description} ({files})");
+                }
+                sb.AppendLine();
+            }
+
+            if (!deepAnalysis.VerdictConsistency.IsConsistent)
+            {
+                sb.AppendLine($"> :warning: **Verdict Override**: {deepAnalysis.VerdictConsistency.Explanation}");
+                sb.AppendLine();
+            }
+
+            if (deepAnalysis.Recommendations.Count > 0)
+            {
+                sb.AppendLine("**Recommendations**:");
+                foreach (var rec in deepAnalysis.Recommendations)
+                    sb.AppendLine($"- {rec}");
                 sb.AppendLine();
             }
         }

@@ -32,4 +32,10 @@ public class ReviewRequest
     /// The review result is returned in the API response only.
     /// </summary>
     public bool SimulationOnly { get; set; }
+
+    /// <summary>
+    /// Review depth level: Quick (Pass 1 only), Standard (Pass 1+2), Deep (Pass 1+2+3).
+    /// Default: Standard (backward compatible — the current full pipeline).
+    /// </summary>
+    public ReviewDepth ReviewDepth { get; set; } = ReviewDepth.Standard;
 }

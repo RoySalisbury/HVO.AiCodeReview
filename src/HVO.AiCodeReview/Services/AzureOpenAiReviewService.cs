@@ -220,6 +220,13 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
                 await Task.Delay(delay);
             }
+            catch (ClientResultException cex) when (cex.Status == 429)
+            {
+                _logger.LogError(cex,
+                    "Rate limit retries exhausted for batch review of PR #{PrId} after {Attempts} attempts. Status: {Status}",
+                    pullRequest.PullRequestId, attempt + 1, cex.Status);
+                throw;
+            }
             catch (ClientResultException cex)
             {
                 _logger.LogError(cex, "Azure OpenAI API error. Status: {Status}. Message: {Message}",
@@ -334,6 +341,13 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
                 await Task.Delay(delay);
             }
+            catch (ClientResultException cex) when (cex.Status == 429)
+            {
+                _logger.LogError(cex,
+                    "Rate limit retries exhausted for {FilePath} after {Attempts} attempts. Status: {Status}",
+                    file.FilePath, attempt + 1, cex.Status);
+                throw;
+            }
             catch (ClientResultException cex)
             {
                 _logger.LogError(cex, "AI error reviewing {FilePath}. Status: {Status}", file.FilePath, cex.Status);
@@ -446,6 +460,13 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 _rateLimitSignal?.SignalCooldown(delay);
 
                 await Task.Delay(delay);
+            }
+            catch (ClientResultException cex) when (cex.Status == 429)
+            {
+                _logger.LogError(cex,
+                    "Rate limit retries exhausted during thread verification after {Attempts} attempts. Status: {Status}",
+                    attempt + 1, cex.Status);
+                throw;
             }
             catch (ClientResultException cex)
             {
@@ -643,6 +664,13 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
                 _rateLimitSignal?.SignalCooldown(delay);
                 await Task.Delay(delay);
+            }
+            catch (ClientResultException cex) when (cex.Status == 429)
+            {
+                _logger.LogWarning(
+                    "[Pass 1] Rate limit retries exhausted for PR #{PrId} summary after {Attempts} attempts — proceeding without cross-file context",
+                    pullRequest.PullRequestId, attempt + 1);
+                return null;
             }
             catch (Exception ex)
             {
@@ -1598,6 +1626,13 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
                 _rateLimitSignal?.SignalCooldown(delay);
                 await Task.Delay(delay);
+            }
+            catch (ClientResultException cex) when (cex.Status == 429)
+            {
+                _logger.LogWarning(
+                    "[Pass 3] Rate limit retries exhausted for PR #{PrId} deep analysis after {Attempts} attempts",
+                    pullRequest.PullRequestId, attempt + 1);
+                return null;
             }
             catch (Exception ex)
             {

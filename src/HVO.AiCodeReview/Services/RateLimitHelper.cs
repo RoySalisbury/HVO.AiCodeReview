@@ -50,8 +50,9 @@ public static class RateLimitHelper
     /// 2. "retry after N seconds" pattern parsed from the exception message
     /// 3. <see cref="DefaultRetryAfterSeconds"/> (30 s)
     /// </para>
-    /// The result is clamped to [1, <see cref="MaxRetryAfterSeconds"/>] and a small
-    /// <see cref="RetryAfterBufferSeconds"/> buffer is added.
+    /// The raw parsed value is clamped to [1, <see cref="MaxRetryAfterSeconds"/>] and then
+    /// <see cref="RetryAfterBufferSeconds"/> (5 s) is added, so the effective return range
+    /// is [6, 125] seconds.
     /// </summary>
     /// <param name="exception">
     /// The exception caught on a 429 response. May be <see cref="ClientResultException"/>

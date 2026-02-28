@@ -1365,7 +1365,7 @@ HVO.AiCodeReview/
 │           └── launchSettings.json     # Dev launch profiles
 │
 └── tests/
-    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (327 total)
+    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (337 total)
         ├── HVO.AiCodeReview.Tests.csproj
         ├── appsettings.Test.json           # Test config (gitignored)
         ├── appsettings.Test.template.json  # Test config template
@@ -1384,7 +1384,7 @@ HVO.AiCodeReview/
         ├── BuildSummaryMarkdownTests.cs    # 10 summary formatting tests
         ├── ReviewDepthTests.cs             # 22 depth mode + integration tests
         ├── RaceConditionTests.cs           # 3 concurrency / thread-safety tests
-        ├── RateLimitTests.cs               # 22 rate-limit helper + global signal tests
+        ├── RateLimitTests.cs               # 32 rate-limit helper + global signal tests
         ├── VectorStoreReviewServiceTests.cs # 24 vector store unit tests
         ├── VectorStoreIntegrationTest.cs   # 1 live vector store integration test
         ├── ModelBenchmarkTests.cs          # 8 model benchmark tests (5 models × 3 depths)

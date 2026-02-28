@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using AiCodeReview.Services;
 using Microsoft.Extensions.Logging;
 
@@ -256,5 +257,190 @@ public class RateLimitTests
         var remaining = signal.CooldownExpiresUtc - DateTimeOffset.UtcNow;
         Assert.IsTrue(remaining.TotalSeconds > 50,
             $"Expected ~60s remaining, got {remaining.TotalSeconds:F1}s — longest cooldown should win");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  RateLimitHelper.TryParseRetryAfterFromResponse
+    // ──────────────────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void TryParseRetryAfterFromResponse_IntegerSeconds_ParsesCorrectly()
+    {
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>
+        {
+            ["Retry-After"] = "60"
+        });
+        var cex = new ClientResultException("Rate limited", response, innerException: null);
+
+        var result = RateLimitHelper.TryParseRetryAfterFromResponse(cex);
+        Assert.AreEqual(60, result);
+    }
+
+    [TestMethod]
+    public void TryParseRetryAfterFromResponse_NoHeader_ReturnsNull()
+    {
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>());
+        var cex = new ClientResultException("Rate limited", response, innerException: null);
+
+        var result = RateLimitHelper.TryParseRetryAfterFromResponse(cex);
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void TryParseRetryAfterFromResponse_EmptyHeader_ReturnsNull()
+    {
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>
+        {
+            ["Retry-After"] = ""
+        });
+        var cex = new ClientResultException("Rate limited", response, innerException: null);
+
+        var result = RateLimitHelper.TryParseRetryAfterFromResponse(cex);
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void TryParseRetryAfterFromResponse_NonNumericHeader_ReturnsNull()
+    {
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>
+        {
+            ["Retry-After"] = "not-a-number"
+        });
+        var cex = new ClientResultException("Rate limited", response, innerException: null);
+
+        var result = RateLimitHelper.TryParseRetryAfterFromResponse(cex);
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void TryParseRetryAfterFromResponse_NullResponse_ReturnsNull()
+    {
+        var cex = new ClientResultException("Rate limited", response: null, innerException: null);
+
+        var result = RateLimitHelper.TryParseRetryAfterFromResponse(cex);
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void TryParseRetryAfterFromResponse_LargeValue_ParsesCorrectly()
+    {
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>
+        {
+            ["Retry-After"] = "300"
+        });
+        var cex = new ClientResultException("Rate limited", response, innerException: null);
+
+        var result = RateLimitHelper.TryParseRetryAfterFromResponse(cex);
+        Assert.AreEqual(300, result);
+    }
+
+    [TestMethod]
+    public void ComputeRetryDelay_ClientResultExceptionWithHeader_UsesHeaderOverMessage()
+    {
+        // Response says 60s, message says 20s — header should win
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>
+        {
+            ["Retry-After"] = "60"
+        });
+        var cex = new ClientResultException("Please retry after 20 seconds", response, innerException: null);
+
+        var delay = RateLimitHelper.ComputeRetryDelay(cex);
+        // 60 + 5 buffer = 65s
+        Assert.AreEqual(65, (int)delay.TotalSeconds);
+    }
+
+    [TestMethod]
+    public void ComputeRetryDelay_ClientResultExceptionNoHeader_FallsBackToMessage()
+    {
+        // No Retry-After header, message has "retry after 45 seconds"
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>());
+        var cex = new ClientResultException("Please retry after 45 seconds", response, innerException: null);
+
+        var delay = RateLimitHelper.ComputeRetryDelay(cex);
+        // 45 + 5 buffer = 50s
+        Assert.AreEqual(50, (int)delay.TotalSeconds);
+    }
+
+    [TestMethod]
+    public void ComputeRetryDelay_ClientResultExceptionNullResponse_FallsBackToMessage()
+    {
+        var cex = new ClientResultException("Please retry after 30 seconds", response: null, innerException: null);
+
+        var delay = RateLimitHelper.ComputeRetryDelay(cex);
+        // 30 + 5 buffer = 35s
+        Assert.AreEqual(35, (int)delay.TotalSeconds);
+    }
+
+    [TestMethod]
+    public void ComputeRetryDelay_ClientResultExceptionNothingParseable_ReturnsDefault()
+    {
+        var response = new MockPipelineResponse(429, new Dictionary<string, string>());
+        var cex = new ClientResultException("Some error", response, innerException: null);
+
+        var delay = RateLimitHelper.ComputeRetryDelay(cex);
+        // Default 30 + 5 buffer = 35s
+        Assert.AreEqual(35, (int)delay.TotalSeconds);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+//  Mock PipelineResponse for testing Retry-After header parsing
+// ──────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Minimal <see cref="PipelineResponse"/> subclass that returns configurable
+/// status and headers for unit testing <see cref="RateLimitHelper"/>.
+/// </summary>
+internal sealed class MockPipelineResponse : PipelineResponse
+{
+    private readonly int _status;
+    private readonly MockPipelineResponseHeaders _headers;
+
+    public MockPipelineResponse(int status, Dictionary<string, string> headers)
+    {
+        _status = status;
+        _headers = new MockPipelineResponseHeaders(headers);
+    }
+
+    public override int Status => _status;
+    public override string ReasonPhrase => _status == 429 ? "Too Many Requests" : "OK";
+    public override Stream? ContentStream { get => null; set { } }
+    public override BinaryData Content => BinaryData.FromString(string.Empty);
+
+    protected override PipelineResponseHeaders HeadersCore => _headers;
+
+    public override void Dispose() { }
+
+    public override BinaryData BufferContent(CancellationToken cancellationToken = default)
+        => BinaryData.FromString(string.Empty);
+
+    public override ValueTask<BinaryData> BufferContentAsync(CancellationToken cancellationToken = default)
+        => new(BinaryData.FromString(string.Empty));
+}
+
+internal sealed class MockPipelineResponseHeaders : PipelineResponseHeaders
+{
+    private readonly Dictionary<string, string> _headers;
+
+    public MockPipelineResponseHeaders(Dictionary<string, string> headers)
+    {
+        _headers = new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public override IEnumerator<KeyValuePair<string, string>> GetEnumerator()
+        => _headers.GetEnumerator();
+
+    public override bool TryGetValue(string name, out string? value)
+        => _headers.TryGetValue(name, out value);
+
+    public override bool TryGetValues(string name, out IEnumerable<string>? values)
+    {
+        if (_headers.TryGetValue(name, out var value))
+        {
+            values = new[] { value };
+            return true;
+        }
+        values = null;
+        return false;
     }
 }

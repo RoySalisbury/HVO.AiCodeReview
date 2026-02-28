@@ -35,6 +35,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
     private readonly string _fallbackSingleFileSystemPrompt;
     private readonly string _fallbackPrSummarySystemPrompt;
 
+    // Global rate-limit cooldown signal (shared across all service instances)
+    private readonly IGlobalRateLimitSignal? _rateLimitSignal;
+
     // ── Legacy constructor: used by direct DI registration via IOptions ──
 
     public AzureOpenAiReviewService(
@@ -62,12 +65,14 @@ public class AzureOpenAiReviewService : ICodeReviewService
         int maxInputLinesPerFile = 5000,
         ReviewProfile? reviewProfile = null,
         PromptAssemblyPipeline? pipeline = null,
-        ModelAdapter? modelAdapter = null)
+        ModelAdapter? modelAdapter = null,
+        IGlobalRateLimitSignal? rateLimitSignal = null)
     {
         _modelName = modelName;
         _logger = logger;
         _pipeline = pipeline;
         _modelAdapter = modelAdapter;
+        _rateLimitSignal = rateLimitSignal;
 
         // Apply model adapter overrides (temperature, tokens, truncation)
         var baseProfile = reviewProfile ?? new ReviewProfile();
@@ -181,15 +186,46 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        try
+
+        // Retry with Retry-After-aware backoff for rate limiting (HTTP 429)
+        var totalRetryTime = TimeSpan.Zero;
+        for (int attempt = 0; ; attempt++)
         {
-            response = await _chatClient.CompleteChatAsync(messages, options);
-        }
-        catch (ClientResultException cex)
-        {
-            _logger.LogError(cex, "Azure OpenAI API error. Status: {Status}. Message: {Message}",
-                cex.Status, cex.Message);
-            throw;
+            try
+            {
+                if (_rateLimitSignal != null)
+                    await _rateLimitSignal.WaitIfCoolingDownAsync();
+
+                response = await _chatClient.CompleteChatAsync(messages, options);
+                break;
+            }
+            catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
+            {
+                var delay = RateLimitHelper.ComputeRetryDelay(cex);
+                totalRetryTime += delay;
+
+                if (totalRetryTime > RateLimitHelper.MaxTotalRetryDuration)
+                {
+                    _logger.LogError(
+                        "Rate limit retries exhausted for batch review of PR #{PrId}: cumulative wait {Total:F0}s exceeds {Max}s cap",
+                        pullRequest.PullRequestId, totalRetryTime.TotalSeconds, RateLimitHelper.MaxTotalRetryDuration.TotalSeconds);
+                    throw;
+                }
+
+                _logger.LogWarning(
+                    "Rate limited (429) during batch review of PR #{PrId}, retry {Attempt}/{Max} after {Delay}s (cumulative: {Total:F0}s)",
+                    pullRequest.PullRequestId, attempt + 1, RateLimitHelper.MaxRateLimitRetries, delay.TotalSeconds, totalRetryTime.TotalSeconds);
+
+                _rateLimitSignal?.SignalCooldown(delay);
+
+                await Task.Delay(delay);
+            }
+            catch (ClientResultException cex)
+            {
+                _logger.LogError(cex, "Azure OpenAI API error. Status: {Status}. Message: {Message}",
+                    cex.Status, cex.Message);
+                throw;
+            }
         }
         sw.Stop();
         var content = response.Value.Content[0].Text;
@@ -263,20 +299,39 @@ public class AzureOpenAiReviewService : ICodeReviewService
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        // Retry with exponential backoff for rate limiting (HTTP 429)
-        const int maxRetries = 3;
+        // Retry with Retry-After-aware backoff for rate limiting (HTTP 429)
+        var totalRetryTime = TimeSpan.Zero;
         for (int attempt = 0; ; attempt++)
         {
             try
             {
+                // Wait for any global cooldown before making the call
+                if (_rateLimitSignal != null)
+                    await _rateLimitSignal.WaitIfCoolingDownAsync();
+
                 response = await _chatClient.CompleteChatAsync(messages, options);
                 break; // Success
             }
-            catch (ClientResultException cex) when (cex.Status == 429 && attempt < maxRetries)
+            catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
             {
-                var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt + 1)); // 2s, 4s, 8s
-                _logger.LogWarning("Rate limited (429) reviewing {FilePath}, retry {Attempt}/{Max} after {Delay}s",
-                    file.FilePath, attempt + 1, maxRetries, delay.TotalSeconds);
+                var delay = RateLimitHelper.ComputeRetryDelay(cex);
+                totalRetryTime += delay;
+
+                if (totalRetryTime > RateLimitHelper.MaxTotalRetryDuration)
+                {
+                    _logger.LogError(
+                        "Rate limit retries exhausted for {FilePath}: cumulative wait {Total:F0}s exceeds {Max}s cap",
+                        file.FilePath, totalRetryTime.TotalSeconds, RateLimitHelper.MaxTotalRetryDuration.TotalSeconds);
+                    throw;
+                }
+
+                _logger.LogWarning(
+                    "Rate limited (429) reviewing {FilePath}, retry {Attempt}/{Max} after {Delay}s (cumulative: {Total:F0}s)",
+                    file.FilePath, attempt + 1, RateLimitHelper.MaxRateLimitRetries, delay.TotalSeconds, totalRetryTime.TotalSeconds);
+
+                // Signal all concurrent callers to pause
+                _rateLimitSignal?.SignalCooldown(delay);
+
                 await Task.Delay(delay);
             }
             catch (ClientResultException cex)
@@ -359,20 +414,37 @@ public class AzureOpenAiReviewService : ICodeReviewService
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        // Retry with exponential backoff for rate limiting (HTTP 429)
-        const int maxRetries = 3;
+        // Retry with Retry-After-aware backoff for rate limiting (HTTP 429)
+        var totalRetryTime = TimeSpan.Zero;
         for (int attempt = 0; ; attempt++)
         {
             try
             {
+                if (_rateLimitSignal != null)
+                    await _rateLimitSignal.WaitIfCoolingDownAsync();
+
                 response = await _chatClient.CompleteChatAsync(messages, options);
                 break;
             }
-            catch (ClientResultException cex) when (cex.Status == 429 && attempt < maxRetries)
+            catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
             {
-                var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt + 1));
-                _logger.LogWarning("Rate limited (429) during thread verification, retry {Attempt}/{Max} after {Delay}s",
-                    attempt + 1, maxRetries, delay.TotalSeconds);
+                var delay = RateLimitHelper.ComputeRetryDelay(cex);
+                totalRetryTime += delay;
+
+                if (totalRetryTime > RateLimitHelper.MaxTotalRetryDuration)
+                {
+                    _logger.LogError(
+                        "Rate limit retries exhausted during thread verification: cumulative wait {Total:F0}s exceeds {Max}s cap",
+                        totalRetryTime.TotalSeconds, RateLimitHelper.MaxTotalRetryDuration.TotalSeconds);
+                    throw;
+                }
+
+                _logger.LogWarning(
+                    "Rate limited (429) during thread verification, retry {Attempt}/{Max} after {Delay}s (cumulative: {Total:F0}s)",
+                    attempt + 1, RateLimitHelper.MaxRateLimitRetries, delay.TotalSeconds, totalRetryTime.TotalSeconds);
+
+                _rateLimitSignal?.SignalCooldown(delay);
+
                 await Task.Delay(delay);
             }
             catch (ClientResultException cex)
@@ -539,15 +611,45 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        try
+
+        // Retry with Retry-After-aware backoff for rate limiting (HTTP 429)
+        var totalRetryTime = TimeSpan.Zero;
+        for (int attempt = 0; ; attempt++)
         {
-            response = await _chatClient.CompleteChatAsync(messages, options);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Pass 1] PR summary generation failed for PR #{PrId} — per-file reviews will proceed without cross-file context",
-                pullRequest.PullRequestId);
-            return null;
+            try
+            {
+                if (_rateLimitSignal != null)
+                    await _rateLimitSignal.WaitIfCoolingDownAsync();
+
+                response = await _chatClient.CompleteChatAsync(messages, options);
+                break;
+            }
+            catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
+            {
+                var delay = RateLimitHelper.ComputeRetryDelay(cex);
+                totalRetryTime += delay;
+
+                if (totalRetryTime > RateLimitHelper.MaxTotalRetryDuration)
+                {
+                    _logger.LogWarning(
+                        "[Pass 1] Rate limit retries exhausted for PR #{PrId} summary — proceeding without cross-file context",
+                        pullRequest.PullRequestId);
+                    return null;
+                }
+
+                _logger.LogWarning(
+                    "[Pass 1] Rate limited (429) during PR summary, retry {Attempt}/{Max} after {Delay}s",
+                    attempt + 1, RateLimitHelper.MaxRateLimitRetries, delay.TotalSeconds);
+
+                _rateLimitSignal?.SignalCooldown(delay);
+                await Task.Delay(delay);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Pass 1] PR summary generation failed for PR #{PrId} — per-file reviews will proceed without cross-file context",
+                    pullRequest.PullRequestId);
+                return null;
+            }
         }
         sw.Stop();
 
@@ -1464,14 +1566,44 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        try
+
+        // Retry with Retry-After-aware backoff for rate limiting (HTTP 429)
+        var totalRetryTime = TimeSpan.Zero;
+        for (int attempt = 0; ; attempt++)
         {
-            response = await _chatClient.CompleteChatAsync(messages, options);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Pass 3] Deep analysis failed for PR #{PrId}", pullRequest.PullRequestId);
-            return null;
+            try
+            {
+                if (_rateLimitSignal != null)
+                    await _rateLimitSignal.WaitIfCoolingDownAsync();
+
+                response = await _chatClient.CompleteChatAsync(messages, options);
+                break;
+            }
+            catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
+            {
+                var delay = RateLimitHelper.ComputeRetryDelay(cex);
+                totalRetryTime += delay;
+
+                if (totalRetryTime > RateLimitHelper.MaxTotalRetryDuration)
+                {
+                    _logger.LogWarning(
+                        "[Pass 3] Rate limit retries exhausted for PR #{PrId} deep analysis",
+                        pullRequest.PullRequestId);
+                    return null;
+                }
+
+                _logger.LogWarning(
+                    "[Pass 3] Rate limited (429) during deep analysis, retry {Attempt}/{Max} after {Delay}s",
+                    attempt + 1, RateLimitHelper.MaxRateLimitRetries, delay.TotalSeconds);
+
+                _rateLimitSignal?.SignalCooldown(delay);
+                await Task.Delay(delay);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Pass 3] Deep analysis failed for PR #{PrId}", pullRequest.PullRequestId);
+                return null;
+            }
         }
         sw.Stop();
 

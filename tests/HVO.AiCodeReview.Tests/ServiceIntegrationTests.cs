@@ -48,6 +48,7 @@ public class ServiceIntegrationTests
                 sp.GetRequiredService<ICodeReviewService>(),
                 sp.GetRequiredService<ILogger<DepthModelResolver>>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ModelAdapterResolver>(sp =>
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddScoped<VectorStoreReviewService>();

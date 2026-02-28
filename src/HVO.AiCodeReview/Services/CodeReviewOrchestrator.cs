@@ -16,6 +16,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private readonly AiProviderSettings _aiProviderSettings;
     private readonly AssistantsSettings _assistantsSettings;
     private readonly IReviewRateLimiter _rateLimiter;
+    private readonly IGlobalRateLimitSignal _globalRateLimitSignal;
     private readonly ILogger<CodeReviewOrchestrator> _logger;
 
     public CodeReviewOrchestrator(
@@ -28,6 +29,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IOptions<AiProviderSettings> aiProviderSettings,
         IOptions<AssistantsSettings> assistantsSettings,
         IReviewRateLimiter rateLimiter,
+        IGlobalRateLimitSignal globalRateLimitSignal,
         ILogger<CodeReviewOrchestrator> logger)
     {
         _devOpsService = devOpsService;
@@ -39,6 +41,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _aiProviderSettings = aiProviderSettings.Value;
         _assistantsSettings = assistantsSettings.Value;
         _rateLimiter = rateLimiter;
+        _globalRateLimitSignal = globalRateLimitSignal;
         _logger = logger;
     }
 
@@ -1174,6 +1177,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                         if (delay > 0)
                             await Task.Delay((int)delay, cancellationToken);
                     }
+
+                    // Wait for any global rate-limit cooldown before calling the AI
+                    await _globalRateLimitSignal.WaitIfCoolingDownAsync(cancellationToken);
 
                     var result = await activeService.ReviewFileAsync(prInfo, file, fileChanges.Count, workItems);
                     perFileResults[index] = result;

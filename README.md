@@ -1131,6 +1131,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `ThreadManagementTests.cs` | 17 | Unit | Comment thread lifecycle: deduplication, status transitions, fixed-thread resolution, attribution tags. |
 | `BuildSummaryMarkdownTests.cs` | 10 | Unit | Summary thread Markdown formatting: file inventory, verdict display, observation tables. |
 | `AiQualityVerificationTests.cs` | 3 | LiveAI | Push code with **known, deliberate issues** (hardcoded secrets, SQL injection, null derefs, resource leaks) and verify the real AI flags them. Includes a fix-and-reverify cycle. Run with `--filter TestCategory=LiveAI`. |
+| `LiveAiDepthModeTests.cs` | 4 | LiveAI | Real AI tests for all three review depth modes: Quick (no inline), Standard (inline + verdicts), Deep (+ cross-file analysis). Includes a depth comparison test that runs all 3 modes on the same multi-file known-bad code and compares output. Uses `PushMultipleFilesAsync` for cross-file scenarios. |
 | `AiSmokeTest.cs` | 2 | Manual | Manual-only tests that call real Azure OpenAI (basic prompt + JSON mode). Run with `--filter TestCategory=Manual`. |
 | `ReviewFlowIntegrationTests.cs` | 3 (Ignored) | — | Legacy monolithic lifecycle test. Replaced by `ReviewLifecycleTests.cs`. Kept for reference. |
 
@@ -1139,7 +1140,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | Component | Purpose |
 |-----------|---------|
 | `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. |
-| `TestPullRequestHelper.cs` | Creates/manages disposable test repos with the 6-layer safety system (instance tracking, never-delete list, name prefix, marker file, creation recency, PAT ACL verification). |
+| `TestPullRequestHelper.cs` | Creates/manages disposable test repos with the 6-layer safety system (instance tracking, never-delete list, name prefix, marker file, creation recency, PAT ACL verification). Supports single-file (`PushNewCommitAsync`) and multi-file (`PushMultipleFilesAsync`) pushes for cross-file analysis testing. |
 | `FakeCodeReviewService.cs` | Deterministic fake with `ResultFactory`, `VerificationResultFactory`, and `DeepAnalysisFactory` for custom per-test behavior. Produces 2 stable inline comments per file for dedup testing. |
 
 ### Running Tests

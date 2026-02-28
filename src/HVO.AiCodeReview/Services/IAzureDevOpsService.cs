@@ -70,4 +70,10 @@ public interface IAzureDevOpsService : IDisposable
 
     /// <summary>Fetch discussion comments for a work item.</summary>
     Task<List<WorkItemComment>> GetWorkItemCommentsAsync(string project, int workItemId);
+
+    /// <summary>
+    /// Resolve the service account identity ID (from config or auto-discovery).
+    /// Useful for health checks to verify Azure DevOps connectivity.
+    /// </summary>
+    Task<string?> ResolveServiceIdentityAsync();
 }

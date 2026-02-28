@@ -26,6 +26,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
     private FileSystemWatcher? _watcher;
     private readonly ConcurrentDictionary<string, string> _cache = new();
     private readonly object _reloadLock = new();
+    private Timer? _debounceTimer;
 
     /// <summary>
     /// Initializes the pipeline using a catalog file.
@@ -76,6 +77,15 @@ public sealed class PromptAssemblyPipeline : IDisposable
             return null;
 
         var cacheKey = $"{scope}|{customInstructions ?? string.Empty}|{modelPreamble ?? string.Empty}";
+
+        // Guard against unbounded cache growth (realistic max is ~50 unique scope+provider combinations)
+        const int MaxCacheEntries = 100;
+        if (_cache.Count >= MaxCacheEntries)
+        {
+            _logger.LogWarning("Prompt cache reached {Max} entries — clearing to prevent unbounded growth", MaxCacheEntries);
+            _cache.Clear();
+        }
+
         return _cache.GetOrAdd(cacheKey, _ => BuildPrompt(catalog, scope, customInstructions, modelPreamble));
     }
 
@@ -281,23 +291,25 @@ public sealed class PromptAssemblyPipeline : IDisposable
 
     private void OnCatalogFileChanged(object sender, FileSystemEventArgs e)
     {
-        // FileSystemWatcher can fire multiple events for a single change; debounce with a lock
-        lock (_reloadLock)
+        // FileSystemWatcher fires multiple events for a single save.
+        // Use a timer-based debounce (200 ms) so we don't block a ThreadPool thread with Thread.Sleep.
+        _debounceTimer?.Dispose();
+        _debounceTimer = new Timer(_ =>
         {
-            try
+            lock (_reloadLock)
             {
-                // Small delay to let writes complete
-                Thread.Sleep(100);
-
-                _logger.LogInformation("Review rule catalog changed on disk — reloading");
-                LoadCatalog();
-                _cache.Clear();
+                try
+                {
+                    _logger.LogInformation("Review rule catalog changed on disk — reloading");
+                    LoadCatalog();
+                    _cache.Clear();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error reloading review rule catalog after file change");
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error reloading review rule catalog after file change");
-            }
-        }
+        }, null, dueTime: 200, period: Timeout.Infinite);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
@@ -320,6 +332,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
 
     public void Dispose()
     {
+        _debounceTimer?.Dispose();
         _watcher?.Dispose();
     }
 }

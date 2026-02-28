@@ -36,7 +36,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int pullRequestId,
         IProgress<ReviewStatusUpdate>? progress = null,
         bool forceReview = false,
-        bool simulationOnly = false)
+        bool simulationOnly = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -456,7 +457,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int completedFiles = 0;
         var perFileResults = new CodeReviewResult[fileChanges.Count];
 
-        var tasks = fileChanges.Select((file, index) => Task.Run(async () =>
+        try
+        {
+        var tasks = fileChanges.Select(async (file, index) =>
         {
             await semaphore.WaitAsync();
             try
@@ -491,9 +494,14 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             {
                 semaphore.Release();
             }
-        })).ToArray();
+        }).ToArray();
 
         await Task.WhenAll(tasks);
+        }
+        finally
+        {
+            semaphore.Dispose();
+        }
 
         // ── Merge per-file results ──────────────────────────────────────
         var reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);

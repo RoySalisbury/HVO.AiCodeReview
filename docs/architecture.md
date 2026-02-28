@@ -305,7 +305,7 @@ All Azure DevOps REST API calls go through `Microsoft.Extensions.Http.Resilience
 | Layer | Configuration | Description |
 |-------|---------------|-------------|
 | **Retry** | 5 attempts, exponential backoff (2s base) with jitter | Retries on 408, 429, 5xx, `HttpRequestException`, and `TimeoutRejectedException`. Respects `Retry-After` headers from 429 responses. |
-| **Circuit Breaker** | 90% failure ratio, 5 min throughput, 15s break | Opens circuit after sustained failures to prevent cascading load on a degraded Azure DevOps instance. |
+| **Circuit Breaker** | 90% failure ratio, minimum throughput 5 requests, 15s break | Opens circuit after sustained failures to prevent cascading load on a degraded Azure DevOps instance. |
 | **Total Timeout** | 3 minutes | Outer timeout spanning all retry attempts — prevents indefinite waits. |
 | **Attempt Timeout** | 60 seconds | Per-attempt timeout — cancels individual requests that hang. |
 

@@ -8,10 +8,10 @@ using Microsoft.Extensions.Logging;
 namespace AiCodeReview.Tests;
 
 /// <summary>
-/// Tests for Azure DevOps HTTP resilience (Polly retry + circuit breaker).
-/// These tests validate the resilience pipeline configuration using a
-/// <see cref="DelegatingHandler"/> stub that controls HTTP responses,
-/// verifying retry, Retry-After, circuit breaker, and timeout behavior.
+/// Tests for Azure DevOps HTTP resilience (Polly-based retry policies).
+/// These tests validate the configured resilience pipeline using a custom
+/// HTTP message handler stub that controls HTTP responses, verifying retry
+/// behavior and handling of Retry-After semantics.
 /// </summary>
 [TestClass]
 public class ResilienceTests
@@ -97,15 +97,10 @@ public class ResilienceTests
 
         var devOps = BuildServiceWithResilience(handler);
 
-        // Act — 404 is not transient, shouldn't retry
-        try
-        {
-            await devOps.HasReviewTagAsync("TestProject", "TestRepo", 1);
-        }
-        catch
-        {
-            // expected to fail — EnsureSuccessStatusCode throws
-        }
+        // Act & Assert — 404 is not transient, shouldn't retry, should throw
+        await Assert.ThrowsExceptionAsync<HttpRequestException>(
+            () => devOps.HasReviewTagAsync("TestProject", "TestRepo", 1),
+            "Expected HttpRequestException for non-transient 404");
 
         Assert.AreEqual(1, handler.CallCount, "Non-transient 404 should not be retried");
     }
@@ -125,27 +120,19 @@ public class ResilienceTests
         var devOps = BuildServiceWithResilience(handler);
 
         // Act & Assert — should eventually fail after max retries
-        var threw = false;
-        try
-        {
-            await devOps.HasReviewTagAsync("TestProject", "TestRepo", 1);
-        }
-        catch (HttpRequestException)
-        {
-            threw = true;
-        }
+        await Assert.ThrowsExceptionAsync<HttpRequestException>(
+            () => devOps.HasReviewTagAsync("TestProject", "TestRepo", 1),
+            "Expected HttpRequestException after retries exhausted");
 
-        Assert.IsTrue(threw, "Expected HttpRequestException after retries exhausted");
-        // 1 initial + 5 retries = 6 total, but circuit breaker may trip earlier
-        Assert.IsTrue(handler.CallCount >= 2, $"Expected at least 2 attempts, got {handler.CallCount}");
-        Assert.IsTrue(handler.CallCount <= 6, $"Expected at most 6 attempts (1+5 retries), got {handler.CallCount}");
+        // With MaxRetryAttempts = 5, we expect exactly 1 initial attempt + 5 retries = 6 total calls
+        Assert.AreEqual(6, handler.CallCount, $"Expected exactly 6 attempts (1 initial + 5 retries), got {handler.CallCount}");
     }
 
     // ── Multiple consecutive 429s with Retry-After ──────────────────────
 
     [TestMethod]
     [TestCategory("Unit")]
-    public async Task Retry_Multiple429s_RespectsRetryAfter()
+    public async Task Retry_Multiple429s_EventuallySucceeds()
     {
         var r1 = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
         r1.Headers.Add("Retry-After", "1");
@@ -207,7 +194,7 @@ public class ResilienceTests
 
     /// <summary>
     /// Builds an <see cref="IAzureDevOpsService"/> with the standard resilience handler
-    /// and a custom <see cref="DelegatingHandler"/> for controlled responses.
+    /// and a custom <see cref="HttpMessageHandler"/> for controlled responses.
     /// Uses minimal retry delays for fast test execution.
     /// </summary>
     private static IAzureDevOpsService BuildServiceWithResilience(FakeResponseHandler handler)

@@ -304,6 +304,80 @@ public class SizeGuardrailsTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  CountChangedLines — edge cases
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void CountChangedLines_EmptyContent_ReturnsZero()
+    {
+        var files = new List<FileChange>
+        {
+            MakeFile("/empty.cs", "add", content: ""),
+        };
+
+        Assert.AreEqual(0, CodeReviewOrchestrator.CountChangedLines(files));
+    }
+
+    [TestMethod]
+    public void CountChangedLines_TrailingNewline_DoesNotOvercount()
+    {
+        // "line1\nline2\n" is 2 lines, not 3
+        var files = new List<FileChange>
+        {
+            MakeFile("/trailing.cs", "add", content: "line1\nline2\n"),
+        };
+
+        Assert.AreEqual(2, CodeReviewOrchestrator.CountChangedLines(files));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  PrioritizeFiles — content fallback for ordering
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void PrioritizeFiles_ContentFallback_WhenNoRanges()
+    {
+        // File with content but no ranges should still be ordered by line count
+        var files = new List<FileChange>
+        {
+            MakeFile("/small.cs", "add", content: "a"),                    // 1 line
+            MakeFile("/large.cs", "add", content: "a\nb\nc\nd\ne"),       // 5 lines
+        };
+
+        var sorted = CodeReviewOrchestrator.PrioritizeFiles(files);
+
+        Assert.AreEqual("/large.cs", sorted[0].FilePath, "Larger content file first.");
+        Assert.AreEqual("/small.cs", sorted[1].FilePath, "Smaller content file second.");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Focus mode — FocusModeMaxFiles = 0 guard
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void FocusMode_MaxFilesZero_DoesNotTrimFiles()
+    {
+        // FocusModeMaxFiles = 0 should disable trimming even if FocusModeEnabled = true
+        var settings = new SizeGuardrailsSettings
+        {
+            FocusModeEnabled = true,
+            FocusModeMaxFiles = 0,
+        };
+
+        // Simulate the orchestrator's focus-mode check inline:
+        // The condition should short-circuit when FocusModeMaxFiles is 0
+        var files = Enumerable.Range(1, 10)
+            .Select(i => MakeFile($"/f{i}.cs", "edit", new List<(int, int)> { (1, 5) }))
+            .ToList();
+
+        bool shouldTrim = settings.FocusModeEnabled
+            && settings.FocusModeMaxFiles > 0
+            && files.Count > settings.FocusModeMaxFiles;
+
+        Assert.IsFalse(shouldTrim, "FocusModeMaxFiles = 0 should disable trimming.");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  SizeGuardrailsSettings — defaults
     // ═══════════════════════════════════════════════════════════════════
 

@@ -399,7 +399,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
 
         var deferredFiles = new List<FileChange>();
-        if (_sizeGuardrails.FocusModeEnabled && fileChanges.Count > _sizeGuardrails.FocusModeMaxFiles)
+        if (_sizeGuardrails.FocusModeEnabled
+            && _sizeGuardrails.FocusModeMaxFiles > 0
+            && fileChanges.Count > _sizeGuardrails.FocusModeMaxFiles)
         {
             deferredFiles = fileChanges.Skip(_sizeGuardrails.FocusModeMaxFiles).ToList();
             fileChanges = fileChanges.Take(_sizeGuardrails.FocusModeMaxFiles).ToList();
@@ -1841,19 +1843,30 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int total = 0;
         foreach (var f in files)
         {
-            if (f.ChangedLineRanges.Count > 0)
-            {
-                total += f.ChangedLineRanges.Sum(r => r.End - r.Start + 1);
-            }
-            else
-            {
-                // For adds/deletes with no explicit ranges, count content lines
-                var content = f.ModifiedContent ?? f.OriginalContent;
-                if (content != null)
-                    total += content.Split('\n').Length;
-            }
+            total += CountFileChangedLines(f);
         }
         return total;
+    }
+
+    /// <summary>
+    /// Counts changed lines for a single file. Uses <see cref="FileChange.ChangedLineRanges"/>
+    /// when available, otherwise falls back to counting non-empty content lines.
+    /// </summary>
+    internal static int CountFileChangedLines(FileChange f)
+    {
+        if (f.ChangedLineRanges.Count > 0)
+        {
+            return f.ChangedLineRanges.Sum(r => r.End - r.Start + 1);
+        }
+
+        // For adds/deletes with no explicit ranges, count content lines
+        var content = f.ModifiedContent ?? f.OriginalContent;
+        if (string.IsNullOrEmpty(content))
+            return 0;
+
+        // Count actual lines, ignoring a trailing newline that would produce an empty final element
+        var lines = content.Split('\n');
+        return lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
     }
 
     /// <summary>
@@ -1865,7 +1878,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     {
         return files
             .OrderBy(f => ChangeTypePriority(f.ChangeType))
-            .ThenByDescending(f => f.ChangedLineRanges.Sum(r => r.End - r.Start + 1))
+            .ThenByDescending(f => CountFileChangedLines(f))
             .ToList();
 
         static int ChangeTypePriority(string changeType) => changeType.ToLowerInvariant() switch

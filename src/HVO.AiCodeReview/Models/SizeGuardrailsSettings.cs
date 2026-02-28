@@ -23,10 +23,11 @@ public class SizeGuardrailsSettings
     public int WarnChangedLines { get; set; } = 2000;
 
     /// <summary>
-    /// When focus mode is enabled and the PR exceeds <see cref="WarnFileCount"/>,
+    /// When focus mode is enabled and the PR has more files than this limit,
     /// only the top N highest-priority files are reviewed. The remaining files
     /// are listed as "deferred — focus mode" in the summary.
-    /// Set to 0 to disable focus mode (all files are reviewed regardless of count).
+    /// Set to 0 to disable focus-mode trimming (all files are reviewed even if
+    /// <see cref="FocusModeEnabled"/> is true).
     /// </summary>
     public int FocusModeMaxFiles { get; set; } = 20;
 

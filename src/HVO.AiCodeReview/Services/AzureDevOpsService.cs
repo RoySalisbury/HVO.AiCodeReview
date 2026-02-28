@@ -28,6 +28,10 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
     private readonly SemaphoreSlim _identityLock = new(1, 1);
     private bool _disposed;
 
+    // Per-PR locks to serialize read-modify-write in AppendReviewHistoryAsync
+    // Key: "project/repo/prId" → SemaphoreSlim(1,1)
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _historyLocks = new();
+
     public AzureDevOpsService(
         HttpClient httpClient,
         IOptions<AzureDevOpsSettings> settings,
@@ -328,54 +332,66 @@ public class AzureDevOpsService : IAzureDevOpsService, IDisposable
 
     public async Task AppendReviewHistoryAsync(string project, string repository, int pullRequestId, ReviewHistoryEntry entry)
     {
-        // Read existing history, append, and write back
-        var history = await GetReviewHistoryAsync(project, repository, pullRequestId);
-        history.Add(entry);
+        // Serialize read-modify-write per PR to prevent concurrent overwrites (#29)
+        var lockKey = $"{project}/{repository}/{pullRequestId}";
+        var semaphore = _historyLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
 
-        var jsonOptions = new JsonSerializerOptions
+        await semaphore.WaitAsync();
+        try
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false,
-        };
+            // Read existing history, append, and write back
+            var history = await GetReviewHistoryAsync(project, repository, pullRequestId);
+            history.Add(entry);
 
-        var historyJson = JsonSerializer.Serialize(history, jsonOptions);
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = false,
+            };
 
-        // Azure DevOps PR properties have a ~4 KB limit per value.
-        // If the serialized history exceeds the threshold, prune the oldest entries
-        // (keeping the first and last entries for bookend context).
-        const int MaxPropertyLength = 3800; // leave headroom for JSON-Patch envelope
-        while (historyJson.Length > MaxPropertyLength && history.Count > 2)
-        {
-            _logger.LogWarning(
-                "Review history for PR #{PrId} exceeds {Max} chars ({Len}) — pruning oldest entry (#{Num})",
-                pullRequestId, MaxPropertyLength, historyJson.Length, history[1].ReviewNumber);
-            history.RemoveAt(1); // keep index 0 (first review) for reference
-            historyJson = JsonSerializer.Serialize(history, jsonOptions);
+            var historyJson = JsonSerializer.Serialize(history, jsonOptions);
+
+            // Azure DevOps PR properties have a ~4 KB limit per value.
+            // If the serialized history exceeds the threshold, prune the oldest entries
+            // (keeping the first and last entries for bookend context).
+            const int MaxPropertyLength = 3800; // leave headroom for JSON-Patch envelope
+            while (historyJson.Length > MaxPropertyLength && history.Count > 2)
+            {
+                _logger.LogWarning(
+                    "Review history for PR #{PrId} exceeds {Max} chars ({Len}) — pruning oldest entry (#{Num})",
+                    pullRequestId, MaxPropertyLength, historyJson.Length, history[1].ReviewNumber);
+                history.RemoveAt(1); // keep index 0 (first review) for reference
+                historyJson = JsonSerializer.Serialize(history, jsonOptions);
+            }
+
+            var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/properties?{PropsApiVersion}";
+
+            var patchOps = new[]
+            {
+                new { op = "add", path = $"/{PropPrefix}.ReviewHistory", value = historyJson },
+            };
+
+            var json = JsonSerializer.Serialize(patchOps);
+
+            _logger.LogInformation("PATCH PR #{PrId} ReviewHistory: {Count} entries, {Len} chars",
+                pullRequestId, history.Count, historyJson.Length);
+
+            var request = new HttpRequestMessage(new HttpMethod("PATCH"), url)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json-patch+json"),
+            };
+            var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                _logger.LogWarning("Failed to store review history: {StatusCode} {Reason} — {Body}",
+                    (int)response.StatusCode, response.ReasonPhrase, errorBody);
+            }
         }
-
-        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/properties?{PropsApiVersion}";
-
-        var patchOps = new[]
+        finally
         {
-            new { op = "add", path = $"/{PropPrefix}.ReviewHistory", value = historyJson },
-        };
-
-        var json = JsonSerializer.Serialize(patchOps);
-
-        _logger.LogInformation("PATCH PR #{PrId} ReviewHistory: {Count} entries, {Len} chars",
-            pullRequestId, history.Count, historyJson.Length);
-
-        var request = new HttpRequestMessage(new HttpMethod("PATCH"), url)
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json-patch+json"),
-        };
-        var response = await _httpClient.SendAsync(request);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorBody = await response.Content.ReadAsStringAsync();
-            _logger.LogWarning("Failed to store review history: {StatusCode} {Reason} — {Body}",
-                (int)response.StatusCode, response.ReasonPhrase, errorBody);
+            semaphore.Release();
         }
     }
 

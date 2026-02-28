@@ -1,8 +1,11 @@
+using System.Text.Json.Serialization;
+
 namespace AiCodeReview.Models;
 
 /// <summary>
 /// Controls how Pass 2 (detailed file review) is executed.
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ReviewStrategy
 {
     /// <summary>

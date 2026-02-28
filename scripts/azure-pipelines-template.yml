@@ -40,11 +40,12 @@ steps:
       targetType: inline
       pwsh: true
       script: |
+        $reviewStrategy = if ("$(REVIEW_STRATEGY)" -ne "") { "$(REVIEW_STRATEGY)" } else { "FileByFile" }
         $body = @{
             projectName    = "$(System.TeamProject)"
             repositoryName = "$(Build.Repository.Name)"
             pullRequestId  = [int]$(System.PullRequest.PullRequestId)
-            reviewStrategy = "$(REVIEW_STRATEGY)"  # FileByFile (default) | Auto | Vector
+            reviewStrategy = $reviewStrategy  # FileByFile (default) | Auto | Vector
         } | ConvertTo-Json
 
         Write-Host "##vso[task.setprogress value=5]Submitting AI code review..."

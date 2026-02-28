@@ -80,8 +80,30 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         bool simulationOnly = false,
         ReviewDepth reviewDepth = ReviewDepth.Standard,
         ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ReviewSession? session = null)
     {
+        // Create or adopt a session for this review execution
+        session ??= new ReviewSession();
+        session.Project = project;
+        session.Repository = repository;
+        session.PullRequestId = pullRequestId;
+        session.ForceReview = forceReview;
+        session.SimulationOnly = simulationOnly;
+        session.ReviewDepth = reviewDepth;
+        session.ReviewStrategy = reviewStrategy;
+        session.Start();
+
+        // Wrap entire execution in a structured logging scope for correlation
+        using var logScope = _logger.BeginScope(
+            new Dictionary<string, object>
+            {
+                ["SessionId"] = session.SessionId,
+                ["PullRequestId"] = pullRequestId,
+                ["Project"] = project,
+                ["Repository"] = repository,
+            });
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -100,8 +122,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 ReportProgress(progress, ReviewStep.Complete,
                     $"Rate limited — next review allowed in {secondsRemaining}s.", 100);
 
+                session.Complete("RateLimited");
                 return new ReviewResponse
                 {
+                    SessionId = session.SessionId,
                     Status = "RateLimited",
                     Summary = $"This PR was reviewed too recently. " +
                               $"Please wait {secondsRemaining} seconds before requesting another review. " +
@@ -140,17 +164,17 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             {
                 case ReviewAction.Skip:
                     return await HandleSkipAsync(
-                        project, repository, pullRequestId, prInfo, metadata, currentIteration, progress);
+                        project, repository, pullRequestId, prInfo, metadata, currentIteration, progress, session);
 
                 case ReviewAction.VoteOnly:
-                    return await HandleVoteOnlyAsync(project, repository, pullRequestId, prInfo, metadata, progress);
+                    return await HandleVoteOnlyAsync(project, repository, pullRequestId, prInfo, metadata, progress, session);
 
                 case ReviewAction.FullReview:
                 case ReviewAction.ReReview:
                     return await HandleReviewAsync(
                         project, repository, pullRequestId, prInfo, metadata,
                         currentIteration, action == ReviewAction.ReReview, progress,
-                        simulationOnly, reviewDepth, reviewStrategy, cancellationToken);
+                        simulationOnly, reviewDepth, reviewStrategy, cancellationToken, session);
 
                 default:
                     throw new InvalidOperationException($"Unexpected review action: {action}");
@@ -161,8 +185,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             _logger.LogError(ex, "Error reviewing PR #{PrId} in {Project}/{Repo}",
                 pullRequestId, project, repository);
 
+            session.Fail(ex);
             return new ReviewResponse
             {
+                SessionId = session.SessionId,
                 Status = "Error",
                 ErrorMessage = ex.Message,
             };
@@ -210,7 +236,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private async Task<ReviewResponse> HandleSkipAsync(
         string project, string repository, int pullRequestId,
         PullRequestInfo prInfo, ReviewMetadata metadata, int currentIteration,
-        IProgress<ReviewStatusUpdate>? progress)
+        IProgress<ReviewStatusUpdate>? progress, ReviewSession session)
     {
         ReportProgress(progress, ReviewStep.Complete,
             "PR has already been fully reviewed. No new changes detected. Recording skip.", 90);
@@ -221,6 +247,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         var skipEntry = new ReviewHistoryEntry
         {
+            SessionId = session.SessionId,
             ReviewNumber = nextEventNumber,
             ReviewedAtUtc = DateTime.UtcNow,
             Action = "Skipped",
@@ -245,8 +272,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         ReportProgress(progress, ReviewStep.Complete,
             "PR has already been fully reviewed. No new changes detected.", 100);
 
+        session.Complete("Skipped");
         return new ReviewResponse
         {
+            SessionId = session.SessionId,
             Status = "Skipped",
             Summary = "This PR has already been reviewed. No new changes detected since the last review.",
         };
@@ -257,7 +286,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private async Task<ReviewResponse> HandleVoteOnlyAsync(
         string project, string repository, int pullRequestId,
         PullRequestInfo prInfo, ReviewMetadata metadata,
-        IProgress<ReviewStatusUpdate>? progress)
+        IProgress<ReviewStatusUpdate>? progress, ReviewSession session)
     {
         ReportProgress(progress, ReviewStep.SubmittingVote,
             "Draft-to-active transition — submitting reviewer vote...", 80);
@@ -295,6 +324,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             // Append to PR description history
             var voteHistory = new ReviewHistoryEntry
             {
+                SessionId = session.SessionId,
                 ReviewNumber = nextReviewNumber,
                 ReviewedAtUtc = metadata.ReviewedAtUtc,
                 Action = "Vote Only",
@@ -318,8 +348,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         ReportProgress(progress, ReviewStep.Complete,
             voteFailed ? "Vote submission failed." : "Vote submitted for previously-reviewed PR.", 100);
 
+        session.Complete(voteFailed ? "VoteFailed" : "VoteOnly", voteFailed ? null : vote);
         return new ReviewResponse
         {
+            SessionId = session.SessionId,
             Status = "Reviewed",
             Recommendation = "ApprovedWithSuggestions",
             Summary = "Draft-to-active transition: reviewer vote added for previously-reviewed PR. No re-review needed — code has not changed.",
@@ -338,7 +370,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         bool simulationOnly = false,
         ReviewDepth reviewDepth = ReviewDepth.Standard,
         ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ReviewSession? session = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var totalSw = Stopwatch.StartNew();
@@ -436,6 +469,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
                 var noFilesHistory = new ReviewHistoryEntry
                 {
+                    SessionId = session?.SessionId,
                     Action = isReReview ? "Re-Review" : "Full Review",
                     Verdict = "Approved (auto — no files)",
                     SourceCommit = prInfo.LastMergeSourceCommit,
@@ -450,8 +484,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             ReportProgress(progress, ReviewStep.Complete,
                 "No reviewable files found. Auto-approved.", 100);
 
+            session?.Complete("Approved (auto — no files)", 10);
             return new ReviewResponse
             {
+                SessionId = session?.SessionId,
                 Status = simulationOnly ? "Simulated" : "Reviewed",
                 Recommendation = "Approved",
                 ReviewDepth = reviewDepth.ToString(),
@@ -599,7 +635,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 project, repository, pullRequestId, reviewResult,
                 isReReview, nextReviewNumber, metadata, workItems,
                 skippedFiles, prSummary, reviewDepth, deepAnalysis, progress,
-                sizeWarning);
+                sizeWarning, session);
 
             // ── Cast reviewer vote ──────────────────────────────────────
             var vote = reviewResult.RecommendedVote;
@@ -617,23 +653,45 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 project, repository, pullRequestId, prInfo, currentIteration,
                 isReReview, reviewResult, postedComments, fileChanges,
                 voteFailed, voteSkipped, vote, reviewDepth, estimatedCost,
-                totalSw);
+                totalSw, session);
 
             // ── Build and return response ───────────────────────────────
             var completionMsg = BuildCompletionMessage(
                 reviewLabel, reviewResult.Summary.Verdict, voteFailed, voteSkipped);
             ReportProgress(progress, ReviewStep.Complete, completionMsg, 100);
 
+            // ── Populate session metrics ────────────────────────────────
+            if (session != null)
+            {
+                session.FilesReviewed = fileChanges.Count;
+                session.InlineCommentsPosted = postedComments;
+                session.ModelName = reviewResult.ModelName;
+                session.TotalTokens = reviewResult.TotalTokens;
+                session.AiDurationMs = reviewResult.AiDurationMs;
+                session.EstimatedCost = estimatedCost;
+            }
+
+            session?.Complete(reviewResult.Summary.Verdict, (voteFailed || voteSkipped) ? null : vote);
             return BuildReviewResponse(reviewResult, reviewDepth, summaryMarkdown,
-                voteFailed, voteSkipped, vote, estimatedCost);
+                voteFailed, voteSkipped, vote, estimatedCost, session);
         }
 
         // ── Simulation path: build summary but don't post anything ──────
+        if (session != null)
+        {
+            session.FilesReviewed = fileChanges.Count;
+            session.ModelName = reviewResult.ModelName;
+            session.TotalTokens = reviewResult.TotalTokens;
+            session.AiDurationMs = reviewResult.AiDurationMs;
+            session.EstimatedCost = CalculateEstimatedCost(
+                reviewResult.ModelName, reviewResult.PromptTokens, reviewResult.CompletionTokens);
+        }
+        session?.Complete(reviewResult.Summary.Verdict, reviewResult.RecommendedVote);
         return BuildSimulationResponse(
             pullRequestId, reviewResult, lineSpecificComments,
             fileChanges, skippedFiles, isReReview, nextReviewNumber, metadata,
             workItems, prSummary, reviewDepth, deepAnalysis, totalSw, progress,
-            sizeWarning);
+            sizeWarning, session);
     }
 
     // ── Extracted helpers from HandleReviewAsync ────────────────────────────
@@ -924,14 +982,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         PrSummaryResult? prSummary, ReviewDepth reviewDepth,
         DeepAnalysisResult? deepAnalysis,
         IProgress<ReviewStatusUpdate>? progress,
-        string? sizeWarning = null)
+        string? sizeWarning = null,
+        ReviewSession? session = null)
     {
         ReportProgress(progress, ReviewStep.PostingSummary,
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -996,10 +1055,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int postedComments, List<FileChange> fileChanges,
         bool voteFailed, bool voteSkipped, int vote,
         ReviewDepth reviewDepth, decimal? estimatedCost,
-        Stopwatch totalSw)
+        Stopwatch totalSw, ReviewSession? session = null)
     {
         var historyEntry = new ReviewHistoryEntry
         {
+            SessionId = session?.SessionId,
             Action = isReReview ? "Re-Review" : "Full Review",
             Verdict = reviewResult.Summary.Verdict,
             SourceCommit = prInfo.LastMergeSourceCommit,
@@ -1043,7 +1103,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private static ReviewResponse BuildReviewResponse(
         CodeReviewResult reviewResult, ReviewDepth reviewDepth,
         string summaryMarkdown, bool voteFailed, bool voteSkipped,
-        int vote, decimal? estimatedCost)
+        int vote, decimal? estimatedCost, ReviewSession? session = null)
     {
         int errors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
         int warnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
@@ -1051,6 +1111,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         return new ReviewResponse
         {
+            SessionId = session?.SessionId,
             Status = "Reviewed",
             ReviewDepth = reviewDepth.ToString(),
             Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
@@ -1082,11 +1143,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         List<WorkItemInfo>? workItems, PrSummaryResult? prSummary,
         ReviewDepth reviewDepth, DeepAnalysisResult? deepAnalysis,
         Stopwatch totalSw, IProgress<ReviewStatusUpdate>? progress,
-        string? sizeWarning = null)
+        string? sizeWarning = null, ReviewSession? session = null)
     {
         var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId);
 
         totalSw.Stop();
 
@@ -1103,6 +1164,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         var simResponse = new ReviewResponse
         {
+            SessionId = session?.SessionId,
             Status = "Simulated",
             ReviewDepth = reviewDepth.ToString(),
             Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
@@ -1915,7 +1977,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int reviewNumber = 0, ReviewMetadata? priorMetadata = null, List<WorkItemInfo>? workItems = null,
         List<FileChange>? skippedFiles = null, PrSummaryResult? prSummary = null,
         ReviewDepth reviewDepth = ReviewDepth.Standard, DeepAnalysisResult? deepAnalysis = null,
-        string? sizeWarning = null)
+        string? sizeWarning = null, Guid? sessionId = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
@@ -2136,6 +2198,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         // ── Acceptance Criteria / Definition of Done Analysis ────────────
         AppendAcceptanceCriteriaSection(sb, result, workItems);
+
+        // ── Session ID footer (for correlation / traceability) ──────────
+        if (sessionId.HasValue)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"<sub>Session: {sessionId.Value}</sub>");
+        }
 
         return sb.ToString();
     }

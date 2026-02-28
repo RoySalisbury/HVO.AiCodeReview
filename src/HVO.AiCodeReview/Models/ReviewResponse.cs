@@ -5,6 +5,9 @@ namespace AiCodeReview.Models;
 /// </summary>
 public class ReviewResponse
 {
+    /// <summary>Unique session ID for this review execution. Use for log correlation and tracing.</summary>
+    public Guid? SessionId { get; set; }
+
     /// <summary>Outcome of the review request: Reviewed, Skipped, Error.</summary>
     public string Status { get; set; } = string.Empty;
 

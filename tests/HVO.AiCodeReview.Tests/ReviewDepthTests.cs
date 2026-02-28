@@ -304,6 +304,43 @@ public class ReviewDepthTests
         Assert.IsTrue(response.Summary!.Contains(":zap: Quick"), "Summary should contain Quick badge");
     }
 
+    [TestMethod]
+    [TestCategory("Integration")]
+    [TestCategory("QuickReview")]
+    [Timeout(120_000)]
+    public async Task QuickMode_Pass1Fails_VerdictAndVoteAreConsistent()
+    {
+        // Simulate Pass 1 returning null (e.g. AI timeout / error)
+        var fake = new FakeCodeReviewService();
+        fake.PrSummaryFactory = (_, _, _) => null;
+
+        await using var ctx = TestServiceBuilder.BuildWithFakeAi(fakeService: fake);
+        await using var pr = new TestPullRequestHelper(
+            ctx.Settings.Organization, ctx.Settings.PersonalAccessToken, ctx.Project);
+
+        var prId = await pr.CreateDraftPullRequestAsync();
+        var repo = pr.RepositoryName!;
+
+        var response = await ctx.Orchestrator.ExecuteReviewAsync(
+            ctx.Project, repo, prId,
+            simulationOnly: true,
+            reviewDepth: ReviewDepth.Quick);
+
+        Assert.AreEqual("Simulated", response.Status);
+        Assert.AreEqual("Quick", response.ReviewDepth);
+        Assert.AreEqual(0, response.IssueCount, "Quick mode should have 0 inline comments");
+
+        // When Pass 1 fails, both verdict and vote should agree on "Approved with Suggestions" / 5
+        Assert.AreEqual("ApprovedWithSuggestions", response.Recommendation,
+            "Null summary should give 'Approved with Suggestions' — limited analysis can't confirm full approval.");
+        Assert.AreEqual(5, response.Vote,
+            "Vote should be 5 (Approved with Suggestions), consistent with the verdict.");
+
+        // Summary should still have Quick badge and mention limited analysis
+        Assert.IsNotNull(response.Summary);
+        Assert.IsTrue(response.Summary!.Contains(":zap: Quick"), "Summary should contain Quick badge");
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     //  Integration Tests — Orchestrator with Fake AI (Standard mode — default)
     // ═══════════════════════════════════════════════════════════════════════

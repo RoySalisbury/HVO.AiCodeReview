@@ -1,5 +1,5 @@
 {
-  "name": "HVO.Enterprise Dev Container",
+  "name": "HVO.AICodeReview Dev Container",
   "build": {
     "dockerfile": "Dockerfile"
   },

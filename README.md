@@ -1345,7 +1345,7 @@ HVO.AiCodeReview/
 │       │   └── WorkItemInfo.cs             # Work item integration model
 │       │
 │       ├── Services/
-│       │   ├── CodeReviewOrchestrator.cs   # Two/three-pass review flow + RPM throttling
+│       │   ├── CodeReviewOrchestrator.cs   # Review lifecycle orchestration (modular extracted methods)
 │       │   ├── ICodeReviewOrchestrator.cs  # Orchestrator interface
 │       │   ├── AzureOpenAiReviewService.cs # Azure OpenAI Chat Completions provider
 │       │   ├── VectorStoreReviewService.cs # Azure OpenAI Assistants API + Vector Store provider

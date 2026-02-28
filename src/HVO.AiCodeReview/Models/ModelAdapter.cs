@@ -50,6 +50,38 @@ public class ModelAdapter
     /// <summary>Override the per-file input line truncation limit.</summary>
     public int? MaxInputLinesPerFile { get; set; }
 
+    // ─── Model capabilities ─────────────────────────────────────────────
+
+    /// <summary>
+    /// When <c>true</c>, the model is an o-series reasoning model (o1, o3, etc.).
+    /// Reasoning models do not support <c>Temperature</c> or
+    /// <c>ResponseFormat = JSON</c> at the API level and require the
+    /// <c>SetNewMaxCompletionTokensPropertyEnabled</c> opt-in.
+    /// </summary>
+    public bool IsReasoningModel { get; set; }
+
+    /// <summary>Maximum context window size (input + output tokens combined).</summary>
+    public int? ContextWindowSize { get; set; }
+
+    /// <summary>Model-level hard limit on output tokens (distinct from per-call overrides above).</summary>
+    public int? MaxOutputTokensModel { get; set; }
+
+    // ─── Pricing ────────────────────────────────────────────────────────
+
+    /// <summary>Cost in USD per 1 million input (prompt) tokens.</summary>
+    public decimal? InputCostPer1MTokens { get; set; }
+
+    /// <summary>Cost in USD per 1 million output (completion) tokens.</summary>
+    public decimal? OutputCostPer1MTokens { get; set; }
+
+    // ─── Rate limits ────────────────────────────────────────────────────
+
+    /// <summary>Requests per minute (RPM) rate limit for this deployment.</summary>
+    public int? RequestsPerMinute { get; set; }
+
+    /// <summary>Tokens per minute (TPM) rate limit for this deployment.</summary>
+    public int? TokensPerMinute { get; set; }
+
     // ─── Prompt tuning ──────────────────────────────────────────────────
 
     /// <summary>
@@ -70,4 +102,20 @@ public class ModelAdapter
     /// These are logged but not injected into prompts.
     /// </summary>
     public List<string> Quirks { get; set; } = new();
+
+    // ─── Cost helpers ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Calculates the estimated cost in USD for a given number of prompt and
+    /// completion tokens based on the configured pricing.
+    /// Returns <c>null</c> if pricing data is not configured.
+    /// </summary>
+    public decimal? CalculateCost(int promptTokens, int completionTokens)
+    {
+        if (InputCostPer1MTokens is null || OutputCostPer1MTokens is null)
+            return null;
+
+        return (promptTokens / 1_000_000m * InputCostPer1MTokens.Value)
+             + (completionTokens / 1_000_000m * OutputCostPer1MTokens.Value);
+    }
 }

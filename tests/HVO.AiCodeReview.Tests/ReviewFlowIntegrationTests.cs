@@ -64,6 +64,13 @@ public class ReviewFlowIntegrationTests
 
         var fakeReview = new FakeCodeReviewService();
         services.AddSingleton<ICodeReviewService>(fakeReview);
+        services.AddSingleton<DepthModelResolver>(sp =>
+            new DepthModelResolver(
+                new Dictionary<ReviewDepth, ICodeReviewService>(),
+                fakeReview,
+                sp.GetRequiredService<ILogger<DepthModelResolver>>()));
+        services.AddSingleton<ModelAdapterResolver>(sp =>
+            new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
@@ -280,6 +287,13 @@ public class ReviewFlowIntegrationTests
         services.AddHttpClient();
         var fakeReview = new FakeCodeReviewService();
         services.AddSingleton<ICodeReviewService>(fakeReview);
+        services.AddSingleton<DepthModelResolver>(sp =>
+            new DepthModelResolver(
+                new Dictionary<ReviewDepth, ICodeReviewService>(),
+                fakeReview,
+                sp.GetRequiredService<ILogger<DepthModelResolver>>()));
+        services.AddSingleton<ModelAdapterResolver>(sp =>
+            new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();

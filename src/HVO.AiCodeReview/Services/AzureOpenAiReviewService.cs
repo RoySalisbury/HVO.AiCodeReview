@@ -2,6 +2,7 @@ using System.ClientModel;
 using System.Text.Json;
 using AiCodeReview.Models;
 using Azure.AI.OpenAI;
+using Azure.AI.OpenAI.Chat;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
 
@@ -18,6 +19,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
     private readonly ChatClient _chatClient;
     private readonly int _maxInputLinesPerFile;
     private readonly ReviewProfile _reviewProfile;
+
+    /// <inheritdoc />
+    public string ModelName => _modelName;
 
     // Model adapter (per-model tuning) — null when no adapter is resolved
     private readonly ModelAdapter? _modelAdapter;
@@ -98,6 +102,40 @@ public class AzureOpenAiReviewService : ICodeReviewService
             _maxInputLinesPerFile, _reviewProfile.Temperature, _reviewProfile.MaxOutputTokensBatch, _reviewProfile.MaxOutputTokensSingleFile, _reviewProfile.MaxOutputTokensVerification, _reviewProfile.MaxOutputTokensPrSummary);
     }
 
+    // ─── Helper: build options with reasoning-model awareness ────────────
+
+    /// <summary>
+    /// Builds <see cref="ChatCompletionOptions"/> honoring the model adapter's
+    /// <see cref="ModelAdapter.IsReasoningModel"/> flag.
+    /// Reasoning models (o1, o3, …) do not support <c>Temperature</c> or
+    /// <c>ResponseFormat = JSON</c> at the API level, and require the
+    /// <c>SetNewMaxCompletionTokensPropertyEnabled</c> opt-in for the
+    /// <c>max_completion_tokens</c> wire property.
+    /// </summary>
+    private ChatCompletionOptions BuildChatOptions(int maxOutputTokens)
+    {
+        var isReasoning = _modelAdapter?.IsReasoningModel == true;
+
+        var options = new ChatCompletionOptions
+        {
+            MaxOutputTokenCount = maxOutputTokens,
+        };
+
+        // All newer Azure OpenAI models require max_completion_tokens
+        // instead of max_tokens on the wire.
+        #pragma warning disable AOAI001
+        options.SetNewMaxCompletionTokensPropertyEnabled(true);
+        #pragma warning restore AOAI001
+
+        if (!isReasoning)
+        {
+            options.Temperature = _reviewProfile.Temperature;
+            options.ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat();
+        }
+
+        return options;
+    }
+
     // ─── Prompt accessors (pipeline → fallback) ─────────────────────────
 
     /// <summary>
@@ -139,12 +177,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
             new UserChatMessage(userPrompt),
         };
 
-        var options = new ChatCompletionOptions
-        {
-            Temperature = _reviewProfile.Temperature,
-            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensBatch,
-            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
-        };
+        var options = BuildChatOptions(_reviewProfile.MaxOutputTokensBatch);
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -225,12 +258,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
             new UserChatMessage(userPrompt),
         };
 
-        var options = new ChatCompletionOptions
-        {
-            Temperature = _reviewProfile.Temperature,
-            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensSingleFile,
-            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
-        };
+        var options = BuildChatOptions(_reviewProfile.MaxOutputTokensSingleFile);
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -326,12 +354,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
             new UserChatMessage(userPrompt),
         };
 
-        var options = new ChatCompletionOptions
-        {
-            Temperature = _reviewProfile.Temperature,
-            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensVerification,
-            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
-        };
+        var options = BuildChatOptions(_reviewProfile.MaxOutputTokensVerification);
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -512,12 +535,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
             new UserChatMessage(userPrompt),
         };
 
-        var options = new ChatCompletionOptions
-        {
-            Temperature = _reviewProfile.Temperature,
-            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensPrSummary,
-            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
-        };
+        var options = BuildChatOptions(_reviewProfile.MaxOutputTokensPrSummary);
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -1442,12 +1460,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
             new UserChatMessage(userPrompt),
         };
 
-        var options = new ChatCompletionOptions
-        {
-            Temperature = _reviewProfile.Temperature,
-            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensDeepAnalysis,
-            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
-        };
+        var options = BuildChatOptions(_reviewProfile.MaxOutputTokensDeepAnalysis);
 
         ClientResult<ChatCompletion> response;
         var sw = System.Diagnostics.Stopwatch.StartNew();

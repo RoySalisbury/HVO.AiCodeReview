@@ -9,6 +9,12 @@ namespace AiCodeReview.Services;
 public interface ICodeReviewService
 {
     /// <summary>
+    /// The model/deployment name this service targets (e.g., "gpt-4o-mini", "o4-mini").
+    /// Used by the orchestrator for adapter-based RPM throttling and cost estimation.
+    /// </summary>
+    string ModelName { get; }
+
+    /// <summary>
     /// Analyze the given file changes and produce a structured code review.
     /// </summary>
     /// <param name="pullRequest">PR metadata for context.</param>

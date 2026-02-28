@@ -42,7 +42,14 @@ public class ServiceIntegrationTests
         services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         services.AddSingleton<ICodeReviewService>(new FakeCodeReviewService());
+        services.AddSingleton<DepthModelResolver>(sp =>
+            new DepthModelResolver(
+                new Dictionary<ReviewDepth, ICodeReviewService>(),
+                sp.GetRequiredService<ICodeReviewService>(),
+                sp.GetRequiredService<ILogger<DepthModelResolver>>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddSingleton<ModelAdapterResolver>(sp =>
+            new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

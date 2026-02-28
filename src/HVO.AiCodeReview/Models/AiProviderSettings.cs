@@ -48,6 +48,14 @@ public class AiProviderSettings
     /// In single mode, only <see cref="ActiveProvider"/> is used.
     /// </summary>
     public Dictionary<string, ProviderConfig> Providers { get; set; } = new();
+
+    /// <summary>
+    /// Maps <see cref="ReviewDepth"/> names to provider keys in <see cref="Providers"/>.
+    /// When configured, each review depth uses a different AI model/deployment.
+    /// Example: <c>{ "Quick": "azure-openai-mini", "Standard": "azure-openai", "Deep": "azure-openai-o1" }</c>.
+    /// When not configured (empty), all depths use <see cref="ActiveProvider"/>.
+    /// </summary>
+    public Dictionary<string, string> DepthModels { get; set; } = new();
 }
 
 /// <summary>

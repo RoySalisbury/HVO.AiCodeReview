@@ -49,6 +49,13 @@ public static class TestServiceBuilder
         services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         services.AddSingleton<ICodeReviewService>(fake);
+        services.AddSingleton<DepthModelResolver>(sp =>
+            new DepthModelResolver(
+                new Dictionary<ReviewDepth, ICodeReviewService>(),
+                fake,
+                sp.GetRequiredService<ILogger<DepthModelResolver>>()));
+        services.AddSingleton<ModelAdapterResolver>(sp =>
+            new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
@@ -107,6 +114,8 @@ public static class TestServiceBuilder
         services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         services.AddCodeReviewService(config);
+        services.AddSingleton<ModelAdapterResolver>(sp =>
+            new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();

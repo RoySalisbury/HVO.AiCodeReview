@@ -607,13 +607,13 @@ public class ModelAdapterTests
     }
 
     [TestMethod]
-    public void ShippedAdapters_Gpt4oMini_MatchesGpt4o()
+    public void ShippedAdapters_Gpt4oMini_MatchesOwnAdapter()
     {
         var path = FindProjectFile("model-adapters.json");
         var resolver = new ModelAdapterResolver(ResolverLogger, path);
 
         var adapter = resolver.Resolve("gpt-4o-mini");
-        Assert.AreEqual("gpt-4o", adapter.Name);
+        Assert.AreEqual("gpt-4o-mini", adapter.Name);
     }
 
     [TestMethod]

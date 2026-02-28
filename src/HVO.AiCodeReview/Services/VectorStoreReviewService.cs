@@ -141,18 +141,43 @@ public class VectorStoreReviewService
 
             _logger.LogInformation("[Vector] Created assistant {AsstId}", assistantId);
 
-            // ── Step 5: Create Thread with user message ─────────────────
+            // ── Step 5: Create Thread with user message (with rate-limit retry) ──
             var userMessage = BuildUserMessage(prInfo, fileChanges, prSummary);
-            var (threadId, runId) = await CreateThreadAndRunAsync(
-                httpClient, assistantId, userMessage, cancellationToken);
+            string responseText;
+            const int maxRunRetries = 5;
 
-            _logger.LogInformation("[Vector] Created thread {ThreadId}, run {RunId}", threadId, runId);
+            for (int runRetry = 0; ; runRetry++)
+            {
+                var (threadId, runId) = await CreateThreadAndRunAsync(
+                    httpClient, assistantId, userMessage, cancellationToken);
 
-            // ── Step 6: Poll run until completed ────────────────────────
-            await PollRunAsync(httpClient, threadId, runId, cancellationToken);
+                _logger.LogInformation("[Vector] Created thread {ThreadId}, run {RunId}", threadId, runId);
 
-            // ── Step 7: Retrieve response and parse ─────────────────────
-            var responseText = await GetAssistantResponseAsync(httpClient, threadId, cancellationToken);
+                try
+                {
+                    // ── Step 6: Poll run until completed ────────────────────────
+                    await PollRunAsync(httpClient, threadId, runId, cancellationToken);
+
+                    // ── Step 7: Retrieve response and parse ─────────────────────
+                    responseText = await GetAssistantResponseAsync(httpClient, threadId, cancellationToken);
+                    break; // success
+                }
+                catch (InvalidOperationException ex) when (
+                    runRetry < maxRunRetries - 1 &&
+                    ex.Message.Contains("rate_limit_exceeded", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Extract retry-after seconds from the error message if available
+                    var retrySeconds = 60; // default — S0 tier typically needs 60s
+                    var match = System.Text.RegularExpressions.Regex.Match(
+                        ex.Message, @"retry after (\d+) seconds", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out var parsed))
+                        retrySeconds = parsed + 5; // add buffer above API suggestion
+
+                    _logger.LogWarning("[Vector] Rate-limited on run attempt {Attempt}/{Max}, waiting {Seconds}s before retry...",
+                        runRetry + 1, maxRunRetries, retrySeconds);
+                    await Task.Delay(TimeSpan.FromSeconds(retrySeconds), cancellationToken);
+                }
+            }
 
             sw.Stop();
             _logger.LogInformation("[Vector] Run completed in {Ms}ms, response length: {Len} chars",

@@ -62,7 +62,7 @@ HVO.AiCodeReview/
 │           ├── CodeReviewOrchestrator.cs
 │           ├── CodeReviewServiceFactory.cs
 │           ├── ConsensusReviewService.cs
-│           ├── IAzureDevOpsService.cs
+│           ├── IDevOpsService.cs            # Provider-agnostic DevOps interface
 │           ├── ICodeReviewOrchestrator.cs
 │           ├── ICodeReviewService.cs        # Interface: ReviewAsync, ReviewFileAsync, VerifyThreadResolutionsAsync
 │           └── ReviewRateLimiter.cs

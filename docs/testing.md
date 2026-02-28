@@ -85,6 +85,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `RaceConditionTests.cs` | 3 | Unit | Concurrency and thread-safety tests for shared state and parallel review operations. |
 | `ResilienceTests.cs` | 7 | Unit | Azure DevOps HTTP resilience: transient 5xx retry, 429 retry with Retry-After, 408 retry, non-transient 4xx no-retry, retry exhaustion, multiple 429s, DI wiring. |
 | `PassModelResolverTests.cs` | 10 | Unit | Per-pass model routing: pass-specific resolution, depth fallback, active-provider fallback, pass-over-depth priority, multi-pass routing, HasPassRouting, DI wiring, orchestrator integration. |
+| `SizeGuardrailsTests.cs` | 17 | Unit | PR size guardrails: file prioritization (add > edit > rename), changed-line counting from ranges and content, threshold evaluation (warning/hard-limit), focus-mode file trimming, BuildSummaryMarkdown warning banner integration. |
 | `VectorStoreReviewServiceTests.cs` | 24 | Unit | Vector Store review service: file upload, vector store creation, assistant lifecycle, response parsing, cleanup, error handling. |
 | `VectorStoreIntegrationTest.cs` | 1 | LiveAI | Live Vector Store integration test against real Azure OpenAI Assistants API. |
 | `ModelBenchmarkTests.cs` | 8 | Benchmark | Model quality comparison: 5 individual model tests + 3 all-model comparison tests (one per depth). Runs against 10 known-bad-code issues. Produces comparison tables and cost estimates. |
@@ -98,9 +99,10 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 
 | Component | Purpose |
 |-----------|---------|
-| `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. |
+| `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildFullyFake()` registers both `FakeCodeReviewService` and `FakeDevOpsService` for pure-logic tests with no external dependencies. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. |
 | `TestPullRequestHelper.cs` | Creates/manages disposable test repos with the 6-layer safety system (instance tracking, never-delete list, name prefix, marker file, creation recency, PAT ACL verification). Supports single-file (`PushNewCommitAsync`) and multi-file (`PushMultipleFilesAsync`) pushes for cross-file analysis testing. |
 | `FakeCodeReviewService.cs` | Deterministic fake with `ResultFactory`, `VerificationResultFactory`, and `DeepAnalysisFactory` for custom per-test behavior. Supports `ModelNameOverride` for per-pass model routing tests. Produces 2 stable inline comments per file for dedup testing. |
+| `FakeDevOpsService.cs` | In-memory fake `IDevOpsService` that stores all state locally. Lets tests exercise the full orchestrator + dedup + metadata pipeline without calling a real Azure DevOps backend. Supports seed methods and factory overrides for custom test data. |
 
 ## Running Tests
 

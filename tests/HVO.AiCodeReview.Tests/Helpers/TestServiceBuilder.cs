@@ -8,13 +8,14 @@ namespace AiCodeReview.Tests.Helpers;
 
 /// <summary>
 /// Shared test infrastructure for building the DI container with either
-/// a fake or real AI service.  Centralises configuration and supports
-/// per-test model overrides so new models can be exercised without touching
-/// every test file.
+/// a fake or real AI service, and optionally a fake DevOps backend.
+/// Centralises configuration and supports per-test model overrides so
+/// new models can be exercised without touching every test file.
 ///
 /// Usage:
-///   var ctx = TestServiceBuilder.BuildWithFakeAi();                  // deterministic
-///   var ctx = TestServiceBuilder.BuildWithRealAi();                   // live gpt-4o
+///   var ctx = TestServiceBuilder.BuildWithFakeAi();                  // fake AI + real DevOps
+///   var ctx = TestServiceBuilder.BuildFullyFake();                    // fake AI + fake DevOps
+///   var ctx = TestServiceBuilder.BuildWithRealAi();                   // real AI + real DevOps
 ///   var ctx = TestServiceBuilder.BuildWithRealAi("gpt-5");            // model override
 /// </summary>
 public static class TestServiceBuilder
@@ -47,7 +48,7 @@ public static class TestServiceBuilder
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
         services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
         services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
-        services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
+        services.AddHttpClient<IDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         services.AddSingleton<ICodeReviewService>(fake);
         services.AddSingleton<DepthModelResolver>(sp =>
@@ -74,11 +75,71 @@ public static class TestServiceBuilder
         return new TestContext(
             sp,
             sp.GetRequiredService<CodeReviewOrchestrator>(),
-            sp.GetRequiredService<IAzureDevOpsService>(),
+            sp.GetRequiredService<IDevOpsService>(),
             devOpsSettings,
             project,
             fake,
             usesRealAi: false);
+    }
+
+    /// <summary>
+    /// Builds the DI container with BOTH a <see cref="FakeCodeReviewService"/>
+    /// and a <see cref="FakeDevOpsService"/>.  No external services are called.
+    /// Use for pure-logic tests: orchestration, dedup, metadata, history,
+    /// summary generation, etc.
+    /// </summary>
+    public static TestContext BuildFullyFake(
+        FakeCodeReviewService? fakeAi = null,
+        FakeDevOpsService? fakeDevOps = null,
+        IConfiguration? config = null)
+    {
+        config ??= LoadConfig();
+        var ai = fakeAi ?? new FakeCodeReviewService();
+        var devOps = fakeDevOps ?? new FakeDevOpsService();
+
+        var devOpsSettings = config.GetSection("AzureDevOps").Get<AzureDevOpsSettings>()!;
+        var project = config["TestSettings:Project"]!;
+
+        var services = new ServiceCollection();
+        services.AddLogging(b => { b.AddConsole(); b.SetMinimumLevel(LogLevel.Information); });
+        services.Configure<AzureDevOpsSettings>(config.GetSection("AzureDevOps"));
+        services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
+        services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
+        services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
+        services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
+        services.AddSingleton<IDevOpsService>(devOps);
+        services.AddHttpClient();
+        services.AddSingleton<ICodeReviewService>(ai);
+        services.AddSingleton<DepthModelResolver>(sp =>
+            new DepthModelResolver(
+                new Dictionary<ReviewDepth, ICodeReviewService>(),
+                ai,
+                sp.GetRequiredService<ILogger<DepthModelResolver>>()));
+        services.AddSingleton<PassModelResolver>(sp =>
+            new PassModelResolver(
+                new Dictionary<ReviewPass, ICodeReviewService>(),
+                sp.GetRequiredService<DepthModelResolver>(),
+                sp.GetRequiredService<ILogger<PassModelResolver>>()));
+        services.AddSingleton<ICodeReviewServiceResolver>(sp =>
+            sp.GetRequiredService<PassModelResolver>());
+        services.AddSingleton<ModelAdapterResolver>(sp =>
+            new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
+        services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
+        services.AddScoped<VectorStoreReviewService>();
+        services.AddTransient<CodeReviewOrchestrator>();
+
+        var sp = services.BuildServiceProvider();
+
+        return new TestContext(
+            sp,
+            sp.GetRequiredService<CodeReviewOrchestrator>(),
+            sp.GetRequiredService<IDevOpsService>(),
+            devOpsSettings,
+            project,
+            ai,
+            usesRealAi: false,
+            fakeDevOps: devOps);
     }
 
     /// <summary>
@@ -121,7 +182,7 @@ public static class TestServiceBuilder
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
         services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
         services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
-        services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
+        services.AddHttpClient<IDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         services.AddCodeReviewService(config);
         services.AddSingleton<ModelAdapterResolver>(sp =>
@@ -141,7 +202,7 @@ public static class TestServiceBuilder
         return new TestContext(
             sp,
             sp.GetRequiredService<CodeReviewOrchestrator>(),
-            sp.GetRequiredService<IAzureDevOpsService>(),
+            sp.GetRequiredService<IDevOpsService>(),
             devOpsSettings,
             project,
             fakeService: null,
@@ -157,12 +218,15 @@ public sealed class TestContext : IAsyncDisposable
 {
     public ServiceProvider ServiceProvider { get; }
     public CodeReviewOrchestrator Orchestrator { get; }
-    public IAzureDevOpsService DevOps { get; }
+    public IDevOpsService DevOps { get; }
     public AzureDevOpsSettings Settings { get; }
     public string Project { get; }
 
-    /// <summary>The fake service, if using fake AI. Null when using real AI.</summary>
+    /// <summary>The fake AI service, if using fake AI. Null when using real AI.</summary>
     public FakeCodeReviewService? FakeService { get; }
+
+    /// <summary>The fake DevOps service, if using fake DevOps. Null when using real DevOps.</summary>
+    public FakeDevOpsService? FakeDevOps { get; }
 
     /// <summary>True when the test is calling a real AI endpoint.</summary>
     public bool UsesRealAi { get; }
@@ -170,11 +234,12 @@ public sealed class TestContext : IAsyncDisposable
     public TestContext(
         ServiceProvider sp,
         CodeReviewOrchestrator orchestrator,
-        IAzureDevOpsService devOps,
+        IDevOpsService devOps,
         AzureDevOpsSettings settings,
         string project,
         FakeCodeReviewService? fakeService,
-        bool usesRealAi)
+        bool usesRealAi,
+        FakeDevOpsService? fakeDevOps = null)
     {
         ServiceProvider = sp;
         Orchestrator = orchestrator;
@@ -183,6 +248,7 @@ public sealed class TestContext : IAsyncDisposable
         Project = project;
         FakeService = fakeService;
         UsesRealAi = usesRealAi;
+        FakeDevOps = fakeDevOps;
     }
 
     public ValueTask DisposeAsync() => ServiceProvider.DisposeAsync();

@@ -251,12 +251,12 @@ public class DepthModeComprehensiveTests
             ("b.cs", "add"),
             ("c.cs", "delete"),
             ("d.cs", "edit"),
-            ("e.cs", "rename")); // unknown type → treated as edit
+            ("e.cs", "mystery")); // unknown type → treated as edit
 
         var result = CodeReviewOrchestrator.BuildQuickModeResult(summary, files, new List<FileChange>());
 
         Assert.AreEqual(5, result.Summary.FilesChanged);
-        Assert.AreEqual(3, result.Summary.EditsCount, "2 edits + 1 unknown (rename) → 3 edits");
+        Assert.AreEqual(3, result.Summary.EditsCount, "2 edits + 1 unknown (mystery) → 3 edits");
         Assert.AreEqual(1, result.Summary.AddsCount);
         Assert.AreEqual(1, result.Summary.DeletesCount);
     }
@@ -325,7 +325,7 @@ public class DepthModeComprehensiveTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    public void BuildSummary_DeepAnalysis_NoCrossFileIssues_ShowsNoneMessage()
+    public void BuildSummary_DeepAnalysis_NoCrossFileIssues_OmitsCrossFileSection()
     {
         var result = MakeResult();
         var deep = new DeepAnalysisResult
@@ -344,6 +344,8 @@ public class DepthModeComprehensiveTests
         Assert.IsTrue(md.Contains("All good."), "Executive summary should appear");
         Assert.IsTrue(md.Contains("Low"), "Risk level should appear");
         Assert.IsTrue(md.Contains("Add more tests"), "Recommendations should appear");
+        Assert.IsFalse(md.Contains("Cross-File Issues"),
+            "No Cross-File Issues subsection when list is empty");
     }
 
     [TestMethod]
@@ -397,7 +399,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    public void BuildSummary_QuickMode_IncludesSkippedFilesSection()
+    public void BuildSummary_QuickMode_WithSkippedFiles_ShowsBadgeAndExcludedNote()
     {
         var result = MakeResult();
         var skipped = new List<FileChange>
@@ -410,6 +412,8 @@ public class DepthModeComprehensiveTests
             1, result, reviewDepth: ReviewDepth.Quick, skippedFiles: skipped);
 
         Assert.IsTrue(md.Contains(":zap: Quick"), "Quick badge should be present");
+        Assert.IsTrue(md.Contains("2 file(s) excluded"),
+            "Skipped files count should appear in the summary");
     }
 
     [TestMethod]
@@ -746,7 +750,7 @@ public class DepthModeComprehensiveTests
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  Category 8: Integration — Deep mode with token aggregation verification
+    //  Category 8: Integration — Deep mode summary content verification
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]

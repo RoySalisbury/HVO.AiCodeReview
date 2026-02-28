@@ -1464,7 +1464,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     internal static CodeReviewResult BuildQuickModeResult(
         PrSummaryResult? prSummary, List<FileChange> fileChanges, List<FileChange> skippedFiles)
     {
-        // Compute change-type counts from filChanges (same as MergeBatchResults)
+        // Compute change-type counts from fileChanges (same as MergeBatchResults)
         int edits = 0, adds = 0, deletes = 0;
         foreach (var fc in fileChanges)
         {

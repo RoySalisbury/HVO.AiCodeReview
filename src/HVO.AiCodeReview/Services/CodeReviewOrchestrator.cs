@@ -381,6 +381,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             {
                 Status = simulationOnly ? "Simulated" : "Reviewed",
                 Recommendation = "Approved",
+                ReviewDepth = reviewDepth.ToString(),
                 Summary = "No reviewable file changes found. Auto-approved.",
                 Vote = 10,
                 SkippedFiles = simulationOnly && skippedFiles.Count > 0
@@ -474,149 +475,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
         else
         {
-
-        // ── Pass 2: AI analysis (parallel per-file for accuracy) ──────
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var maxParallel = Math.Max(1, _aiProviderSettings.MaxParallelReviews);
-
-        ReportProgress(progress, ReviewStep.AnalyzingCode,
-            $"Analyzing {fileChanges.Count} files with AI (parallel, max {maxParallel} concurrent, {reviewLabel.ToLower()})...", 35);
-
-        _logger.LogInformation("{Label}: Reviewing {FileCount} files in parallel (max {MaxParallel} concurrent)",
-            reviewLabel, fileChanges.Count, maxParallel);
-
-        var semaphore = new SemaphoreSlim(maxParallel, maxParallel);
-        int completedFiles = 0;
-        var perFileResults = new CodeReviewResult[fileChanges.Count];
-
-        try
-        {
-        var tasks = fileChanges.Select(async (file, index) =>
-        {
-            await semaphore.WaitAsync(cancellationToken);
-            try
-            {
-                var result = await _reviewService.ReviewFileAsync(prInfo, file, fileChanges.Count, workItems);
-                perFileResults[index] = result;
-
-                var done = Interlocked.Increment(ref completedFiles);
-                var pct = 35 + (int)(25.0 * done / fileChanges.Count);
-                ReportProgress(progress, ReviewStep.AnalyzingCode,
-                    $"Analyzed {done}/{fileChanges.Count} files...", pct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "AI review failed for {FilePath}", file.FilePath);
-                // Return a safe fallback result for this file
-                perFileResults[index] = new CodeReviewResult
-                {
-                    Summary = new ReviewSummary
-                    {
-                        FilesChanged = 1,
-                        Verdict = "APPROVED",
-                        VerdictJustification = $"AI review failed for {file.FilePath}: {ex.Message}",
-                    },
-                    FileReviews = new List<FileReview>
-                    {
-                        new FileReview { FilePath = file.FilePath, Verdict = "CONCERN", ReviewText = $"AI review failed: {ex.Message}" }
-                    },
-                };
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        }).ToArray();
-
-        await Task.WhenAll(tasks);
+            // Standard or Deep — run Pass 2 (and optionally Pass 3)
+            (reviewResult, deepAnalysis) = await HandleStandardOrDeepPassesAsync(
+                prInfo, pullRequestId, fileChanges, prSummary, workItems,
+                reviewDepth, reviewLabel, progress, cancellationToken);
         }
-        finally
-        {
-            semaphore.Dispose();
-        }
-
-        // ── Merge per-file results ──────────────────────────────────────
-        reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);
-
-        // ── Add Pass 1 token usage to the merged total ──────────────────
-        if (prSummary != null)
-        {
-            reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (prSummary.PromptTokens ?? 0);
-            reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (prSummary.CompletionTokens ?? 0);
-            reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (prSummary.TotalTokens ?? 0);
-            reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (prSummary.AiDurationMs ?? 0);
-
-            // Store the PR summary intent as the merged description when it is otherwise empty
-            if (!string.IsNullOrWhiteSpace(prSummary.Intent)
-                && (string.IsNullOrWhiteSpace(reviewResult.Summary?.Description)))
-            {
-                reviewResult.Summary ??= new ReviewSummary();
-                reviewResult.Summary.Description = prSummary.Intent;
-            }
-        }
-
-        _logger.LogInformation("{Label} complete ({FileCount} files, parallel): {Verdict} with {InlineCount} inline comments",
-            reviewLabel, fileChanges.Count,
-            reviewResult.Summary.Verdict, reviewResult.InlineComments.Count);
-
-        // ── Pass 3: Deep holistic re-evaluation (Deep mode only) ────────
-        if (reviewDepth == ReviewDepth.Deep)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-            {
-                ReportProgress(progress, ReviewStep.AnalyzingCode,
-                    "Pass 3: Deep holistic re-evaluation...", 62);
-
-                deepAnalysis = await _reviewService.GenerateDeepAnalysisAsync(
-                    prInfo, prSummary, reviewResult, fileChanges);
-
-                if (deepAnalysis != null)
-                {
-                    _logger.LogInformation(
-                        "[Pass 3] Deep analysis complete for PR #{PrId}: {Risk} risk, {IssueCount} cross-file issues, verdict consistent={Consistent}",
-                        pullRequestId,
-                        deepAnalysis.OverallRiskLevel,
-                        deepAnalysis.CrossFileIssues.Count,
-                        deepAnalysis.VerdictConsistency.IsConsistent);
-
-                    // Apply verdict override if deep analysis disagrees
-                    if (!deepAnalysis.VerdictConsistency.IsConsistent
-                        && !string.IsNullOrWhiteSpace(deepAnalysis.VerdictConsistency.RecommendedVerdict))
-                    {
-                        _logger.LogInformation(
-                            "[Pass 3] Verdict override: {OldVerdict} → {NewVerdict} (reason: {Reason})",
-                            reviewResult.Summary.Verdict,
-                            deepAnalysis.VerdictConsistency.RecommendedVerdict,
-                            deepAnalysis.VerdictConsistency.Explanation);
-
-                        reviewResult.Summary.Verdict = deepAnalysis.VerdictConsistency.RecommendedVerdict;
-                        reviewResult.Summary.VerdictJustification = deepAnalysis.VerdictConsistency.Explanation;
-
-                        if (deepAnalysis.VerdictConsistency.RecommendedVote.HasValue)
-                            reviewResult.RecommendedVote = deepAnalysis.VerdictConsistency.RecommendedVote.Value;
-                    }
-
-                    // Add Pass 3 token usage to the total
-                    reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (deepAnalysis.PromptTokens ?? 0);
-                    reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (deepAnalysis.CompletionTokens ?? 0);
-                    reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (deepAnalysis.TotalTokens ?? 0);
-                    reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (deepAnalysis.AiDurationMs ?? 0);
-                }
-                else
-                {
-                    _logger.LogInformation("[Pass 3] No deep analysis generated for PR #{PrId} — proceeding with Standard results", pullRequestId);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[Pass 3] Deep analysis failed for PR #{PrId} — proceeding with Standard results", pullRequestId);
-            }
-        }
-
-        } // end else (Standard/Deep — Pass 2+)
 
         // ── Validate & sanitize inline comments from AI ─────────────────
         var validatedComments = ValidateInlineComments(reviewResult.InlineComments, fileChanges);
@@ -1040,18 +903,197 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Runs Pass 2 (per-file parallel review) and optionally Pass 3 (Deep holistic analysis).
+    /// Extracted from HandleReviewAsync to keep the depth-branching logic clean.
+    /// </summary>
+    private async Task<(CodeReviewResult reviewResult, DeepAnalysisResult? deepAnalysis)> HandleStandardOrDeepPassesAsync(
+        PullRequestInfo prInfo, int pullRequestId,
+        List<FileChange> fileChanges, PrSummaryResult? prSummary,
+        List<WorkItemInfo>? workItems,
+        ReviewDepth reviewDepth, string reviewLabel,
+        IProgress<ReviewStatusUpdate>? progress,
+        CancellationToken cancellationToken)
+    {
+        // ── Pass 2: AI analysis (parallel per-file for accuracy) ──────
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var maxParallel = Math.Max(1, _aiProviderSettings.MaxParallelReviews);
+
+        ReportProgress(progress, ReviewStep.AnalyzingCode,
+            $"Analyzing {fileChanges.Count} files with AI (parallel, max {maxParallel} concurrent, {reviewLabel.ToLower()})...", 35);
+
+        _logger.LogInformation("{Label}: Reviewing {FileCount} files in parallel (max {MaxParallel} concurrent)",
+            reviewLabel, fileChanges.Count, maxParallel);
+
+        var semaphore = new SemaphoreSlim(maxParallel, maxParallel);
+        int completedFiles = 0;
+        var perFileResults = new CodeReviewResult[fileChanges.Count];
+
+        try
+        {
+            var tasks = fileChanges.Select(async (file, index) =>
+            {
+                await semaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    var result = await _reviewService.ReviewFileAsync(prInfo, file, fileChanges.Count, workItems);
+                    perFileResults[index] = result;
+
+                    var done = Interlocked.Increment(ref completedFiles);
+                    var pct = 35 + (int)(25.0 * done / fileChanges.Count);
+                    ReportProgress(progress, ReviewStep.AnalyzingCode,
+                        $"Analyzed {done}/{fileChanges.Count} files...", pct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "AI review failed for {FilePath}", file.FilePath);
+                    // Return a safe fallback result for this file
+                    perFileResults[index] = new CodeReviewResult
+                    {
+                        Summary = new ReviewSummary
+                        {
+                            FilesChanged = 1,
+                            Verdict = "APPROVED",
+                            VerdictJustification = $"AI review failed for {file.FilePath}: {ex.Message}",
+                        },
+                        FileReviews = new List<FileReview>
+                        {
+                            new FileReview { FilePath = file.FilePath, Verdict = "CONCERN", ReviewText = $"AI review failed: {ex.Message}" }
+                        },
+                    };
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }).ToArray();
+
+            await Task.WhenAll(tasks);
+        }
+        finally
+        {
+            semaphore.Dispose();
+        }
+
+        // ── Merge per-file results ──────────────────────────────────────
+        var reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);
+
+        // ── Add Pass 1 token usage to the merged total ──────────────────
+        if (prSummary != null)
+        {
+            reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (prSummary.PromptTokens ?? 0);
+            reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (prSummary.CompletionTokens ?? 0);
+            reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (prSummary.TotalTokens ?? 0);
+            reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (prSummary.AiDurationMs ?? 0);
+
+            // Store the PR summary intent as the merged description when it is otherwise empty
+            if (!string.IsNullOrWhiteSpace(prSummary.Intent)
+                && (string.IsNullOrWhiteSpace(reviewResult.Summary?.Description)))
+            {
+                reviewResult.Summary ??= new ReviewSummary();
+                reviewResult.Summary.Description = prSummary.Intent;
+            }
+        }
+
+        _logger.LogInformation("{Label} complete ({FileCount} files, parallel): {Verdict} with {InlineCount} inline comments",
+            reviewLabel, fileChanges.Count,
+            reviewResult.Summary.Verdict, reviewResult.InlineComments.Count);
+
+        // ── Pass 3: Deep holistic re-evaluation (Deep mode only) ────────
+        DeepAnalysisResult? deepAnalysis = null;
+
+        if (reviewDepth == ReviewDepth.Deep)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                ReportProgress(progress, ReviewStep.AnalyzingCode,
+                    "Pass 3: Deep holistic re-evaluation...", 62);
+
+                deepAnalysis = await _reviewService.GenerateDeepAnalysisAsync(
+                    prInfo, prSummary, reviewResult, fileChanges);
+
+                if (deepAnalysis != null)
+                {
+                    _logger.LogInformation(
+                        "[Pass 3] Deep analysis complete for PR #{PrId}: {Risk} risk, {IssueCount} cross-file issues, verdict consistent={Consistent}",
+                        pullRequestId,
+                        deepAnalysis.OverallRiskLevel,
+                        deepAnalysis.CrossFileIssues.Count,
+                        deepAnalysis.VerdictConsistency.IsConsistent);
+
+                    // Apply verdict override if deep analysis disagrees
+                    if (!deepAnalysis.VerdictConsistency.IsConsistent
+                        && !string.IsNullOrWhiteSpace(deepAnalysis.VerdictConsistency.RecommendedVerdict))
+                    {
+                        _logger.LogInformation(
+                            "[Pass 3] Verdict override: {OldVerdict} → {NewVerdict} (reason: {Reason})",
+                            reviewResult.Summary.Verdict,
+                            deepAnalysis.VerdictConsistency.RecommendedVerdict,
+                            deepAnalysis.VerdictConsistency.Explanation);
+
+                        reviewResult.Summary.Verdict = deepAnalysis.VerdictConsistency.RecommendedVerdict;
+                        reviewResult.Summary.VerdictJustification = deepAnalysis.VerdictConsistency.Explanation;
+
+                        if (deepAnalysis.VerdictConsistency.RecommendedVote.HasValue)
+                            reviewResult.RecommendedVote = deepAnalysis.VerdictConsistency.RecommendedVote.Value;
+                    }
+
+                    // Add Pass 3 token usage to the total
+                    reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (deepAnalysis.PromptTokens ?? 0);
+                    reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (deepAnalysis.CompletionTokens ?? 0);
+                    reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (deepAnalysis.TotalTokens ?? 0);
+                    reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (deepAnalysis.AiDurationMs ?? 0);
+                }
+                else
+                {
+                    _logger.LogInformation("[Pass 3] No deep analysis generated for PR #{PrId} — proceeding with Standard results", pullRequestId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Pass 3] Deep analysis failed for PR #{PrId} — proceeding with Standard results", pullRequestId);
+            }
+        }
+
+        return (reviewResult, deepAnalysis);
+    }
+
+    /// <summary>
     /// Build a CodeReviewResult from Pass 1 (PR summary) only, for Quick mode.
     /// No per-file reviews or inline comments — just a PR-level verdict.
+    /// Computes change-type counts from fileChanges and includes skipped file info.
     /// </summary>
     private static CodeReviewResult BuildQuickModeResult(
         PrSummaryResult? prSummary, List<FileChange> fileChanges, List<FileChange> skippedFiles)
     {
+        // Compute change-type counts from filChanges (same as MergeBatchResults)
+        int edits = 0, adds = 0, deletes = 0;
+        foreach (var fc in fileChanges)
+        {
+            switch (fc.ChangeType)
+            {
+                case "edit": edits++; break;
+                case "add": adds++; break;
+                case "delete": deletes++; break;
+                default: edits++; break; // treat unknown as edit
+            }
+        }
+
+        var description = prSummary?.Intent ?? "Quick mode review — PR-level summary only.";
+        if (skippedFiles.Count > 0)
+            description += $" ({skippedFiles.Count} non-reviewable file(s) excluded.)";
+
         var result = new CodeReviewResult
         {
             Summary = new ReviewSummary
             {
                 FilesChanged = fileChanges.Count,
-                Description = prSummary?.Intent ?? "Quick mode review — PR-level summary only.",
+                EditsCount = edits,
+                AddsCount = adds,
+                DeletesCount = deletes,
+                Description = description,
                 Verdict = DeriveQuickVerdict(prSummary),
                 VerdictJustification = DeriveQuickJustification(prSummary),
             },
@@ -1073,7 +1115,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private static string DeriveQuickVerdict(PrSummaryResult? prSummary)
     {
         if (prSummary == null)
-            return "APPROVED";
+            return "APPROVED WITH SUGGESTIONS"; // limited analysis — can't confirm approval
 
         // Use risk areas to determine verdict
         var highRiskCount = prSummary.RiskAreas.Count;
@@ -1088,7 +1130,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private static string DeriveQuickJustification(PrSummaryResult? prSummary)
     {
         if (prSummary == null)
-            return "Quick review — limited analysis without per-file review.";
+            return "Quick review — limited analysis without per-file review. Pass 1 summary unavailable.";
 
         if (prSummary.RiskAreas.Count == 0)
             return $"Quick review — no significant risks identified. {prSummary.Intent}";
@@ -1100,7 +1142,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private static int DeriveQuickVote(PrSummaryResult? prSummary)
     {
         if (prSummary == null)
-            return 5; // approve with suggestions (limited analysis)
+            return 5; // approve with suggestions — limited analysis, consistent with verdict
 
         return prSummary.RiskAreas.Count switch
         {

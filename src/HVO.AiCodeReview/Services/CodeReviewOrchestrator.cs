@@ -1461,7 +1461,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     /// No per-file reviews or inline comments — just a PR-level verdict.
     /// Computes change-type counts from fileChanges and includes skipped file info.
     /// </summary>
-    private static CodeReviewResult BuildQuickModeResult(
+    internal static CodeReviewResult BuildQuickModeResult(
         PrSummaryResult? prSummary, List<FileChange> fileChanges, List<FileChange> skippedFiles)
     {
         // Compute change-type counts from filChanges (same as MergeBatchResults)
@@ -1508,7 +1508,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         return result;
     }
 
-    private static string DeriveQuickVerdict(PrSummaryResult? prSummary)
+    internal static string DeriveQuickVerdict(PrSummaryResult? prSummary)
     {
         if (prSummary == null)
             return "APPROVED WITH SUGGESTIONS"; // limited analysis — can't confirm approval
@@ -1523,7 +1523,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         };
     }
 
-    private static string DeriveQuickJustification(PrSummaryResult? prSummary)
+    internal static string DeriveQuickJustification(PrSummaryResult? prSummary)
     {
         if (prSummary == null)
             return "Quick review — limited analysis without per-file review. Pass 1 summary unavailable.";
@@ -1535,7 +1535,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         return $"Quick review — {prSummary.RiskAreas.Count} risk area(s) identified: {risks}";
     }
 
-    private static int DeriveQuickVote(PrSummaryResult? prSummary)
+    internal static int DeriveQuickVote(PrSummaryResult? prSummary)
     {
         if (prSummary == null)
             return 5; // approve with suggestions — limited analysis, consistent with verdict

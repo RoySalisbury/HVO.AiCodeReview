@@ -11,8 +11,14 @@ namespace AiCodeReview.Tests.Helpers;
 /// </summary>
 public class FakeCodeReviewService : ICodeReviewService
 {
+    /// <summary>
+    /// Override to change the model name reported by this fake service.
+    /// Defaults to "fake-model".
+    /// </summary>
+    public string? ModelNameOverride { get; set; }
+
     /// <inheritdoc />
-    public string ModelName => "fake-model";
+    public string ModelName => ModelNameOverride ?? "fake-model";
 
     /// <summary>
     /// Override this to return custom results in a specific test.

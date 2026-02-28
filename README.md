@@ -21,7 +21,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 | [API Reference](docs/api-reference.md) | `POST /api/review`, `GET /api/review/metrics`, `GET /api/review/health` — request/response formats, status codes, field reference. |
 | [Architecture](docs/architecture.md) | Review depth modes (Quick/Standard/Deep), review strategies (FileByFile/Vector/Auto), two-pass architecture, review decision logic, review history & tracking, rate limiting, RPM-aware throttling & cost estimation. |
 | [Pipeline Integration](docs/pipeline-integration.md) | Azure DevOps pipeline YAML, pipeline variables, optional fail-on-NeedsWork, optional gate-with-status, scripts. |
-| [Testing](docs/testing.md) | Disposable test repositories, 6-layer safety system, test categories (347 tests), test infrastructure, running tests, manual utilities, test configuration, test roadmap. |
+| [Testing](docs/testing.md) | Disposable test repositories, 6-layer safety system, test categories (376 tests), test infrastructure, running tests, manual utilities, test configuration, test roadmap. |
 | [Model Benchmarks](docs/model-benchmarks.md) | Known-bad-code test issues, model comparison table, depth → model mapping, running benchmarks. |
 
 ---
@@ -34,6 +34,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 | **Two-Pass Architecture** | Pass 1 generates a cross-file PR summary for context. Pass 2 reviews each file individually with that context injected, improving accuracy for multi-file changes. |
 | **Review Depth Modes** | Three review depths — **Quick** (Pass 1 only), **Standard** (Pass 1 + Pass 2), and **Deep** (+ Pass 3 holistic re-evaluation). See [Architecture → Depth Modes](docs/architecture.md#review-depth-modes). |
 | **Depth-Specific Model Routing** | Each review depth can target a different AI model — e.g., Quick → gpt-4o-mini, Deep → o4-mini. See [Configuration → Depth Models](docs/configuration.md#depth-specific-model-routing). |
+| **Per-Pass Model Routing** | Each review pass (PR Summary, Per-File, Deep, Security, Thread Verification) can target a different AI model. See [Configuration → Pass Routing](docs/configuration.md#per-pass-model-routing-passrouting). |
 | **Review Strategies** | Three strategies — **FileByFile**, **Vector** (Assistants API + Vector Store), and **Auto**. See [Architecture → Strategies](docs/architecture.md#review-strategies). |
 | **Reasoning Model Support** | Full compatibility with o-series models (o1, o3-mini, o4-mini) — automatic parameter adaptation. |
 | **Layered Prompt Architecture** | Versioned rule catalog with scoped rules, priorities, and hot-reload. See [Configuration → Custom Instructions](docs/configuration.md#custom-review-instructions). |
@@ -82,11 +83,16 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
                               │     │   │Resolver │   │   │     │
                               │     │   └─────────┘   │   │     │
                               │     │        ┌────────▼┐  │     │
-                              │     │        │Depth    │  │     │
-                              │     │        │Model    │  │     │
-                              │     │        │Resolver │  │     │
-                              │     │        └────┬────┘  │     │
-                              │     │       ┌─────▼┐ ┌────▼───┐ │
+                              │     │        │Pass    │  │     │
+                              │     │        │Model   │  │     │
+                              │     │        │Resolver│  │     │
+                              │     │        └───┬────┘  │     │
+                              │     │        ┌───▼────┐  │     │
+                              │     │        │Depth   │  │     │
+                              │     │        │Model   │  │     │
+                              │     │        │Resolver│  │     │
+                              │     │        └────┬───┘  │     │
+                              │     │       ┌─────▼┐ ┌───▼────┐ │
                               │     │       │Single│ │Con-    │ │
                               │     │       │ AI   │ │sensus  │ │
                               │     │       │Review│ │Review  │ │
@@ -222,7 +228,7 @@ HVO.AiCodeReview/
 │       │   └── CodeReviewController.cs # API endpoints (w/ CancellationToken)
 │       │
 │       ├── Models/
-│       │   ├── AiProviderSettings.cs       # Multi-provider AI configuration + DepthModels
+│       │   ├── AiProviderSettings.cs       # Multi-provider AI configuration + DepthModels + PassRouting
 │       │   ├── AssistantsSettings.cs       # Assistants API / Vector Store settings
 │       │   ├── AzureDevOpsSettings.cs      # Azure DevOps configuration
 │       │   ├── AzureOpenAISettings.cs      # Legacy Azure OpenAI settings
@@ -234,6 +240,7 @@ HVO.AiCodeReview/
 │       │   ├── PullRequestInfo.cs          # PR info from Azure DevOps
 │       │   ├── ReviewDepth.cs              # ReviewDepth enum (Quick, Standard, Deep)
 │       │   ├── ReviewMetadata.cs           # PR properties metadata + history entries
+│       │   ├── ReviewPass.cs               # ReviewPass enum (PrSummary, PerFileReview, DeepReview, SecurityPass, ThreadVerification)
 │       │   ├── ReviewMetricsResponse.cs    # Metrics API response DTO
 │       │   ├── ReviewProfile.cs            # Configurable review profile (thresholds, density)
 │       │   ├── ReviewRequest.cs            # POST request DTO (depth + strategy)
@@ -251,6 +258,8 @@ HVO.AiCodeReview/
 │       │   ├── ConsensusReviewService.cs   # Multi-provider consensus aggregator
 │       │   ├── CodeReviewServiceFactory.cs # Config-driven provider factory + DepthModels DI
 │       │   ├── DepthModelResolver.cs       # Depth → ICodeReviewService routing
+│       │   ├── PassModelResolver.cs        # Pass → ICodeReviewService routing
+│       │   ├── ICodeReviewServiceResolver.cs # Pass-aware service resolution interface
 │       │   ├── ICodeReviewService.cs       # AI service interface (provider-agnostic)
 │       │   ├── AzureDevOpsService.cs       # Azure DevOps REST API client
 │       │   ├── IAzureDevOpsService.cs      # DevOps service interface
@@ -264,7 +273,7 @@ HVO.AiCodeReview/
 │           └── launchSettings.json     # Dev launch profiles
 │
 └── tests/
-    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (347 total)
+    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (376 total)
         ├── HVO.AiCodeReview.Tests.csproj
         ├── appsettings.Test.json           # Test config (gitignored)
         ├── appsettings.Test.template.json  # Test config template
@@ -283,6 +292,8 @@ HVO.AiCodeReview/
         ├── BuildSummaryMarkdownTests.cs    # 10 summary formatting tests
         ├── ReviewDepthTests.cs             # 22 depth mode + integration tests
         ├── RaceConditionTests.cs           # 3 concurrency / thread-safety tests
+        ├── ResilienceTests.cs              # 7 Azure DevOps HTTP resilience tests
+        ├── PassModelResolverTests.cs       # 10 per-pass model routing tests
         ├── RateLimitTests.cs               # 32 rate-limit helper + global signal tests
         ├── VectorStoreReviewServiceTests.cs # 24 vector store unit tests
         ├── VectorStoreIntegrationTest.cs   # 1 live vector store integration test
@@ -302,7 +313,7 @@ HVO.AiCodeReview/
 
 ## Testing
 
-347 tests across unit, integration, LiveAI, and benchmark categories. Tests run against disposable Azure DevOps repositories with a 6-layer safety system to prevent accidental deletion.
+376 tests across unit, integration, LiveAI, and benchmark categories. Tests run against disposable Azure DevOps repositories with a 6-layer safety system to prevent accidental deletion.
 
 ```bash
 # All automated tests (fake AI — fast, no API cost)

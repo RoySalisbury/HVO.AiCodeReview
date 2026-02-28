@@ -54,6 +54,13 @@ public static class TestServiceBuilder
                 new Dictionary<ReviewDepth, ICodeReviewService>(),
                 fake,
                 sp.GetRequiredService<ILogger<DepthModelResolver>>()));
+        services.AddSingleton<PassModelResolver>(sp =>
+            new PassModelResolver(
+                new Dictionary<ReviewPass, ICodeReviewService>(),
+                sp.GetRequiredService<DepthModelResolver>(),
+                sp.GetRequiredService<ILogger<PassModelResolver>>()));
+        services.AddSingleton<ICodeReviewServiceResolver>(sp =>
+            sp.GetRequiredService<PassModelResolver>());
         services.AddSingleton<ModelAdapterResolver>(sp =>
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();

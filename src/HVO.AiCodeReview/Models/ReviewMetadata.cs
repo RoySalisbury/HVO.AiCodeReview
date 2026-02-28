@@ -70,6 +70,13 @@ public class ReviewHistoryEntry
 
     /// <summary>Review depth mode used: Quick, Standard, or Deep.</summary>
     public string? ReviewDepth { get; set; }
+
+    /// <summary>
+    /// Per-pass model routing information. Maps pass names to the model/deployment
+    /// used for that pass (e.g., "Pass1_PrSummary" → "gpt-4o-mini").
+    /// Only populated when per-pass routing is active.
+    /// </summary>
+    public Dictionary<string, string>? PassModels { get; set; }
 }
 
 /// <summary>

@@ -47,6 +47,13 @@ public class ServiceIntegrationTests
                 new Dictionary<ReviewDepth, ICodeReviewService>(),
                 sp.GetRequiredService<ICodeReviewService>(),
                 sp.GetRequiredService<ILogger<DepthModelResolver>>()));
+        services.AddSingleton<PassModelResolver>(sp =>
+            new PassModelResolver(
+                new Dictionary<ReviewPass, ICodeReviewService>(),
+                sp.GetRequiredService<DepthModelResolver>(),
+                sp.GetRequiredService<ILogger<PassModelResolver>>()));
+        services.AddSingleton<ICodeReviewServiceResolver>(sp =>
+            sp.GetRequiredService<PassModelResolver>());
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ModelAdapterResolver>(sp =>

@@ -206,6 +206,99 @@ The `DepthModels` section under `AiProvider` maps each review depth to a specifi
 
 See [Model Benchmarks & Selection](model-benchmarks.md) for the data behind these recommendations.
 
+---
+
+## Per-Pass Model Routing (PassRouting)
+
+While `DepthModels` maps the review depth to a provider, `PassRouting` maps each **review pass** to a provider, giving fine-grained control over which model handles each stage of the review pipeline.
+
+```json
+{
+  "AiProvider": {
+    "ActiveProvider": "azure-openai",
+    "PassRouting": {
+      "PrSummary": "azure-openai-mini",
+      "PerFileReview": "azure-openai",
+      "DeepReview": "azure-openai-o4-mini",
+      "SecurityPass": "azure-openai-o4-mini",
+      "ThreadVerification": "azure-openai-mini"
+    },
+    "Providers": {
+      "azure-openai": {
+        "Type": "azure-openai",
+        "DisplayName": "Azure OpenAI (gpt-4o)",
+        "Endpoint": "https://your-resource.openai.azure.com/",
+        "ApiKey": "your-key",
+        "Model": "gpt-4o",
+        "Enabled": true
+      },
+      "azure-openai-mini": {
+        "Type": "azure-openai",
+        "DisplayName": "Azure OpenAI (gpt-4o-mini)",
+        "Endpoint": "https://your-resource.openai.azure.com/",
+        "ApiKey": "your-key",
+        "Model": "gpt-4o-mini",
+        "Enabled": true
+      },
+      "azure-openai-o4-mini": {
+        "Type": "azure-openai",
+        "DisplayName": "Azure OpenAI (o4-mini)",
+        "Endpoint": "https://your-resource.openai.azure.com/",
+        "ApiKey": "your-key",
+        "Model": "o4-mini",
+        "Enabled": true
+      }
+    }
+  }
+}
+```
+
+### Available Passes
+
+| Pass | Description |
+|------|-------------|
+| `PrSummary` | Pass 1 — PR-level summary generation (cross-file context). |
+| `PerFileReview` | Pass 2 — Per-file parallel review. |
+| `DeepReview` | Pass 3 — Holistic deep analysis (Deep mode only). |
+| `SecurityPass` | Security-focused pass (future use). |
+| `ThreadVerification` | AI verification of prior comment threads during re-review. |
+
+### Resolution Order
+
+When the orchestrator needs an AI service for a specific pass, the `PassModelResolver` resolves in this order:
+
+1. **PassRouting** — If `AiProvider:PassRouting` has an entry for the current pass, use that provider.
+2. **DepthModels** — If no pass-specific routing, fall back to the depth-based model (e.g., `Deep` → `o4-mini`).
+3. **ActiveProvider** — If neither pass nor depth routing is configured, use the default `ActiveProvider`.
+
+This means `PassRouting` takes priority over `DepthModels`. You can mix both — configure depth-based defaults via `DepthModels` and override specific passes via `PassRouting`.
+
+### Example: Cost-Optimized Pass Routing
+
+Use a cheap model for summaries and thread verification, a balanced model for per-file reviews, and a reasoning model for deep analysis:
+
+| Pass | Model | Rationale |
+|------|-------|-----------|
+| `PrSummary` | gpt-4o-mini | Summary generation is lightweight — cheap model suffices. |
+| `PerFileReview` | gpt-4o | Best quality for detailed per-file review comments. |
+| `DeepReview` | o4-mini | Reasoning model for cross-file analysis and verdict consistency. |
+| `ThreadVerification` | gpt-4o-mini | Thread verification is simple yes/no — cheap model suffices. |
+
+### PassModels in Review History
+
+When per-pass model routing is active, the review history tracks which model was used for each pass:
+
+```json
+{
+  "PassModels": {
+    "Pass1_PrSummary": "gpt-4o-mini-2024-07-18",
+    "Pass2_PerFile": "gpt-4o-2024-08-06",
+    "Pass3_DeepReview": "o4-mini-2025-04-16",
+    "ThreadVerification": "gpt-4o-mini-2024-07-18"
+  }
+}
+```
+
 ### Adding a New Provider Type
 
 1. Create a class implementing `ICodeReviewService` (see `AzureOpenAiReviewService` for reference)

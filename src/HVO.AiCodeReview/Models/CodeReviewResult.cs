@@ -46,6 +46,14 @@ public class CodeReviewResult
     /// <summary>Time spent waiting for the AI response, in milliseconds.</summary>
     [JsonIgnore]
     public long? AiDurationMs { get; set; }
+
+    /// <summary>
+    /// Per-pass model routing information. Maps pass names (e.g., "Pass1_PrSummary",
+    /// "Pass2_PerFile", "Pass3_DeepReview", "ThreadVerification") to the model/deployment
+    /// used for that pass. Populated by the orchestrator when per-pass routing is active.
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<string, string>? PassModels { get; set; }
 }
 
 public class ReviewSummary

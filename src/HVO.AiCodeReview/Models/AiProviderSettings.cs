@@ -56,6 +56,26 @@ public class AiProviderSettings
     /// When not configured (empty), all depths use <see cref="ActiveProvider"/>.
     /// </summary>
     public Dictionary<string, string> DepthModels { get; set; } = new();
+
+    /// <summary>
+    /// Maps <see cref="ReviewPass"/> names to provider keys in <see cref="Providers"/>.
+    /// When configured, each review pass uses a different AI model/deployment,
+    /// enabling task-specific model routing — cheaper models for simple tasks,
+    /// premium models for deep analysis, and separate deployments to avoid
+    /// rate-limit contention between passes.
+    /// Example:
+    /// <code>
+    /// {
+    ///   "PrSummary": "azure-openai-mini",
+    ///   "PerFileReview": "azure-openai",
+    ///   "DeepReview": "azure-openai-o1",
+    ///   "ThreadVerification": "azure-openai-mini"
+    /// }
+    /// </code>
+    /// When not configured (empty), falls back to <see cref="DepthModels"/> then <see cref="ActiveProvider"/>.
+    /// Takes priority over <see cref="DepthModels"/> for any pass that has a mapping.
+    /// </summary>
+    public Dictionary<string, string> PassRouting { get; set; } = new();
 }
 
 /// <summary>

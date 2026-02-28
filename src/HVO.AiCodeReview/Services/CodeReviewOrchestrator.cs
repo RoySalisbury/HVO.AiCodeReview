@@ -9,7 +9,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 {
     private readonly IAzureDevOpsService _devOpsService;
     private readonly ICodeReviewService _reviewService;
-    private readonly DepthModelResolver _depthModelResolver;
+    private readonly ICodeReviewServiceResolver _passResolver;
     private readonly VectorStoreReviewService _vectorService;
     private readonly ModelAdapterResolver _modelAdapterResolver;
     private readonly AzureDevOpsSettings _devOpsSettings;
@@ -22,7 +22,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     public CodeReviewOrchestrator(
         IAzureDevOpsService devOpsService,
         ICodeReviewService reviewService,
-        DepthModelResolver depthModelResolver,
+        ICodeReviewServiceResolver passResolver,
         VectorStoreReviewService vectorService,
         ModelAdapterResolver modelAdapterResolver,
         IOptions<AzureDevOpsSettings> devOpsSettings,
@@ -34,7 +34,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     {
         _devOpsService = devOpsService;
         _reviewService = reviewService;
-        _depthModelResolver = depthModelResolver;
+        _passResolver = passResolver;
         _vectorService = vectorService;
         _modelAdapterResolver = modelAdapterResolver;
         _devOpsSettings = devOpsSettings.Value;
@@ -46,12 +46,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     }
 
     /// <summary>
-    /// Resolves the AI review service for the given depth.
-    /// Returns the depth-specific model if configured via DepthModels;
-    /// otherwise falls back to the default active provider.
+    /// Resolves the AI review service for a specific review pass and depth.
+    /// Resolution order: PassRouting → DepthModels → ActiveProvider.
     /// </summary>
-    private ICodeReviewService GetServiceForDepth(ReviewDepth depth)
-        => _depthModelResolver.Resolve(depth);
+    private ICodeReviewService GetServiceForPass(ReviewPass pass, ReviewDepth depth)
+        => _passResolver.GetService(pass, depth);
 
     /// <summary>
     /// Calculates the estimated cost in USD for the given model and token usage.
@@ -465,12 +464,18 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             _logger.LogWarning(ex, "Failed to retrieve work items for PR #{PrId} — continuing without AC context", pullRequestId);
         }
 
-        // ── Resolve depth-specific AI service ────────────────────────
-        var activeService = GetServiceForDepth(reviewDepth);
+        // ── Resolve per-pass AI services ─────────────────────────────
+        var pass1Service = GetServiceForPass(ReviewPass.PrSummary, reviewDepth);
 
         // ── Pass 1: PR-level summary (cross-file context) ────────────
         var prSummary = await BuildPass1SummaryAsync(
-            activeService, prInfo, fileChanges, workItems, pullRequestId, progress);
+            pass1Service, prInfo, fileChanges, workItems, pullRequestId, progress);
+
+        // Track per-pass model names for metrics
+        var passModels = new Dictionary<string, string>
+        {
+            ["Pass1_PrSummary"] = pass1Service.ModelName,
+        };
 
         // ── Quick mode: Pass 1 only — skip per-file reviews ────────────
         CodeReviewResult reviewResult;
@@ -496,11 +501,25 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
         else
         {
+            // Resolve Pass 2 and (optionally) Pass 3 services
+            var pass2Service = GetServiceForPass(ReviewPass.PerFileReview, reviewDepth);
+            passModels["Pass2_PerFile"] = pass2Service.ModelName;
+
+            ICodeReviewService? pass3Service = null;
+            if (reviewDepth == ReviewDepth.Deep)
+            {
+                pass3Service = GetServiceForPass(ReviewPass.DeepReview, reviewDepth);
+                passModels["Pass3_DeepReview"] = pass3Service.ModelName;
+            }
+
             // Standard or Deep — run Pass 2 (and optionally Pass 3)
             (reviewResult, deepAnalysis) = await HandleStandardOrDeepPassesAsync(
                 prInfo, pullRequestId, fileChanges, prSummary, workItems,
-                reviewDepth, reviewStrategy, reviewLabel, activeService, progress, cancellationToken);
+                reviewDepth, reviewStrategy, reviewLabel, pass2Service, pass3Service, progress, cancellationToken);
         }
+
+        // Store aggregated pass model information
+        reviewResult.PassModels = passModels;
 
         // ── Validate & sanitize inline comments from AI ─────────────────
         var validatedComments = ValidateInlineComments(reviewResult.InlineComments, fileChanges);
@@ -536,12 +555,14 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         if (!simulationOnly)
         {
             // ── Post inline comments (with thread resolution + dedup) ────
+            var threadService = GetServiceForPass(ReviewPass.ThreadVerification, reviewDepth);
+            passModels["ThreadVerification"] = threadService.ModelName;
             var (_, postedComments, _, _) =
                 await PostInlineCommentsAsync(
                     project, repository, pullRequestId, fileChanges,
                     lineSpecificComments, reviewResult,
                     attributionSuffix, attributionTag, isReReview,
-                    activeService, progress, cancellationToken);
+                    threadService, progress, cancellationToken);
 
             // ── Post summary comment ────────────────────────────────────
             var summaryMarkdown = await PostSummaryThreadAsync(
@@ -963,6 +984,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             TotalDurationMs = totalSw.ElapsedMilliseconds,
             EstimatedCost = estimatedCost,
             ReviewDepth = reviewDepth.ToString(),
+            PassModels = reviewResult.PassModels,
         };
         await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration,
             !voteFailed && !voteSkipped, historyEntry);
@@ -1104,7 +1126,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         List<FileChange> fileChanges, PrSummaryResult? prSummary,
         List<WorkItemInfo>? workItems,
         ReviewDepth reviewDepth, ReviewStrategy reviewStrategy, string reviewLabel,
-        ICodeReviewService activeService,
+        ICodeReviewService pass2Service,
+        ICodeReviewService? pass3Service,
         IProgress<ReviewStatusUpdate>? progress,
         CancellationToken cancellationToken)
     {
@@ -1128,7 +1151,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // + 1 (Pass 3 deep analysis, if Deep mode). Warn if exceeding 80% of model RPM.
         if (effectiveStrategy == ReviewStrategy.FileByFile)
         {
-            var adapter = _modelAdapterResolver.Resolve(activeService.ModelName);
+            var adapter = _modelAdapterResolver.Resolve(pass2Service.ModelName);
             if (adapter.RequestsPerMinute is > 0 and var rpm)
             {
                 int estimatedCalls = 1 + fileChanges.Count + (reviewDepth == ReviewDepth.Deep ? 1 : 0);
@@ -1139,7 +1162,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     _logger.LogWarning(
                         "[RPM] PR #{PrId} will make ~{EstimatedCalls} API calls against model '{Model}' ({Rpm} RPM) — " +
                         "{CapacityPct:F0}% of per-minute capacity. Review may be throttled to avoid rate-limit errors.",
-                        pullRequestId, estimatedCalls, activeService.ModelName, rpm, capacityPct);
+                        pullRequestId, estimatedCalls, pass2Service.ModelName, rpm, capacityPct);
                 }
                 else
                 {
@@ -1157,19 +1180,19 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         {
             reviewResult = await HandleVectorPassAsync(
                 prInfo, pullRequestId, fileChanges, prSummary, workItems,
-                reviewStrategy, reviewLabel, activeService, progress, cancellationToken);
+                reviewStrategy, reviewLabel, pass2Service, progress, cancellationToken);
         }
         else
         {
             reviewResult = await HandleFileByFilePassAsync(
                 prInfo, pullRequestId, fileChanges, prSummary, workItems,
-                reviewLabel, activeService, progress, cancellationToken);
+                reviewLabel, pass2Service, progress, cancellationToken);
         }
 
         // ── Pass 3: Deep holistic re-evaluation (Deep mode only) ────────
         DeepAnalysisResult? deepAnalysis = null;
 
-        if (reviewDepth == ReviewDepth.Deep)
+        if (reviewDepth == ReviewDepth.Deep && pass3Service != null)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -1178,7 +1201,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 ReportProgress(progress, ReviewStep.AnalyzingCode,
                     "Pass 3: Deep holistic re-evaluation...", 62);
 
-                deepAnalysis = await activeService.GenerateDeepAnalysisAsync(
+                deepAnalysis = await pass3Service.GenerateDeepAnalysisAsync(
                     prInfo, prSummary, reviewResult, fileChanges);
 
                 if (deepAnalysis != null)

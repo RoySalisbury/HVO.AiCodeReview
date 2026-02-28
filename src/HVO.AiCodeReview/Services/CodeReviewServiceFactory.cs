@@ -1,4 +1,5 @@
 using AiCodeReview.Models;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
@@ -50,14 +51,15 @@ public static class CodeReviewServiceFactory
             ReviewProfile reviewProfile,
             PromptAssemblyPipeline? pipeline,
             ModelAdapterResolver? adapterResolver,
-            IGlobalRateLimitSignal? rateLimitSignal)
+            IGlobalRateLimitSignal? rateLimitSignal,
+            ITelemetryService? telemetry)
         {
             if (providerCache.TryGetValue(providerKey, out var cached))
                 return cached;
 
             var service = CreateProvider(
                 providerKey, providerConfig, loggerFactory,
-                maxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
+                maxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry);
 
             providerCache[providerKey] = service;
             return service;
@@ -72,6 +74,7 @@ public static class CodeReviewServiceFactory
             var pipeline = sp.GetService<PromptAssemblyPipeline>();
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
             var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
+            var telemetry = sp.GetService<ITelemetryService>();
             var defaultService = sp.GetRequiredService<ICodeReviewService>();
             var logger = loggerFactory.CreateLogger<DepthModelResolver>();
 
@@ -107,7 +110,7 @@ public static class CodeReviewServiceFactory
 
                     var service = GetOrCreateProvider(
                         providerKey, providerConfig, loggerFactory,
-                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
+                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry);
 
                     depthServices[depth] = service;
 
@@ -130,6 +133,7 @@ public static class CodeReviewServiceFactory
             var pipeline = sp.GetService<PromptAssemblyPipeline>();
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
             var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
+            var telemetry = sp.GetService<ITelemetryService>();
             var depthResolver = sp.GetRequiredService<DepthModelResolver>();
             var logger = loggerFactory.CreateLogger<PassModelResolver>();
 
@@ -165,7 +169,7 @@ public static class CodeReviewServiceFactory
 
                     var service = GetOrCreateProvider(
                         providerKey, providerConfig, loggerFactory,
-                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
+                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry);
 
                     passServices[pass] = service;
 
@@ -188,6 +192,7 @@ public static class CodeReviewServiceFactory
             var pipeline = sp.GetService<PromptAssemblyPipeline>();
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
             var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
+            var telemetry = sp.GetService<ITelemetryService>();
 
             // ── Fallback: if no AiProvider section exists, use legacy AzureOpenAI ──
             if (settings.Providers.Count == 0)
@@ -209,7 +214,8 @@ public static class CodeReviewServiceFactory
                     reviewProfile: reviewProfile,
                     pipeline: pipeline,
                     modelAdapter: adapterResolver?.Resolve(legacySettings.DeploymentName),
-                    rateLimitSignal: rateLimitSignal);
+                    rateLimitSignal: rateLimitSignal,
+                    telemetry: telemetry);
             }
 
             // Build all enabled providers
@@ -217,7 +223,7 @@ public static class CodeReviewServiceFactory
                 .Where(kv => kv.Value.Enabled)
                 .Select(kv => (
                     Name: kv.Value.DisplayName.Length > 0 ? kv.Value.DisplayName : kv.Key,
-                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal)))
+                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry)))
                 .ToList();
 
             if (providers.Count == 0)
@@ -261,7 +267,7 @@ public static class CodeReviewServiceFactory
 
             // Consensus mode
             var consensusLogger = loggerFactory.CreateLogger<ConsensusReviewService>();
-            return new ConsensusReviewService(providers, settings.ConsensusThreshold, consensusLogger);
+            return new ConsensusReviewService(providers, settings.ConsensusThreshold, consensusLogger, telemetry);
         });
 
         return services;
@@ -275,7 +281,8 @@ public static class CodeReviewServiceFactory
         string key, ProviderConfig config, ILoggerFactory loggerFactory, int globalMaxInputLines,
         ReviewProfile reviewProfile, PromptAssemblyPipeline? pipeline = null,
         ModelAdapterResolver? adapterResolver = null,
-        IGlobalRateLimitSignal? rateLimitSignal = null)
+        IGlobalRateLimitSignal? rateLimitSignal = null,
+        ITelemetryService? telemetry = null)
     {
         var type = config.Type.ToLowerInvariant();
         var maxLines = ValidateMaxInputLines(
@@ -294,7 +301,8 @@ public static class CodeReviewServiceFactory
                 reviewProfile: reviewProfile,
                 pipeline: pipeline,
                 modelAdapter: adapter,
-                rateLimitSignal: rateLimitSignal),
+                rateLimitSignal: rateLimitSignal,
+                telemetry: telemetry),
 
             // ── Add new provider types here ──────────────────────────────
             // "github-copilot" => new GitHubCopilotReviewService(config, loggerFactory.CreateLogger<GitHubCopilotReviewService>()),

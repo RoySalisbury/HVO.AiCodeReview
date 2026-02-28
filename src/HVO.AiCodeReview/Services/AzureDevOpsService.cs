@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AiCodeReview.Models;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
@@ -11,6 +12,7 @@ public class AzureDevOpsService : IDevOpsService
 {
     private readonly HttpClient _httpClient;
     private readonly AzureDevOpsSettings _settings;
+    private readonly ITelemetryService _telemetry;
     private readonly ILogger<AzureDevOpsService> _logger;
     private const string ApiVersion = "api-version=7.1";
 
@@ -35,10 +37,12 @@ public class AzureDevOpsService : IDevOpsService
     public AzureDevOpsService(
         HttpClient httpClient,
         IOptions<AzureDevOpsSettings> settings,
+        ITelemetryService telemetry,
         ILogger<AzureDevOpsService> logger)
     {
         _httpClient = httpClient;
         _settings = settings.Value;
+        _telemetry = telemetry;
         _logger = logger;
 
         // Set up base authentication for all requests
@@ -104,6 +108,9 @@ public class AzureDevOpsService : IDevOpsService
 
     public async Task<PullRequestInfo> GetPullRequestAsync(string project, string repository, int pullRequestId)
     {
+        using var scope = _telemetry.StartOperation("DevOps.GetPullRequest");
+        scope.WithTag("pr.id", pullRequestId).WithTag("pr.project", project);
+
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}?{ApiVersion}";
         _logger.LogDebug("GET {Url}", url);
 
@@ -567,6 +574,9 @@ public class AzureDevOpsService : IDevOpsService
     public async Task<List<FileChange>> GetPullRequestChangesAsync(
         string project, string repository, int pullRequestId, PullRequestInfo prInfo)
     {
+        using var scope = _telemetry.StartOperation("DevOps.GetPullRequestChanges");
+        scope.WithTag("pr.id", pullRequestId).WithTag("pr.project", project);
+
         // Get the list of changed items between source and target commits
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/iterations?{ApiVersion}";
         _logger.LogDebug("GET iterations: {Url}", url);
@@ -711,6 +721,9 @@ public class AzureDevOpsService : IDevOpsService
         string project, string repository, int pullRequestId,
         string content, string status = "closed")
     {
+        using var scope = _telemetry.StartOperation("DevOps.PostComment");
+        scope.WithTag("pr.id", pullRequestId).WithTag("comment.status", status);
+
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/threads?{ApiVersion}";
 
         var threadBody = new
@@ -739,6 +752,9 @@ public class AzureDevOpsService : IDevOpsService
         string filePath, int startLine, int endLine,
         string content, string status = "closed")
     {
+        using var scope = _telemetry.StartOperation("DevOps.PostInlineComment");
+        scope.WithTag("pr.id", pullRequestId).WithTag("comment.file", filePath);
+
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/threads?{ApiVersion}";
 
         var threadBody = new
@@ -770,6 +786,9 @@ public class AzureDevOpsService : IDevOpsService
 
     public async Task AddReviewerAsync(string project, string repository, int pullRequestId, int vote)
     {
+        using var scope = _telemetry.StartOperation("DevOps.AddReviewer");
+        scope.WithTag("pr.id", pullRequestId).WithTag("review.vote", vote);
+
         var identityId = await GetIdentityIdAsync();
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/reviewers/{identityId}?{ApiVersion}";
 

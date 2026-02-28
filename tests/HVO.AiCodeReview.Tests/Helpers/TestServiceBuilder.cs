@@ -1,5 +1,6 @@
 using AiCodeReview.Models;
 using AiCodeReview.Services;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -67,6 +68,7 @@ public static class TestServiceBuilder
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
+        services.AddSingleton<ITelemetryService, NullTelemetryService>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -126,6 +128,7 @@ public static class TestServiceBuilder
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
+        services.AddSingleton<ITelemetryService, NullTelemetryService>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -189,6 +192,7 @@ public static class TestServiceBuilder
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
+        services.AddSingleton<ITelemetryService, NullTelemetryService>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

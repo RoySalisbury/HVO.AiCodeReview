@@ -80,6 +80,10 @@
             "path": "/bin/bash"
           }
         },
+        "terminal.integrated.shellIntegration.enabled": true,
+        "terminal.integrated.shellIntegration.decorationsEnabled": "both",
+        "terminal.integrated.stickyScroll.enabled": true,
+        "terminal.integrated.suggest.enabled": true,
         "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
         "python.terminal.activateEnvInCurrentTerminal": true,
         "python.terminal.activateEnvironment": true

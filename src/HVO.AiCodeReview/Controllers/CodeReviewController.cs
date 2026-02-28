@@ -1,5 +1,6 @@
 using AiCodeReview.Models;
 using AiCodeReview.Services;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AiCodeReview.Controllers;
@@ -11,14 +12,17 @@ public class ReviewController : ControllerBase
     private readonly ICodeReviewOrchestrator _orchestrator;
     private readonly IDevOpsService _devOpsService;
     private readonly ILogger<ReviewController> _logger;
+    private readonly ITelemetryService _telemetry;
 
     public ReviewController(
         ICodeReviewOrchestrator orchestrator,
         IDevOpsService devOpsService,
+        ITelemetryService telemetry,
         ILogger<ReviewController> logger)
     {
         _orchestrator = orchestrator;
         _devOpsService = devOpsService;
+        _telemetry = telemetry;
         _logger = logger;
     }
 
@@ -35,6 +39,13 @@ public class ReviewController : ControllerBase
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> PostReview([FromBody] ReviewRequest request, CancellationToken cancellationToken)
     {
+        using var opScope = _telemetry.StartOperation("API.PostReview")
+            .WithTag("pr.id", request.PullRequestId)
+            .WithTag("pr.project", request.ProjectName)
+            .WithTag("pr.repository", request.RepositoryName)
+            .WithTag("review.depth", request.ReviewDepth.ToString())
+            .WithTag("review.simulation", request.SimulationOnly);
+
         // Create a session to track this review end-to-end
         var session = new ReviewSession
         {
@@ -76,9 +87,13 @@ public class ReviewController : ControllerBase
         {
             _logger.LogError("Review failed for PR #{PrId}: {Error}",
                 request.PullRequestId, response.ErrorMessage);
+            opScope.WithTag("review.outcome", "Error").Fail(new InvalidOperationException(response.ErrorMessage));
+            _telemetry.RecordMetric("api.review_errors", 1);
             return StatusCode(500, response);
         }
 
+        opScope.WithTag("review.outcome", response.Status).Succeed();
+        _telemetry.RecordMetric("api.reviews_completed", 1);
         return Ok(response);
     }
 

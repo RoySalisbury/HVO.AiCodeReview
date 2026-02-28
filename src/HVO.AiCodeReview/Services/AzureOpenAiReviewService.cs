@@ -3,6 +3,7 @@ using System.Text.Json;
 using AiCodeReview.Models;
 using Azure.AI.OpenAI;
 using Azure.AI.OpenAI.Chat;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
 
@@ -38,6 +39,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
     // Global rate-limit cooldown signal (shared across all service instances)
     private readonly IGlobalRateLimitSignal? _rateLimitSignal;
 
+    // Telemetry service for operation scopes and metrics
+    private readonly ITelemetryService? _telemetry;
+
     // ── Legacy constructor: used by direct DI registration via IOptions ──
 
     public AzureOpenAiReviewService(
@@ -66,13 +70,15 @@ public class AzureOpenAiReviewService : ICodeReviewService
         ReviewProfile? reviewProfile = null,
         PromptAssemblyPipeline? pipeline = null,
         ModelAdapter? modelAdapter = null,
-        IGlobalRateLimitSignal? rateLimitSignal = null)
+        IGlobalRateLimitSignal? rateLimitSignal = null,
+        ITelemetryService? telemetry = null)
     {
         _modelName = modelName;
         _logger = logger;
         _pipeline = pipeline;
         _modelAdapter = modelAdapter;
         _rateLimitSignal = rateLimitSignal;
+        _telemetry = telemetry;
 
         // Apply model adapter overrides (temperature, tokens, truncation)
         var baseProfile = reviewProfile ?? new ReviewProfile();
@@ -128,9 +134,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         // All newer Azure OpenAI models require max_completion_tokens
         // instead of max_tokens on the wire.
-        #pragma warning disable AOAI001
+#pragma warning disable AOAI001
         options.SetNewMaxCompletionTokensPropertyEnabled(true);
-        #pragma warning restore AOAI001
+#pragma warning restore AOAI001
 
         if (!isReasoning)
         {
@@ -267,6 +273,11 @@ public class AzureOpenAiReviewService : ICodeReviewService
             result.TotalTokens = totalTokens;
             result.AiDurationMs = aiDurationMs;
 
+            // Record telemetry metrics
+            if (promptTokens.HasValue) _telemetry?.RecordMetric("ai.prompt_tokens", promptTokens.Value);
+            if (completionTokens.HasValue) _telemetry?.RecordMetric("ai.completion_tokens", completionTokens.Value);
+            _telemetry?.RecordMetric("ai.duration_ms", aiDurationMs);
+
             return result;
         }
         catch (JsonException ex)
@@ -290,6 +301,12 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// </summary>
     public async Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
+        using var opScope = _telemetry?.StartOperation("AI.ReviewFile");
+        opScope?.WithTag("ai.model", _modelName)
+               .WithTag("file.path", file.FilePath)
+               .WithTag("file.change_type", file.ChangeType)
+               .WithTag("pr.id", pullRequest.PullRequestId);
+
         var userPrompt = BuildSingleFileUserPrompt(pullRequest, file, totalFilesInPr, workItems);
 
         _logger.LogInformation("Reviewing file {FilePath} ({ChangeType}) for PR #{PrId}",
@@ -382,6 +399,14 @@ public class AzureOpenAiReviewService : ICodeReviewService
             result.CompletionTokens = completionTokens;
             result.TotalTokens = totalTokens;
             result.AiDurationMs = aiDurationMs;
+
+            // Record telemetry metrics
+            if (promptTokens.HasValue) _telemetry?.RecordMetric("ai.prompt_tokens", promptTokens.Value);
+            if (completionTokens.HasValue) _telemetry?.RecordMetric("ai.completion_tokens", completionTokens.Value);
+            _telemetry?.RecordMetric("ai.duration_ms", aiDurationMs);
+            opScope?.WithTag("ai.prompt_tokens", promptTokens ?? 0)
+                   .WithTag("ai.completion_tokens", completionTokens ?? 0)
+                   .Succeed();
 
             return result;
         }

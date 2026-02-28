@@ -3,10 +3,12 @@ using AiCodeReview.Models;
 namespace AiCodeReview.Services;
 
 /// <summary>
-/// Abstracts Azure DevOps REST API interactions. All methods accept project
-/// and repository per-request; only Organization and PAT come from config.
+/// Provider-agnostic interface for DevOps platform interactions (pull requests,
+/// comments, work items, etc.).  All methods accept project and repository
+/// per-request so the same service instance can target multiple repos.
+/// Implementations exist for Azure DevOps today; GitHub can be added later.
 /// </summary>
-public interface IAzureDevOpsService : IDisposable
+public interface IDevOpsService : IDisposable
 {
     /// <summary>Fetch PR metadata including reviewers.</summary>
     Task<PullRequestInfo> GetPullRequestAsync(string project, string repository, int pullRequestId);

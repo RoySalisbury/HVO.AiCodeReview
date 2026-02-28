@@ -24,7 +24,7 @@ builder.Services.Configure<AssistantsSettings>(
 // ---------------------------------------------------------------------------
 // HTTP client for Azure DevOps API calls (with Polly resilience)
 // ---------------------------------------------------------------------------
-builder.Services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>(client =>
+builder.Services.AddHttpClient<IDevOpsService, AzureDevOpsService>(client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
 })

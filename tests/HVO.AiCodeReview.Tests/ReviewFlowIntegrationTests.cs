@@ -59,7 +59,7 @@ public class ReviewFlowIntegrationTests
         services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
         services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
-        services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
+        services.AddHttpClient<IDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
 
         var fakeReview = new FakeCodeReviewService();
@@ -284,7 +284,7 @@ public class ReviewFlowIntegrationTests
         services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
         services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
-        services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
+        services.AddHttpClient<IDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         var fakeReview = new FakeCodeReviewService();
         services.AddSingleton<ICodeReviewService>(fakeReview);

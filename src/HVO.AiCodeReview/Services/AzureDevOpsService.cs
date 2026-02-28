@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
 
-public class AzureDevOpsService : IAzureDevOpsService, IDisposable
+public class AzureDevOpsService : IDevOpsService
 {
     private readonly HttpClient _httpClient;
     private readonly AzureDevOpsSettings _settings;

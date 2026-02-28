@@ -37,6 +37,7 @@ builder.Services.AddSingleton<ModelAdapterResolver>(sp =>
     new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
 builder.Services.AddCodeReviewService(builder.Configuration);
 builder.Services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+builder.Services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
 
 // Vector Store review service (Assistants API — called directly by orchestrator)
 builder.Services.AddScoped<VectorStoreReviewService>();

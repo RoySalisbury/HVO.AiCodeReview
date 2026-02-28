@@ -44,6 +44,7 @@ public static class CodeReviewServiceFactory
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
             var pipeline = sp.GetService<PromptAssemblyPipeline>();
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
+            var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
             var defaultService = sp.GetRequiredService<ICodeReviewService>();
             var logger = loggerFactory.CreateLogger<DepthModelResolver>();
 
@@ -79,7 +80,7 @@ public static class CodeReviewServiceFactory
 
                     var service = CreateProvider(
                         providerKey, providerConfig, loggerFactory,
-                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver);
+                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
 
                     depthServices[depth] = service;
 
@@ -100,6 +101,7 @@ public static class CodeReviewServiceFactory
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
             var pipeline = sp.GetService<PromptAssemblyPipeline>();
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
+            var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
 
             // ── Fallback: if no AiProvider section exists, use legacy AzureOpenAI ──
             if (settings.Providers.Count == 0)
@@ -120,7 +122,8 @@ public static class CodeReviewServiceFactory
                     maxInputLinesPerFile: ValidateMaxInputLines(settings.MaxInputLinesPerFile, "global (legacy fallback)"),
                     reviewProfile: reviewProfile,
                     pipeline: pipeline,
-                    modelAdapter: adapterResolver?.Resolve(legacySettings.DeploymentName));
+                    modelAdapter: adapterResolver?.Resolve(legacySettings.DeploymentName),
+                    rateLimitSignal: rateLimitSignal);
             }
 
             // Build all enabled providers
@@ -128,7 +131,7 @@ public static class CodeReviewServiceFactory
                 .Where(kv => kv.Value.Enabled)
                 .Select(kv => (
                     Name: kv.Value.DisplayName.Length > 0 ? kv.Value.DisplayName : kv.Key,
-                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver)))
+                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal)))
                 .ToList();
 
             if (providers.Count == 0)
@@ -185,7 +188,8 @@ public static class CodeReviewServiceFactory
     private static ICodeReviewService CreateProvider(
         string key, ProviderConfig config, ILoggerFactory loggerFactory, int globalMaxInputLines,
         ReviewProfile reviewProfile, PromptAssemblyPipeline? pipeline = null,
-        ModelAdapterResolver? adapterResolver = null)
+        ModelAdapterResolver? adapterResolver = null,
+        IGlobalRateLimitSignal? rateLimitSignal = null)
     {
         var type = config.Type.ToLowerInvariant();
         var maxLines = ValidateMaxInputLines(
@@ -203,7 +207,8 @@ public static class CodeReviewServiceFactory
                 maxInputLinesPerFile: maxLines,
                 reviewProfile: reviewProfile,
                 pipeline: pipeline,
-                modelAdapter: adapter),
+                modelAdapter: adapter,
+                rateLimitSignal: rateLimitSignal),
 
             // ── Add new provider types here ──────────────────────────────
             // "github-copilot" => new GitHubCopilotReviewService(config, loggerFactory.CreateLogger<GitHubCopilotReviewService>()),

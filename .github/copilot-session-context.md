@@ -232,7 +232,129 @@ curl -X POST http://localhost:5094/api/review \
 
 ---
 
-## 10. Current State
+## 10. Issue & Pull Request Workflow
+
+All development work follows this structured workflow. **Every step is mandatory** — do not skip steps or defer them.
+
+### Starting Work on an Issue
+
+1. **Select the issue** — Choose from the prioritized issue list (see triage notes or ask the user).
+2. **Create a feature branch** from `main`:
+   ```bash
+   git checkout main && git pull origin main
+   git checkout -b feature/{issue-number}-{short-description}
+   ```
+   Branch naming: `feature/34-rate-limit-handling`, `feature/39-telemetry-integration`, etc.
+3. **Post a comment on the issue** indicating work has started:
+   ```bash
+   gh issue comment {number} --body "Starting work on this issue on branch \`feature/{number}-{description}\`."
+   ```
+4. **Add the `in-progress` label** (if the label exists):
+   ```bash
+   gh issue edit {number} --add-label "in-progress"
+   ```
+
+### During Development
+
+- Make **incremental commits** with descriptive messages referencing the issue:
+  ```
+  feat: <description> (#34)
+  fix: <description> (#34)
+  docs: <description> (#34)
+  ```
+- **Run all tests** before pushing — every push must be green:
+  ```bash
+  dotnet build --no-restore
+  dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual' --no-build
+  ```
+- Write **new unit tests** for all new logic (helpers, services, models).
+- **Update `README.md`** if the change adds or modifies:
+  - Features (update Features table)
+  - Configuration settings or sections
+  - Files in the project structure tree
+  - Test files or test counts
+  - Table of Contents entries for new sections
+- **Update this session context file** if the change introduces new architectural patterns, services, or conventions.
+
+### Creating a Pull Request
+
+1. **Verify build & tests** one final time:
+   ```bash
+   dotnet build && dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual'
+   ```
+2. **Ensure README is updated** — this is required for every PR, not optional.
+3. **Push the branch**:
+   ```bash
+   git push -u origin feature/{number}-{description}
+   ```
+4. **Create the PR** with a comprehensive body:
+   ```bash
+   gh pr create --title "feat: <description> (#{issue-number})" --base main --body "..."
+   ```
+   PR body must include:
+   - **Summary** — What the PR does and which issue it resolves (`Resolves #N`)
+   - **Problem** — What was wrong or missing
+   - **Solution** — How it was fixed, with key implementation details
+   - **Files changed** — Table of modified/added files with descriptions
+   - **Tests** — New test count, total test count, pass/fail/skip summary
+
+### Before Merging a PR
+
+These steps are **blocking** — do not merge until all are complete:
+
+1. **Check for PR review comments** — Read all comments on the PR:
+   ```bash
+   gh pr view {pr-number} --comments
+   ```
+   - Address every code review comment (fix code, respond, or discuss).
+   - Push additional commits to the PR branch for any required changes.
+   - Do not dismiss or ignore review feedback.
+
+2. **Verify all conversations are resolved** — If the PR has unresolved review threads, resolve them before merging.
+
+3. **Re-run tests after any review-driven changes**:
+   ```bash
+   dotnet build && dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual'
+   ```
+
+4. **Squash-merge into `main`**:
+   ```bash
+   gh pr merge {pr-number} --squash --delete-branch
+   ```
+
+### After Merging
+
+1. **Close the linked issue** (if not auto-closed by `Resolves #N`):
+   ```bash
+   gh issue close {number} --comment "Completed in PR #{pr-number}."
+   ```
+2. **Switch back to `main`** and pull:
+   ```bash
+   git checkout main && git pull origin main
+   ```
+3. **Remove the `in-progress` label** if it was added:
+   ```bash
+   gh issue edit {number} --remove-label "in-progress"
+   ```
+
+### Quick Reference: PR Checklist
+
+Before requesting merge, verify all of the following:
+
+- [ ] Feature branch created from `main` with correct naming
+- [ ] Issue commented with "work started" note
+- [ ] All new logic has unit tests
+- [ ] `dotnet build` — 0 errors, 0 warnings
+- [ ] `dotnet test` — all pass (excluding LiveAI/Benchmark/Manual)
+- [ ] `README.md` updated (features, structure, test counts, TOC)
+- [ ] PR body includes summary, problem, solution, files, tests
+- [ ] PR review comments addressed (if any)
+- [ ] All review conversations resolved
+- [ ] Tests re-run after any review-driven changes
+
+---
+
+## 11. Current State
 
 - **HEAD**: commit `7abb165` on `main`
 - **Build**: 0 warnings, 0 errors

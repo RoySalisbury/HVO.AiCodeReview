@@ -57,6 +57,7 @@ public static class TestServiceBuilder
         services.AddSingleton<ModelAdapterResolver>(sp =>
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -117,6 +118,7 @@ public static class TestServiceBuilder
         services.AddSingleton<ModelAdapterResolver>(sp =>
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

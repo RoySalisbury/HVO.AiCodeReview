@@ -46,6 +46,9 @@ public class ReviewMetadata
 /// </summary>
 public class ReviewHistoryEntry
 {
+    /// <summary>Unique session ID for this review execution.</summary>
+    public Guid? SessionId { get; set; }
+
     public int ReviewNumber { get; set; }
     public DateTime ReviewedAtUtc { get; set; }
     public string Action { get; set; } = string.Empty;       // "Full Review", "Re-Review", "Vote Only"

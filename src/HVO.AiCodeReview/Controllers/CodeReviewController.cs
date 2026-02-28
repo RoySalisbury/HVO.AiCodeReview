@@ -35,11 +35,23 @@ public class ReviewController : ControllerBase
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> PostReview([FromBody] ReviewRequest request, CancellationToken cancellationToken)
     {
+        // Create a session to track this review end-to-end
+        var session = new ReviewSession
+        {
+            Project = request.ProjectName,
+            Repository = request.RepositoryName,
+            PullRequestId = request.PullRequestId,
+            ForceReview = request.ForceReview,
+            SimulationOnly = request.SimulationOnly,
+            ReviewDepth = request.ReviewDepth,
+            ReviewStrategy = request.ReviewStrategy,
+        };
+
         _logger.LogInformation(
-            "Review requested: {Project}/{Repo} PR #{PrId}{Simulation} [Depth={Depth}, Strategy={Strategy}]",
+            "Review requested: {Project}/{Repo} PR #{PrId}{Simulation} [Depth={Depth}, Strategy={Strategy}] SessionId={SessionId}",
             request.ProjectName, request.RepositoryName, request.PullRequestId,
             request.SimulationOnly ? " [SIMULATION]" : "",
-            request.ReviewDepth, request.ReviewStrategy);
+            request.ReviewDepth, request.ReviewStrategy, session.SessionId);
 
         // V1: Use a logging-only progress handler. In V2, this would be an SSE stream writer.
         var progress = new Progress<ReviewStatusUpdate>(update =>
@@ -57,7 +69,8 @@ public class ReviewController : ControllerBase
             request.SimulationOnly,
             request.ReviewDepth,
             request.ReviewStrategy,
-            cancellationToken);
+            cancellationToken,
+            session);
 
         if (response.Status == "Error")
         {

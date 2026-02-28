@@ -159,6 +159,56 @@ public class FakeCodeReviewService : ICodeReviewService
     }
 
     /// <summary>
+    /// Override to return custom deep analysis results. When null the default fake analysis is used.
+    /// </summary>
+    public Func<PullRequestInfo, PrSummaryResult?, CodeReviewResult, List<FileChange>, DeepAnalysisResult?>? DeepAnalysisFactory { get; set; }
+
+    /// <summary>
+    /// Fake deep analysis generation for Pass 3 of deep review.
+    /// Returns a deterministic result or delegates to DeepAnalysisFactory.
+    /// </summary>
+    public Task<DeepAnalysisResult?> GenerateDeepAnalysisAsync(
+        PullRequestInfo pullRequest,
+        PrSummaryResult? prSummary,
+        CodeReviewResult reviewResult,
+        List<FileChange> fileChanges)
+    {
+        if (DeepAnalysisFactory is not null)
+            return Task.FromResult(DeepAnalysisFactory(pullRequest, prSummary, reviewResult, fileChanges));
+
+        var result = new DeepAnalysisResult
+        {
+            ExecutiveSummary = $"Fake deep analysis for PR #{pullRequest.PullRequestId}. All changes look reasonable.",
+            CrossFileIssues = new List<CrossFileIssue>
+            {
+                new CrossFileIssue
+                {
+                    Files = fileChanges.Take(2).Select(f => f.FilePath).ToList(),
+                    Severity = "Info",
+                    Description = "Fake cross-file observation for testing.",
+                }
+            },
+            VerdictConsistency = new VerdictConsistencyAssessment
+            {
+                IsConsistent = true,
+                Explanation = "All per-file verdicts are consistent with the overall verdict.",
+            },
+            OverallRiskLevel = "Low",
+            Recommendations = new List<string>
+            {
+                "Fake recommendation: consider adding integration tests.",
+            },
+            ModelName = "fake-model",
+            PromptTokens = 200,
+            CompletionTokens = 100,
+            TotalTokens = 300,
+            AiDurationMs = 20,
+        };
+
+        return Task.FromResult<DeepAnalysisResult?>(result);
+    }
+
+    /// <summary>
     /// Returns exactly 2 inline comments per file — these are deterministic
     /// so the dedup logic can match them on subsequent calls.
     /// </summary>

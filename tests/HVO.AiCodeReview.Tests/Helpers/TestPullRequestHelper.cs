@@ -302,6 +302,52 @@ public class TestPullRequestHelper : IAsyncDisposable
     }
 
     /// <summary>
+    /// Push multiple files to the test branch in a single commit.
+    /// Useful for testing cross-file analysis (e.g. Deep mode Pass 3).
+    /// </summary>
+    /// <param name="files">Dictionary of filename → content pairs.</param>
+    public async Task PushMultipleFilesAsync(Dictionary<string, string> files)
+    {
+        var latestCommit = await GetLatestCommitAsync(TestBranchName);
+
+        var changes = files.Select(kvp => new
+        {
+            changeType = "add",
+            item = new { path = $"/test-files/{kvp.Key}" },
+            newContent = new { content = kvp.Value, contentType = "rawtext" },
+        }).ToArray();
+
+        var pushBody = new
+        {
+            refUpdates = new[]
+            {
+                new { name = TestBranchName, oldObjectId = latestCommit }
+            },
+            commits = new[]
+            {
+                new
+                {
+                    comment = $"[TEST] Add {files.Count} files for integration testing",
+                    changes
+                }
+            }
+        };
+
+        var json = JsonSerializer.Serialize(pushBody, SerializerOptions);
+        var resp = await _http.PostAsync(
+            $"{BaseUrl}/pushes?{ApiVersion}",
+            new StringContent(json, Encoding.UTF8, "application/json"));
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            var error = await resp.Content.ReadAsStringAsync();
+            throw new InvalidOperationException($"Push failed: {(int)resp.StatusCode} — {error}");
+        }
+
+        Console.WriteLine($"  [TestHelper] Pushed {files.Count} files in one commit to {RepositoryName}");
+    }
+
+    /// <summary>
     /// Set the PR draft status (true/false).
     /// </summary>
     public async Task SetDraftStatusAsync(bool isDraft)

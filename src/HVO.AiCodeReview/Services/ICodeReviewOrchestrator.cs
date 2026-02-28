@@ -23,5 +23,6 @@ public interface ICodeReviewOrchestrator
         IProgress<ReviewStatusUpdate>? progress = null,
         bool forceReview = false,
         bool simulationOnly = false,
+        ReviewDepth reviewDepth = ReviewDepth.Standard,
         CancellationToken cancellationToken = default);
 }

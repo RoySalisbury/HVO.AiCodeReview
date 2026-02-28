@@ -32,6 +32,9 @@ public class ReviewResponse
     /// <summary>The vote that was cast (10, 5, -5, -10).</summary>
     public int? Vote { get; set; }
 
+    /// <summary>Which review depth mode was used (Quick, Standard, Deep).</summary>
+    public string? ReviewDepth { get; set; }
+
     // ── Simulation-mode detail fields (populated when SimulationOnly=true) ──
 
     /// <summary>Individual inline comments the AI produced (only in simulation mode).</summary>

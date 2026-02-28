@@ -1422,4 +1422,218 @@ public class AzureOpenAiReviewService : ICodeReviewService
         sb.AppendLine("---");
         sb.AppendLine();
     }
+
+    // ── Pass 3: Deep holistic re-evaluation ─────────────────────────────────
+
+    public async Task<DeepAnalysisResult?> GenerateDeepAnalysisAsync(
+        PullRequestInfo pullRequest,
+        PrSummaryResult? prSummary,
+        CodeReviewResult reviewResult,
+        List<FileChange> fileChanges)
+    {
+        var userPrompt = BuildDeepAnalysisUserPrompt(pullRequest, prSummary, reviewResult, fileChanges);
+
+        _logger.LogInformation("[Pass 3] Generating deep analysis for PR #{PrId} ({FileCount} files, prompt ~{PromptLen} chars)",
+            pullRequest.PullRequestId, fileChanges.Count, userPrompt.Length);
+
+        var messages = new List<ChatMessage>
+        {
+            new SystemChatMessage(GetDeepAnalysisSystemPrompt()),
+            new UserChatMessage(userPrompt),
+        };
+
+        var options = new ChatCompletionOptions
+        {
+            Temperature = _reviewProfile.Temperature,
+            MaxOutputTokenCount = _reviewProfile.MaxOutputTokensDeepAnalysis,
+            ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
+        };
+
+        ClientResult<ChatCompletion> response;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            response = await _chatClient.CompleteChatAsync(messages, options);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Pass 3] Deep analysis failed for PR #{PrId}", pullRequest.PullRequestId);
+            return null;
+        }
+        sw.Stop();
+
+        var content = response.Value.Content[0].Text;
+        var usage = response.Value.Usage;
+
+        _logger.LogInformation("[Pass 3] Deep analysis received in {Duration}ms (tokens: {Prompt}/{Completion}/{Total})",
+            sw.ElapsedMilliseconds,
+            usage?.InputTokenCount, usage?.OutputTokenCount, usage?.TotalTokenCount);
+
+        try
+        {
+            var result = JsonSerializer.Deserialize<DeepAnalysisResult>(content, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (result == null)
+            {
+                _logger.LogWarning("[Pass 3] AI returned null/empty deep analysis for PR #{PrId}", pullRequest.PullRequestId);
+                return null;
+            }
+
+            // Attach metrics
+            result.ModelName = _modelName;
+            result.PromptTokens = usage?.InputTokenCount;
+            result.CompletionTokens = usage?.OutputTokenCount;
+            result.TotalTokens = usage?.TotalTokenCount;
+            result.AiDurationMs = sw.ElapsedMilliseconds;
+
+            return result;
+        }
+        catch (JsonException jex)
+        {
+            _logger.LogWarning(jex, "[Pass 3] Failed to parse deep analysis JSON for PR #{PrId}", pullRequest.PullRequestId);
+            return null;
+        }
+    }
+
+    private static string GetDeepAnalysisSystemPrompt()
+    {
+        return """
+        You are an expert code reviewer performing the THIRD PASS (deep holistic analysis) of a three-pass review process.
+
+        Pass 1 already generated a PR-level summary with cross-file relationships and risk areas.
+        Pass 2 already reviewed each file individually and produced per-file verdicts and inline comments.
+
+        Your job is to RE-EVALUATE the entire review holistically:
+
+        1. **Executive Summary**: A concise paragraph summarizing the overall PR quality and readiness.
+        2. **Cross-File Issues**: Issues that are ONLY visible when considering multiple files together.
+           These are issues that per-file reviews could NOT have caught individually.
+           Examples: interface contract mismatches, missing error propagation across layers,
+           inconsistent naming conventions across files, missing integration between new components.
+        3. **Verdict Consistency**: Are the per-file verdicts consistent with each other and with the
+           overall verdict? If not, recommend a verdict override with justification.
+        4. **Overall Risk Level**: "Low", "Medium", "High", or "Critical" based on all evidence.
+        5. **Recommendations**: Key actionable recommendations that span multiple files.
+
+        IMPORTANT: Only flag cross-file issues that per-file reviews genuinely missed.
+        Do NOT repeat issues already caught in per-file reviews.
+
+        Respond with valid JSON matching this schema:
+        {
+          "executiveSummary": "<concise overall assessment paragraph>",
+          "crossFileIssues": [
+            {
+              "files": ["<file1>", "<file2>"],
+              "severity": "Error|Warning|Info",
+              "description": "<what the cross-file issue is>"
+            }
+          ],
+          "verdictConsistency": {
+            "isConsistent": true|false,
+            "explanation": "<why verdicts are or aren't consistent>",
+            "recommendedVerdict": "<override verdict or null>",
+            "recommendedVote": <override vote int or null>
+          },
+          "overallRiskLevel": "Low|Medium|High|Critical",
+          "recommendations": [
+            "<actionable recommendation spanning multiple files>"
+          ]
+        }
+        """;
+    }
+
+    private static string BuildDeepAnalysisUserPrompt(
+        PullRequestInfo pullRequest,
+        PrSummaryResult? prSummary,
+        CodeReviewResult reviewResult,
+        List<FileChange> fileChanges)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine("# Deep Holistic Analysis — Pass 3");
+        sb.AppendLine();
+        sb.AppendLine($"**PR**: #{pullRequest.PullRequestId} — {pullRequest.Title}");
+        sb.AppendLine($"**Author**: {pullRequest.CreatedBy}");
+        sb.AppendLine($"**Files Changed**: {fileChanges.Count}");
+        sb.AppendLine();
+
+        // Pass 1 context
+        if (prSummary != null)
+        {
+            sb.AppendLine("## Pass 1 — PR Summary");
+            sb.AppendLine($"**Intent**: {prSummary.Intent}");
+            sb.AppendLine($"**Architectural Impact**: {prSummary.ArchitecturalImpact}");
+
+            if (prSummary.CrossFileRelationships.Count > 0)
+            {
+                sb.AppendLine("**Cross-File Relationships**:");
+                foreach (var rel in prSummary.CrossFileRelationships)
+                    sb.AppendLine($"- {rel}");
+            }
+
+            if (prSummary.RiskAreas.Count > 0)
+            {
+                sb.AppendLine("**Risk Areas**:");
+                foreach (var risk in prSummary.RiskAreas)
+                    sb.AppendLine($"- {risk.Area}: {risk.Reason}");
+            }
+            sb.AppendLine();
+        }
+
+        // Pass 2 context — per-file verdicts
+        sb.AppendLine("## Pass 2 — Per-File Review Results");
+        sb.AppendLine();
+        sb.AppendLine($"**Merged Verdict**: {reviewResult.Summary.Verdict}");
+        sb.AppendLine($"**Verdict Justification**: {reviewResult.Summary.VerdictJustification}");
+        sb.AppendLine($"**Recommended Vote**: {reviewResult.RecommendedVote}");
+        sb.AppendLine($"**Total Inline Comments**: {reviewResult.InlineComments.Count}");
+        sb.AppendLine();
+
+        if (reviewResult.FileReviews.Count > 0)
+        {
+            sb.AppendLine("### Per-File Verdicts");
+            foreach (var fr in reviewResult.FileReviews)
+            {
+                sb.AppendLine($"- `{fr.FilePath}`: **{fr.Verdict}** — {fr.ReviewText}");
+            }
+            sb.AppendLine();
+        }
+
+        // Inline comment summary (severity distribution)
+        if (reviewResult.InlineComments.Count > 0)
+        {
+            sb.AppendLine("### Inline Comment Summary");
+            var byLeadIn = reviewResult.InlineComments
+                .GroupBy(c => c.LeadIn)
+                .OrderByDescending(g => g.Count());
+            foreach (var group in byLeadIn)
+            {
+                sb.AppendLine($"- **{group.Key}**: {group.Count()} comment(s)");
+            }
+            sb.AppendLine();
+
+            // Include the actual comments for context (truncate if many)
+            var commentsToShow = reviewResult.InlineComments.Take(30).ToList();
+            sb.AppendLine("### Inline Comments (detail)");
+            foreach (var c in commentsToShow)
+            {
+                sb.AppendLine($"- `{c.FilePath}` L{c.StartLine}-{c.EndLine} [{c.LeadIn}]: {c.Comment}");
+            }
+            if (reviewResult.InlineComments.Count > 30)
+                sb.AppendLine($"... and {reviewResult.InlineComments.Count - 30} more comments");
+            sb.AppendLine();
+        }
+
+        // File list for cross-reference
+        sb.AppendLine("## Files in This PR");
+        foreach (var f in fileChanges)
+        {
+            sb.AppendLine($"- `{f.FilePath}` ({f.ChangeType})");
+        }
+
+        return sb.ToString();
+    }
 }

@@ -463,4 +463,214 @@ public class DataService
     }
 }
 ";
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Multi-File Known-Bad Code — for cross-file analysis testing
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Returns a dictionary of filename → content for a multi-file scenario
+    /// with cross-file security issues. Designed for Deep mode Pass 3 testing.
+    /// Issues span across files:
+    /// - Hardcoded secrets in both UserService and AuthMiddleware
+    /// - SQL injection in UserService consumed by OrderController
+    /// - MD5 hashing conflicts with auth middleware security goals
+    /// - Exception swallowing in middleware hides controller errors
+    /// - Null dereference chains: OrderController → UserService
+    /// </summary>
+    public static Dictionary<string, string> MultiFileSecurityIssues => new()
+    {
+        ["UserService.cs"] = @"
+using System;
+using System.Data.SqlClient;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.Extensions.Logging;
+
+namespace TestApp.Services;
+
+public class UserService
+{
+    private readonly string _connectionString;
+    private readonly ILogger<UserService> _logger;
+    private const string API_KEY = ""sk-proj-abc123secret456key789"";
+
+    public UserService(string connectionString, ILogger<UserService> logger)
+    {
+        _connectionString = connectionString;
+        _logger = logger;
+    }
+
+    public User GetUser(int id)
+    {
+        _logger.LogInformation($""Getting user {id}"");
+        using var conn = new SqlConnection(_connectionString);
+        conn.Open();
+        var cmd = new SqlCommand($""SELECT * FROM Users WHERE Id = {id}"", conn);
+        var reader = cmd.ExecuteReader();
+        if (reader.Read())
+        {
+            return new User
+            {
+                Id = (int)reader[""Id""],
+                Name = (string)reader[""Name""],
+                Email = (string)reader[""Email""],
+                PasswordHash = HashPassword((string)reader[""Password""])
+            };
+        }
+        return null;
+    }
+
+    // SQL injection via string concatenation
+    public User GetUserByEmail(string email)
+    {
+        using var conn = new SqlConnection(_connectionString);
+        conn.Open();
+        var cmd = new SqlCommand(""SELECT * FROM Users WHERE Email = '"" + email + ""'"", conn);
+        var reader = cmd.ExecuteReader();
+        if (reader.Read())
+        {
+            return new User
+            {
+                Id = (int)reader[""Id""],
+                Name = (string)reader[""Name""],
+                Email = (string)reader[""Email""]
+            };
+        }
+        return null;
+    }
+
+    public void DeleteUser(int id)
+    {
+        // Logging the API key!
+        _logger.LogInformation($""Deleting user {id} with API key {API_KEY}"");
+        using var conn = new SqlConnection(_connectionString);
+        conn.Open();
+        var cmd = new SqlCommand($""DELETE FROM Users WHERE Id = {id}"", conn);
+        cmd.ExecuteNonQuery();
+    }
+
+    // Insecure MD5 hashing
+    private string HashPassword(string password)
+    {
+        using var md5 = MD5.Create();
+        var bytes = md5.ComputeHash(Encoding.UTF8.GetBytes(password));
+        return Convert.ToBase64String(bytes);
+    }
+}
+
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string Email { get; set; }
+    public string PasswordHash { get; set; }
+}
+",
+        ["OrderController.cs"] = @"
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+
+namespace TestApp.Controllers;
+
+[ApiController]
+[Route(""api/[controller]"")]
+public class OrderController : ControllerBase
+{
+    private readonly UserService _userService;
+    private readonly ILogger<OrderController> _logger;
+
+    public OrderController(UserService userService, ILogger<OrderController> logger)
+    {
+        _userService = userService;
+        _logger = logger;
+    }
+
+    [HttpGet(""{id}"")]
+    public IActionResult GetOrder(int id)
+    {
+        var user = _userService.GetUser(id);
+        // Potential null dereference — GetUser can return null
+        _logger.LogDebug($""Retrieved order for user: {user.Name}, email: {user.Email}"");
+        return Ok(new { Id = id, Status = ""Pending"", User = user });
+    }
+
+    [HttpPost]
+    public IActionResult CreateOrder([FromBody] OrderRequest request)
+    {
+        if (request == null) return BadRequest();
+        if (request.Price < 0) throw new Exception(""Negative price!"");
+        // Calls SQL-injection-vulnerable method from UserService
+        var user = _userService.GetUserByEmail(request.CustomerEmail);
+        // Potential null dereference — GetUserByEmail can return null
+        _logger.LogInformation($""Order created for {user.Name}"");
+        return Created($""/api/order/{request.OrderId}"", new { request, user });
+    }
+
+    [HttpDelete(""{id}"")]
+    public IActionResult DeleteOrder(int id)
+    {
+        _userService.DeleteUser(id);
+        return NoContent();
+    }
+}
+
+public class OrderRequest
+{
+    public int OrderId { get; set; }
+    public string ProductName { get; set; }
+    public decimal Price { get; set; }
+    public string CustomerEmail { get; set; }
+}
+",
+        ["AuthMiddleware.cs"] = @"
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+
+namespace TestApp.Middleware;
+
+public class AuthMiddleware
+{
+    private readonly RequestDelegate _next;
+    // Hardcoded JWT token
+    private const string VALID_TOKEN = ""hardcoded-jwt-token-12345"";
+
+    public AuthMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var token = context.Request.Headers[""Authorization""].ToString();
+
+        if (string.IsNullOrEmpty(token))
+        {
+            context.Response.StatusCode = 401;
+            await context.Response.WriteAsync(""Unauthorized"");
+            return;
+        }
+
+        // Simplistic token comparison — no signature verification or expiration
+        if (token != $""Bearer {VALID_TOKEN}"")
+        {
+            context.Response.StatusCode = 403;
+            return;
+        }
+
+        try
+        {
+            await _next(context);
+        }
+        catch (Exception ex)
+        {
+            // Swallows ALL exceptions and leaks stack trace to client
+            context.Response.StatusCode = 500;
+            await context.Response.WriteAsync(ex.ToString());
+        }
+    }
+}
+"
+    };
 }

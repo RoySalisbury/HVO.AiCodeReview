@@ -21,6 +21,10 @@ builder.Services.Configure<AzureOpenAISettings>(
 builder.Services.Configure<AssistantsSettings>(
     builder.Configuration.GetSection(AssistantsSettings.SectionName));
 
+// PR size guardrails and file prioritization
+builder.Services.Configure<SizeGuardrailsSettings>(
+    builder.Configuration.GetSection(SizeGuardrailsSettings.SectionName));
+
 // ---------------------------------------------------------------------------
 // HTTP client for Azure DevOps API calls (with Polly resilience)
 // ---------------------------------------------------------------------------

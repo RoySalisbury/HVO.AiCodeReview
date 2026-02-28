@@ -46,6 +46,7 @@ public static class TestServiceBuilder
         services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
         services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
+        services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
         services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         services.AddSingleton<ICodeReviewService>(fake);
@@ -119,6 +120,7 @@ public static class TestServiceBuilder
         services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
         services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
         services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
+        services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
         services.AddHttpClient<IAzureDevOpsService, AzureDevOpsService>();
         services.AddHttpClient();
         services.AddCodeReviewService(config);

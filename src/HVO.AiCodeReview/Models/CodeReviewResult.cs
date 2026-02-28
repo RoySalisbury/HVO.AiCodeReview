@@ -48,9 +48,10 @@ public class CodeReviewResult
     public long? AiDurationMs { get; set; }
 
     /// <summary>
-    /// Per-pass model routing information. Maps pass names (e.g., "Pass1_PrSummary",
-    /// "Pass2_PerFile", "Pass3_DeepReview", "ThreadVerification") to the model/deployment
-    /// used for that pass. Populated by the orchestrator when per-pass routing is active.
+    /// Per-pass model usage information. Maps pass names (e.g., "PrSummary",
+    /// "PerFileReview", "DeepReview", "ThreadVerification") to the model/deployment
+    /// used for that pass. Populated by the orchestrator whenever it records per-pass
+    /// model usage, including scenarios where all passes share the same model via fallback.
     /// </summary>
     [JsonIgnore]
     public Dictionary<string, string>? PassModels { get; set; }

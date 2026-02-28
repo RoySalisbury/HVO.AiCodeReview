@@ -72,9 +72,9 @@ public class ReviewHistoryEntry
     public string? ReviewDepth { get; set; }
 
     /// <summary>
-    /// Per-pass model routing information. Maps pass names to the model/deployment
-    /// used for that pass (e.g., "Pass1_PrSummary" → "gpt-4o-mini").
-    /// Only populated when per-pass routing is active.
+    /// Per-pass model usage information. Maps pass names to the model/deployment
+    /// used for that pass (e.g., "PrSummary" → "gpt-4o-mini").
+    /// Populated for both explicit per-pass routing and fallback-based routing.
     /// </summary>
     public Dictionary<string, string>? PassModels { get; set; }
 }

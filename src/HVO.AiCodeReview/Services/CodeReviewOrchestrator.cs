@@ -8,7 +8,6 @@ namespace AiCodeReview.Services;
 public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 {
     private readonly IAzureDevOpsService _devOpsService;
-    private readonly ICodeReviewService _reviewService;
     private readonly ICodeReviewServiceResolver _passResolver;
     private readonly VectorStoreReviewService _vectorService;
     private readonly ModelAdapterResolver _modelAdapterResolver;
@@ -21,7 +20,6 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
     public CodeReviewOrchestrator(
         IAzureDevOpsService devOpsService,
-        ICodeReviewService reviewService,
         ICodeReviewServiceResolver passResolver,
         VectorStoreReviewService vectorService,
         ModelAdapterResolver modelAdapterResolver,
@@ -33,7 +31,6 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         ILogger<CodeReviewOrchestrator> logger)
     {
         _devOpsService = devOpsService;
-        _reviewService = reviewService;
         _passResolver = passResolver;
         _vectorService = vectorService;
         _modelAdapterResolver = modelAdapterResolver;
@@ -474,7 +471,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Track per-pass model names for metrics
         var passModels = new Dictionary<string, string>
         {
-            ["Pass1_PrSummary"] = pass1Service.ModelName,
+            [ReviewPass.PrSummary.ToString()] = pass1Service.ModelName,
         };
 
         // ── Quick mode: Pass 1 only — skip per-file reviews ────────────
@@ -503,13 +500,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         {
             // Resolve Pass 2 and (optionally) Pass 3 services
             var pass2Service = GetServiceForPass(ReviewPass.PerFileReview, reviewDepth);
-            passModels["Pass2_PerFile"] = pass2Service.ModelName;
+            passModels[ReviewPass.PerFileReview.ToString()] = pass2Service.ModelName;
 
             ICodeReviewService? pass3Service = null;
             if (reviewDepth == ReviewDepth.Deep)
             {
                 pass3Service = GetServiceForPass(ReviewPass.DeepReview, reviewDepth);
-                passModels["Pass3_DeepReview"] = pass3Service.ModelName;
+                passModels[ReviewPass.DeepReview.ToString()] = pass3Service.ModelName;
             }
 
             // Standard or Deep — run Pass 2 (and optionally Pass 3)
@@ -556,7 +553,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         {
             // ── Post inline comments (with thread resolution + dedup) ────
             var threadService = GetServiceForPass(ReviewPass.ThreadVerification, reviewDepth);
-            passModels["ThreadVerification"] = threadService.ModelName;
+            passModels[ReviewPass.ThreadVerification.ToString()] = threadService.ModelName;
             var (_, postedComments, _, _) =
                 await PostInlineCommentsAsync(
                     project, repository, pullRequestId, fileChanges,

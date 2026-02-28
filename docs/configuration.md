@@ -291,9 +291,9 @@ When per-pass model routing is active, the review history tracks which model was
 ```json
 {
   "PassModels": {
-    "Pass1_PrSummary": "gpt-4o-mini-2024-07-18",
-    "Pass2_PerFile": "gpt-4o-2024-08-06",
-    "Pass3_DeepReview": "o4-mini-2025-04-16",
+    "PrSummary": "gpt-4o-mini-2024-07-18",
+    "PerFileReview": "gpt-4o-2024-08-06",
+    "DeepReview": "o4-mini-2025-04-16",
     "ThreadVerification": "gpt-4o-mini-2024-07-18"
   }
 }

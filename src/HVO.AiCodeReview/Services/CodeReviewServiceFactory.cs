@@ -36,6 +36,33 @@ public static class CodeReviewServiceFactory
         services.Configure<AzureOpenAISettings>(
             configuration.GetSection(AzureOpenAISettings.SectionName));
 
+        // Provider instance cache — ensures the same provider key reuses a single
+        // ICodeReviewService instance across DepthModelResolver, PassModelResolver,
+        // and the active-provider registration. Avoids duplicate clients, prompt
+        // loading, and startup overhead.
+        var providerCache = new Dictionary<string, ICodeReviewService>(StringComparer.OrdinalIgnoreCase);
+
+        ICodeReviewService GetOrCreateProvider(
+            string providerKey,
+            ProviderConfig providerConfig,
+            ILoggerFactory loggerFactory,
+            int maxInputLinesPerFile,
+            ReviewProfile reviewProfile,
+            PromptAssemblyPipeline? pipeline,
+            ModelAdapterResolver? adapterResolver,
+            IGlobalRateLimitSignal? rateLimitSignal)
+        {
+            if (providerCache.TryGetValue(providerKey, out var cached))
+                return cached;
+
+            var service = CreateProvider(
+                providerKey, providerConfig, loggerFactory,
+                maxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
+
+            providerCache[providerKey] = service;
+            return service;
+        }
+
         // Register depth-model resolver (per-depth model selection)
         services.AddSingleton<DepthModelResolver>(sp =>
         {
@@ -78,7 +105,7 @@ public static class CodeReviewServiceFactory
                         continue;
                     }
 
-                    var service = CreateProvider(
+                    var service = GetOrCreateProvider(
                         providerKey, providerConfig, loggerFactory,
                         settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
 
@@ -136,7 +163,7 @@ public static class CodeReviewServiceFactory
                         continue;
                     }
 
-                    var service = CreateProvider(
+                    var service = GetOrCreateProvider(
                         providerKey, providerConfig, loggerFactory,
                         settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal);
 

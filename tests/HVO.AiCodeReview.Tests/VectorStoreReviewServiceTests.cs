@@ -1,6 +1,7 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AiCodeReview.Models;
 using AiCodeReview.Services;
-using System.Text.Json;
 
 namespace AiCodeReview.Tests;
 
@@ -240,6 +241,8 @@ public class VectorStoreReviewServiceTests
         var result = VectorStoreReviewService.ParseReviewResponse(json, files);
 
         Assert.AreEqual(1, result.InlineComments.Count);
+        Assert.AreEqual("src/Service.cs", result.InlineComments[0].FilePath,
+            "Path normalization should strip .txt suffix from uploaded filename");
         Assert.AreEqual(10, result.InlineComments[0].StartLine);
         Assert.AreEqual("active", result.InlineComments[0].Status);
     }
@@ -254,6 +257,98 @@ public class VectorStoreReviewServiceTests
 
         Assert.IsNotNull(result);
         Assert.AreEqual("APPROVED", result.Summary.Verdict);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Path normalization in ParseReviewResponse
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void ParseReviewResponse_LeadingSlash_StrippedFromFilePath()
+    {
+        var json = @"{
+            ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
+            ""inlineComments"": [
+                { ""filePath"": ""/src/Foo.cs"", ""startLine"": 1, ""comment"": ""x"", ""status"": ""active"" }
+            ],
+            ""recommendedVote"": 10
+        }";
+        var files = CreateFileChanges("src/Foo.cs");
+
+        var result = VectorStoreReviewService.ParseReviewResponse(json, files);
+
+        Assert.AreEqual("src/Foo.cs", result.InlineComments[0].FilePath);
+    }
+
+    [TestMethod]
+    public void ParseReviewResponse_TxtSuffix_MappedBackToOriginalPath()
+    {
+        var json = @"{
+            ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
+            ""inlineComments"": [
+                { ""filePath"": ""Models/User.cs.txt"", ""startLine"": 5, ""comment"": ""y"", ""status"": ""active"" }
+            ],
+            ""recommendedVote"": 10
+        }";
+        var files = CreateFileChanges("Models/User.cs");
+
+        var result = VectorStoreReviewService.ParseReviewResponse(json, files);
+
+        Assert.AreEqual("Models/User.cs", result.InlineComments[0].FilePath);
+    }
+
+    [TestMethod]
+    public void ParseReviewResponse_LeadingSlashAndTxtSuffix_BothNormalized()
+    {
+        var json = @"{
+            ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
+            ""inlineComments"": [
+                { ""filePath"": ""/Services/Handler.cs.txt"", ""startLine"": 1, ""comment"": ""z"", ""status"": ""active"" }
+            ],
+            ""recommendedVote"": 10
+        }";
+        var files = CreateFileChanges("Services/Handler.cs");
+
+        var result = VectorStoreReviewService.ParseReviewResponse(json, files);
+
+        Assert.AreEqual("Services/Handler.cs", result.InlineComments[0].FilePath);
+    }
+
+    [TestMethod]
+    public void ParseReviewResponse_AlreadyCorrectPath_Unchanged()
+    {
+        var json = @"{
+            ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
+            ""inlineComments"": [
+                { ""filePath"": ""src/app.js"", ""startLine"": 1, ""comment"": ""ok"", ""status"": ""active"" }
+            ],
+            ""recommendedVote"": 10
+        }";
+        var files = CreateFileChanges("src/app.js");
+
+        var result = VectorStoreReviewService.ParseReviewResponse(json, files);
+
+        Assert.AreEqual("src/app.js", result.InlineComments[0].FilePath);
+    }
+
+    [TestMethod]
+    public void ParseReviewResponse_NullFilePath_SkippedSafely()
+    {
+        var json = @"{
+            ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
+            ""inlineComments"": [
+                { ""filePath"": null, ""startLine"": 1, ""comment"": ""orphan"", ""status"": ""active"" },
+                { ""filePath"": ""src/Valid.cs.txt"", ""startLine"": 2, ""comment"": ""real"", ""status"": ""active"" }
+            ],
+            ""recommendedVote"": 10
+        }";
+        var files = CreateFileChanges("src/Valid.cs");
+
+        var result = VectorStoreReviewService.ParseReviewResponse(json, files);
+
+        Assert.AreEqual(2, result.InlineComments.Count);
+        Assert.IsNull(result.InlineComments[0].FilePath);
+        Assert.AreEqual("src/Valid.cs", result.InlineComments[1].FilePath);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -273,6 +368,26 @@ public class VectorStoreReviewServiceTests
     {
         var request = new ReviewRequest();
         Assert.AreEqual(ReviewStrategy.FileByFile, request.ReviewStrategy);
+    }
+
+    [TestMethod]
+    [DataRow("\"FileByFile\"", ReviewStrategy.FileByFile)]
+    [DataRow("\"Auto\"", ReviewStrategy.Auto)]
+    [DataRow("\"Vector\"", ReviewStrategy.Vector)]
+    public void ReviewStrategy_JsonStringDeserialization_Works(string json, ReviewStrategy expected)
+    {
+        var result = JsonSerializer.Deserialize<ReviewStrategy>(json);
+        Assert.AreEqual(expected, result);
+    }
+
+    [TestMethod]
+    public void ReviewStrategy_JsonRoundTrip_UsesStringNames()
+    {
+        var json = JsonSerializer.Serialize(ReviewStrategy.Vector);
+        Assert.AreEqual("\"Vector\"", json);
+
+        var deserialized = JsonSerializer.Deserialize<ReviewStrategy>(json);
+        Assert.AreEqual(ReviewStrategy.Vector, deserialized);
     }
 
     // ═══════════════════════════════════════════════════════════════════

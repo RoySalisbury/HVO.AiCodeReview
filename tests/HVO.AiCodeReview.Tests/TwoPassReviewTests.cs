@@ -331,7 +331,9 @@ public class TwoPassReviewTests
         {
             Summary = new ReviewSummary
             {
-                FilesChanged = 3, EditsCount = 2, AddsCount = 1,
+                FilesChanged = 3,
+                EditsCount = 2,
+                AddsCount = 1,
                 Verdict = "APPROVED WITH SUGGESTIONS",
                 Description = "Test PR intent",
             },
@@ -378,7 +380,8 @@ public class TwoPassReviewTests
         {
             Summary = new ReviewSummary
             {
-                FilesChanged = 1, EditsCount = 1,
+                FilesChanged = 1,
+                EditsCount = 1,
                 Verdict = "APPROVED",
             },
             FileReviews = new List<FileReview>(),
@@ -397,7 +400,8 @@ public class TwoPassReviewTests
         {
             Summary = new ReviewSummary
             {
-                FilesChanged = 1, Verdict = "APPROVED",
+                FilesChanged = 1,
+                Verdict = "APPROVED",
             },
             FileReviews = new List<FileReview>(),
         };

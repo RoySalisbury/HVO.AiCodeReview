@@ -521,313 +521,313 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         if (!simulationOnly)
         {
-        if (isReReview)
-        {
-            existingThreads = await _devOpsService.GetExistingReviewThreadsAsync(
-                project, repository, pullRequestId, attributionTag);
-
-            // Resolve AI-generated active threads whose file is no longer in the changed set,
-            // and verify via AI whether threads on modified lines were actually fixed.
-            if (_devOpsSettings.ResolveFixedThreadsOnReReview)
+            if (isReReview)
             {
-                ReportProgress(progress, ReviewStep.PostingInlineComments,
-                    "Checking prior AI comments for resolved issues...", 62);
+                existingThreads = await _devOpsService.GetExistingReviewThreadsAsync(
+                    project, repository, pullRequestId, attributionTag);
 
-                var changedFilePaths = new HashSet<string>(
-                    fileChanges.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
-
-                // Collect candidates for AI verification (lines modified but need to confirm fix)
-                var verificationCandidates = new List<ThreadVerificationCandidate>();
-
-                foreach (var thread in existingThreads.Where(t => t.IsAiGenerated && t.Status == 1 /* Active */))
-                {
-                    if (!changedFilePaths.Contains(thread.FilePath ?? ""))
-                    {
-                        // File is no longer in the diff → the issue was addressed or the file was removed
-                        try
-                        {
-                            await _devOpsService.UpdateThreadStatusAsync(
-                                project, repository, pullRequestId, thread.ThreadId, "fixed");
-                            resolvedThreads++;
-                            var fileName = thread.FilePath?.Contains('/') == true
-                                ? thread.FilePath[(thread.FilePath.LastIndexOf('/') + 1)..] : thread.FilePath;
-                            _logger.LogInformation(
-                                "Resolved AI thread {ThreadId} on {File} L{Start}-{End} (file no longer in diff)",
-                                thread.ThreadId, fileName, thread.StartLine, thread.EndLine);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to resolve thread {ThreadId}", thread.ThreadId);
-                        }
-                    }
-                    else
-                    {
-                        // File is still changed — check if the specific lines are in a modified range
-                        var fc = fileChanges.FirstOrDefault(f =>
-                            string.Equals(f.FilePath, thread.FilePath, StringComparison.OrdinalIgnoreCase));
-                        if (fc != null && fc.ChangedLineRanges.Count > 0)
-                        {
-                            bool linesWereModified = fc.ChangedLineRanges.Any(r =>
-                                thread.StartLine >= r.Start && thread.StartLine <= r.End);
-
-                            if (linesWereModified)
-                            {
-                                // Lines were modified — build a code context window for AI verification
-                                var currentCode = ExtractCodeContext(fc.ModifiedContent, thread.StartLine, thread.EndLine, contextLines: 10);
-                                verificationCandidates.Add(new ThreadVerificationCandidate
-                                {
-                                    ThreadId = thread.ThreadId,
-                                    FilePath = thread.FilePath ?? "",
-                                    StartLine = thread.StartLine,
-                                    EndLine = thread.EndLine,
-                                    OriginalComment = thread.Content,
-                                    CurrentCode = currentCode,
-                                    AuthorReplies = thread.Replies,
-                                });
-                            }
-                            // else: lines unchanged — leave thread active, nothing to verify
-                        }
-                    }
-                }
-
-                // AI-verify candidates whose lines were modified
-                if (verificationCandidates.Count > 0)
+                // Resolve AI-generated active threads whose file is no longer in the changed set,
+                // and verify via AI whether threads on modified lines were actually fixed.
+                if (_devOpsSettings.ResolveFixedThreadsOnReReview)
                 {
                     ReportProgress(progress, ReviewStep.PostingInlineComments,
-                        $"AI-verifying {verificationCandidates.Count} prior comment(s) for resolution...", 63);
+                        "Checking prior AI comments for resolved issues...", 62);
 
-                    var verificationResults = await _reviewService.VerifyThreadResolutionsAsync(verificationCandidates);
+                    var changedFilePaths = new HashSet<string>(
+                        fileChanges.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
 
-                    foreach (var result in verificationResults.Where(r => r.IsFixed))
+                    // Collect candidates for AI verification (lines modified but need to confirm fix)
+                    var verificationCandidates = new List<ThreadVerificationCandidate>();
+
+                    foreach (var thread in existingThreads.Where(t => t.IsAiGenerated && t.Status == 1 /* Active */))
                     {
-                        try
+                        if (!changedFilePaths.Contains(thread.FilePath ?? ""))
+                        {
+                            // File is no longer in the diff → the issue was addressed or the file was removed
+                            try
+                            {
+                                await _devOpsService.UpdateThreadStatusAsync(
+                                    project, repository, pullRequestId, thread.ThreadId, "fixed");
+                                resolvedThreads++;
+                                var fileName = thread.FilePath?.Contains('/') == true
+                                    ? thread.FilePath[(thread.FilePath.LastIndexOf('/') + 1)..] : thread.FilePath;
+                                _logger.LogInformation(
+                                    "Resolved AI thread {ThreadId} on {File} L{Start}-{End} (file no longer in diff)",
+                                    thread.ThreadId, fileName, thread.StartLine, thread.EndLine);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to resolve thread {ThreadId}", thread.ThreadId);
+                            }
+                        }
+                        else
+                        {
+                            // File is still changed — check if the specific lines are in a modified range
+                            var fc = fileChanges.FirstOrDefault(f =>
+                                string.Equals(f.FilePath, thread.FilePath, StringComparison.OrdinalIgnoreCase));
+                            if (fc != null && fc.ChangedLineRanges.Count > 0)
+                            {
+                                bool linesWereModified = fc.ChangedLineRanges.Any(r =>
+                                    thread.StartLine >= r.Start && thread.StartLine <= r.End);
+
+                                if (linesWereModified)
+                                {
+                                    // Lines were modified — build a code context window for AI verification
+                                    var currentCode = ExtractCodeContext(fc.ModifiedContent, thread.StartLine, thread.EndLine, contextLines: 10);
+                                    verificationCandidates.Add(new ThreadVerificationCandidate
+                                    {
+                                        ThreadId = thread.ThreadId,
+                                        FilePath = thread.FilePath ?? "",
+                                        StartLine = thread.StartLine,
+                                        EndLine = thread.EndLine,
+                                        OriginalComment = thread.Content,
+                                        CurrentCode = currentCode,
+                                        AuthorReplies = thread.Replies,
+                                    });
+                                }
+                                // else: lines unchanged — leave thread active, nothing to verify
+                            }
+                        }
+                    }
+
+                    // AI-verify candidates whose lines were modified
+                    if (verificationCandidates.Count > 0)
+                    {
+                        ReportProgress(progress, ReviewStep.PostingInlineComments,
+                            $"AI-verifying {verificationCandidates.Count} prior comment(s) for resolution...", 63);
+
+                        var verificationResults = await _reviewService.VerifyThreadResolutionsAsync(verificationCandidates);
+
+                        foreach (var result in verificationResults.Where(r => r.IsFixed))
+                        {
+                            try
+                            {
+                                await _devOpsService.UpdateThreadStatusAsync(
+                                    project, repository, pullRequestId, result.ThreadId, "fixed");
+                                resolvedThreads++;
+                                var candidate = verificationCandidates.First(c => c.ThreadId == result.ThreadId);
+                                var fileName = candidate.FilePath.Contains('/')
+                                    ? candidate.FilePath[(candidate.FilePath.LastIndexOf('/') + 1)..] : candidate.FilePath;
+                                _logger.LogInformation(
+                                    "Resolved AI thread {ThreadId} on {File} L{Start}-{End} (AI verified: {Reason})",
+                                    result.ThreadId, fileName, candidate.StartLine, candidate.EndLine, result.Reasoning);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to resolve verified thread {ThreadId}", result.ThreadId);
+                            }
+                        }
+
+                        // Log threads that were NOT verified as fixed
+                        foreach (var result in verificationResults.Where(r => !r.IsFixed))
+                        {
+                            var candidate = verificationCandidates.FirstOrDefault(c => c.ThreadId == result.ThreadId);
+                            var fileName = candidate?.FilePath?.Contains('/') == true
+                                ? candidate.FilePath[(candidate.FilePath.LastIndexOf('/') + 1)..] : candidate?.FilePath;
+                            _logger.LogInformation(
+                                "Kept AI thread {ThreadId} on {File} L{Start}-{End} active (AI verified NOT fixed: {Reason})",
+                                result.ThreadId, fileName, candidate?.StartLine, candidate?.EndLine, result.Reasoning);
+                        }
+                    }
+
+                    if (resolvedThreads > 0)
+                    {
+                        _logger.LogInformation("Resolved {Count} prior AI comment threads as Fixed", resolvedThreads);
+                    }
+                }
+            }
+
+            // ── Post inline comments (with semantic deduplication) ─────────
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(progress, ReviewStep.PostingInlineComments,
+                $"Posting inline comments (deduplicating against existing threads)...", 65);
+
+            foreach (var comment in lineSpecificComments)
+            {
+                var commentContent = $"**{comment.LeadIn}.** {comment.Comment}{attributionSuffix}";
+
+                // ── Exact dedup: skip if same file + same line range + same core content ──
+                var coreContent = $"**{comment.LeadIn}.** {comment.Comment}";
+                if (existingThreads.Any(t =>
+                        string.Equals(t.FilePath, comment.FilePath, StringComparison.OrdinalIgnoreCase)
+                        && t.StartLine == comment.StartLine
+                        && t.EndLine == comment.EndLine
+                        && (string.Equals(t.Content, commentContent, StringComparison.Ordinal)
+                            || string.Equals(t.Content, coreContent, StringComparison.Ordinal))))
+                {
+                    skippedDuplicates++;
+                    continue;
+                }
+
+                // ── Semantic dedup: same file + overlapping line range + same severity ──
+                // Instead of creating a new thread, reply in the existing one with updated feedback
+                var semanticMatch = existingThreads.FirstOrDefault(t =>
+                    t.IsAiGenerated
+                    && string.Equals(t.FilePath, comment.FilePath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(t.LeadIn, comment.LeadIn, StringComparison.OrdinalIgnoreCase)
+                    && LinesOverlap(t.StartLine, t.EndLine, comment.StartLine, comment.EndLine));
+
+                if (semanticMatch != null)
+                {
+                    // Build a contextual reply acknowledging the conversation
+                    var replyText = BuildThreadReply(comment, semanticMatch, attributionSuffix);
+                    try
+                    {
+                        await _devOpsService.ReplyToThreadAsync(
+                            project, repository, pullRequestId, semanticMatch.ThreadId, replyText);
+
+                        // If the thread was resolved/closed, reactivate it since the issue persists
+                        if (semanticMatch.Status != 1 /* Active */)
                         {
                             await _devOpsService.UpdateThreadStatusAsync(
-                                project, repository, pullRequestId, result.ThreadId, "fixed");
-                            resolvedThreads++;
-                            var candidate = verificationCandidates.First(c => c.ThreadId == result.ThreadId);
-                            var fileName = candidate.FilePath.Contains('/')
-                                ? candidate.FilePath[(candidate.FilePath.LastIndexOf('/') + 1)..] : candidate.FilePath;
-                            _logger.LogInformation(
-                                "Resolved AI thread {ThreadId} on {File} L{Start}-{End} (AI verified: {Reason})",
-                                result.ThreadId, fileName, candidate.StartLine, candidate.EndLine, result.Reasoning);
+                                project, repository, pullRequestId, semanticMatch.ThreadId, "active");
                         }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to resolve verified thread {ThreadId}", result.ThreadId);
-                        }
-                    }
 
-                    // Log threads that were NOT verified as fixed
-                    foreach (var result in verificationResults.Where(r => !r.IsFixed))
-                    {
-                        var candidate = verificationCandidates.FirstOrDefault(c => c.ThreadId == result.ThreadId);
-                        var fileName = candidate?.FilePath?.Contains('/') == true
-                            ? candidate.FilePath[(candidate.FilePath.LastIndexOf('/') + 1)..] : candidate?.FilePath;
+                        repliedInThread++;
                         _logger.LogInformation(
-                            "Kept AI thread {ThreadId} on {File} L{Start}-{End} active (AI verified NOT fixed: {Reason})",
-                            result.ThreadId, fileName, candidate?.StartLine, candidate?.EndLine, result.Reasoning);
+                            "Replied in existing thread {ThreadId} on {File} L{Start}-{End} (semantic match: same {LeadIn} on overlapping lines)",
+                            semanticMatch.ThreadId, comment.FilePath, comment.StartLine, comment.EndLine, comment.LeadIn);
                     }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to reply in thread {ThreadId}, falling back to new thread", semanticMatch.ThreadId);
+                        // Fall back to posting a new thread
+                        try
+                        {
+                            await _devOpsService.PostInlineCommentThreadAsync(
+                                project, repository, pullRequestId,
+                                comment.FilePath, comment.StartLine, comment.EndLine,
+                                commentContent, comment.Status);
+                            postedComments++;
+                        }
+                        catch (Exception ex2)
+                        {
+                            _logger.LogWarning(ex2, "Failed to post inline comment on {File}:{Line}", comment.FilePath, comment.StartLine);
+                        }
+                    }
+                    continue;
                 }
 
-                if (resolvedThreads > 0)
-                {
-                    _logger.LogInformation("Resolved {Count} prior AI comment threads as Fixed", resolvedThreads);
-                }
-            }
-        }
-
-        // ── Post inline comments (with semantic deduplication) ─────────
-        cancellationToken.ThrowIfCancellationRequested();
-        ReportProgress(progress, ReviewStep.PostingInlineComments,
-            $"Posting inline comments (deduplicating against existing threads)...", 65);
-
-        foreach (var comment in lineSpecificComments)
-        {
-            var commentContent = $"**{comment.LeadIn}.** {comment.Comment}{attributionSuffix}";
-
-            // ── Exact dedup: skip if same file + same line range + same core content ──
-            var coreContent = $"**{comment.LeadIn}.** {comment.Comment}";
-            if (existingThreads.Any(t =>
-                    string.Equals(t.FilePath, comment.FilePath, StringComparison.OrdinalIgnoreCase)
-                    && t.StartLine == comment.StartLine
-                    && t.EndLine == comment.EndLine
-                    && (string.Equals(t.Content, commentContent, StringComparison.Ordinal)
-                        || string.Equals(t.Content, coreContent, StringComparison.Ordinal))))
-            {
-                skippedDuplicates++;
-                continue;
-            }
-
-            // ── Semantic dedup: same file + overlapping line range + same severity ──
-            // Instead of creating a new thread, reply in the existing one with updated feedback
-            var semanticMatch = existingThreads.FirstOrDefault(t =>
-                t.IsAiGenerated
-                && string.Equals(t.FilePath, comment.FilePath, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(t.LeadIn, comment.LeadIn, StringComparison.OrdinalIgnoreCase)
-                && LinesOverlap(t.StartLine, t.EndLine, comment.StartLine, comment.EndLine));
-
-            if (semanticMatch != null)
-            {
-                // Build a contextual reply acknowledging the conversation
-                var replyText = BuildThreadReply(comment, semanticMatch, attributionSuffix);
                 try
                 {
-                    await _devOpsService.ReplyToThreadAsync(
-                        project, repository, pullRequestId, semanticMatch.ThreadId, replyText);
-
-                    // If the thread was resolved/closed, reactivate it since the issue persists
-                    if (semanticMatch.Status != 1 /* Active */)
-                    {
-                        await _devOpsService.UpdateThreadStatusAsync(
-                            project, repository, pullRequestId, semanticMatch.ThreadId, "active");
-                    }
-
-                    repliedInThread++;
-                    _logger.LogInformation(
-                        "Replied in existing thread {ThreadId} on {File} L{Start}-{End} (semantic match: same {LeadIn} on overlapping lines)",
-                        semanticMatch.ThreadId, comment.FilePath, comment.StartLine, comment.EndLine, comment.LeadIn);
+                    await _devOpsService.PostInlineCommentThreadAsync(
+                        project, repository, pullRequestId,
+                        comment.FilePath, comment.StartLine, comment.EndLine,
+                        commentContent, comment.Status);
+                    postedComments++;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to reply in thread {ThreadId}, falling back to new thread", semanticMatch.ThreadId);
-                    // Fall back to posting a new thread
-                    try
-                    {
-                        await _devOpsService.PostInlineCommentThreadAsync(
-                            project, repository, pullRequestId,
-                            comment.FilePath, comment.StartLine, comment.EndLine,
-                            commentContent, comment.Status);
-                        postedComments++;
-                    }
-                    catch (Exception ex2)
-                    {
-                        _logger.LogWarning(ex2, "Failed to post inline comment on {File}:{Line}", comment.FilePath, comment.StartLine);
-                    }
+                    _logger.LogWarning(ex, "Failed to post inline comment on {File}:{Line}",
+                        comment.FilePath, comment.StartLine);
                 }
-                continue;
             }
 
-            try
-            {
-                await _devOpsService.PostInlineCommentThreadAsync(
-                    project, repository, pullRequestId,
-                    comment.FilePath, comment.StartLine, comment.EndLine,
-                    commentContent, comment.Status);
-                postedComments++;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to post inline comment on {File}:{Line}",
-                    comment.FilePath, comment.StartLine);
-            }
-        }
+            _logger.LogInformation("Posted {Count}/{Total} inline comments, skipped {Dupes} duplicates, replied in {Replied} existing threads, resolved {Resolved} prior threads",
+                postedComments, reviewResult.InlineComments.Count, skippedDuplicates, repliedInThread, resolvedThreads);
 
-        _logger.LogInformation("Posted {Count}/{Total} inline comments, skipped {Dupes} duplicates, replied in {Replied} existing threads, resolved {Resolved} prior threads",
-            postedComments, reviewResult.InlineComments.Count, skippedDuplicates, repliedInThread, resolvedThreads);
+            // ── Post summary comment ────────────────────────────────────────
+            ReportProgress(progress, ReviewStep.PostingSummary,
+                "Posting review summary...", 80);
 
-        // ── Post summary comment ────────────────────────────────────────
-        ReportProgress(progress, ReviewStep.PostingSummary,
-            "Posting review summary...", 80);
+            var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
+                nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
+                reviewDepth, deepAnalysis);
+            await _devOpsService.PostCommentThreadAsync(
+                project, repository, pullRequestId, summaryMarkdown, "closed");
 
-        var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
-            nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis);
-        await _devOpsService.PostCommentThreadAsync(
-            project, repository, pullRequestId, summaryMarkdown, "closed");
-
-        // ── Tag + metadata ──────────────────────────────────────────────
-        cancellationToken.ThrowIfCancellationRequested();
-        ReportProgress(progress, ReviewStep.SubmittingVote,
-            "Updating review metadata...", 85);
-
-        bool voteFailed = false;
-        bool voteSkipped = false;
-        var vote = reviewResult.RecommendedVote;
-        var verdictLabel = VoteToLabel(vote);
-
-        // ── Vote (non-draft + config-enabled) ───────────────────────────
-        if (prInfo.IsDraft)
-        {
-            voteSkipped = true;
-            _logger.LogInformation("PR #{PrId} is a draft — skipping vote.", pullRequestId);
-        }
-        else if (!_devOpsSettings.AddReviewerVote)
-        {
-            voteSkipped = true;
-            _logger.LogInformation("AddReviewerVote is disabled — skipping vote for PR #{PrId}.", pullRequestId);
-        }
-        else
-        {
+            // ── Tag + metadata ──────────────────────────────────────────────
+            cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(progress, ReviewStep.SubmittingVote,
-                $"Submitting reviewer vote: {verdictLabel}...", 90);
-            try
+                "Updating review metadata...", 85);
+
+            bool voteFailed = false;
+            bool voteSkipped = false;
+            var vote = reviewResult.RecommendedVote;
+            var verdictLabel = VoteToLabel(vote);
+
+            // ── Vote (non-draft + config-enabled) ───────────────────────────
+            if (prInfo.IsDraft)
             {
-                await _devOpsService.AddReviewerAsync(project, repository, pullRequestId, vote);
-                _logger.LogInformation("Submitted vote {Vote} ({Label}) for PR #{PrId}",
-                    vote, verdictLabel, pullRequestId);
+                voteSkipped = true;
+                _logger.LogInformation("PR #{PrId} is a draft — skipping vote.", pullRequestId);
             }
-            catch (HttpRequestException ex)
+            else if (!_devOpsSettings.AddReviewerVote)
             {
-                voteFailed = true;
-                _logger.LogWarning(ex, "Failed to submit vote for PR #{PrId}.", pullRequestId);
+                voteSkipped = true;
+                _logger.LogInformation("AddReviewerVote is disabled — skipping vote for PR #{PrId}.", pullRequestId);
             }
-        }
+            else
+            {
+                ReportProgress(progress, ReviewStep.SubmittingVote,
+                    $"Submitting reviewer vote: {verdictLabel}...", 90);
+                try
+                {
+                    await _devOpsService.AddReviewerAsync(project, repository, pullRequestId, vote);
+                    _logger.LogInformation("Submitted vote {Vote} ({Label}) for PR #{PrId}",
+                        vote, verdictLabel, pullRequestId);
+                }
+                catch (HttpRequestException ex)
+                {
+                    voteFailed = true;
+                    _logger.LogWarning(ex, "Failed to submit vote for PR #{PrId}.", pullRequestId);
+                }
+            }
 
-        totalSw.Stop();
+            totalSw.Stop();
 
-        var historyEntry = new ReviewHistoryEntry
-        {
-            Action = isReReview ? "Re-Review" : "Full Review",
-            Verdict = reviewResult.Summary.Verdict,
-            SourceCommit = prInfo.LastMergeSourceCommit,
-            Iteration = currentIteration,
-            IsDraft = prInfo.IsDraft,
-            InlineComments = postedComments,
-            FilesChanged = fileChanges.Count,
-            Vote = (voteFailed || voteSkipped) ? null : vote,
-            // AI Metrics
-            ModelName = reviewResult.ModelName,
-            PromptTokens = reviewResult.PromptTokens,
-            CompletionTokens = reviewResult.CompletionTokens,
-            TotalTokens = reviewResult.TotalTokens,
-            AiDurationMs = reviewResult.AiDurationMs,
-            TotalDurationMs = totalSw.ElapsedMilliseconds,
-            ReviewDepth = reviewDepth.ToString(),
-        };
-        await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration,
-            !voteFailed && !voteSkipped, historyEntry);
+            var historyEntry = new ReviewHistoryEntry
+            {
+                Action = isReReview ? "Re-Review" : "Full Review",
+                Verdict = reviewResult.Summary.Verdict,
+                SourceCommit = prInfo.LastMergeSourceCommit,
+                Iteration = currentIteration,
+                IsDraft = prInfo.IsDraft,
+                InlineComments = postedComments,
+                FilesChanged = fileChanges.Count,
+                Vote = (voteFailed || voteSkipped) ? null : vote,
+                // AI Metrics
+                ModelName = reviewResult.ModelName,
+                PromptTokens = reviewResult.PromptTokens,
+                CompletionTokens = reviewResult.CompletionTokens,
+                TotalTokens = reviewResult.TotalTokens,
+                AiDurationMs = reviewResult.AiDurationMs,
+                TotalDurationMs = totalSw.ElapsedMilliseconds,
+                ReviewDepth = reviewDepth.ToString(),
+            };
+            await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration,
+                !voteFailed && !voteSkipped, historyEntry);
 
-        // Record in rate limiter
-        _rateLimiter.Record(_devOpsSettings.Organization, project, repository, pullRequestId);
+            // Record in rate limiter
+            _rateLimiter.Record(_devOpsSettings.Organization, project, repository, pullRequestId);
 
-        // ── Complete ────────────────────────────────────────────────────
-        var completionMsg = voteFailed
-            ? $"{reviewLabel} complete: {reviewResult.Summary.Verdict} (vote failed)"
-            : voteSkipped
-                ? $"{reviewLabel} complete: {reviewResult.Summary.Verdict} (vote skipped)"
-                : $"{reviewLabel} complete: {reviewResult.Summary.Verdict}";
-        ReportProgress(progress, ReviewStep.Complete, completionMsg, 100);
+            // ── Complete ────────────────────────────────────────────────────
+            var completionMsg = voteFailed
+                ? $"{reviewLabel} complete: {reviewResult.Summary.Verdict} (vote failed)"
+                : voteSkipped
+                    ? $"{reviewLabel} complete: {reviewResult.Summary.Verdict} (vote skipped)"
+                    : $"{reviewLabel} complete: {reviewResult.Summary.Verdict}";
+            ReportProgress(progress, ReviewStep.Complete, completionMsg, 100);
 
-        int errors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
-        int warnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
-        int info = reviewResult.InlineComments.Count(c => c.LeadIn is "Suggestion" or "LGTM" or "Good catch" or "Important");
+            int errors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
+            int warnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
+            int info = reviewResult.InlineComments.Count(c => c.LeadIn is "Suggestion" or "LGTM" or "Good catch" or "Important");
 
-        return new ReviewResponse
-        {
-            Status = "Reviewed",
-            ReviewDepth = reviewDepth.ToString(),
-            Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
-            Summary = summaryMarkdown,
-            IssueCount = reviewResult.InlineComments.Count,
-            ErrorCount = errors,
-            WarningCount = warnings,
-            InfoCount = info,
-            Vote = (voteFailed || voteSkipped) ? null : vote,
-            ErrorMessage = voteFailed
-                ? "Review posted but vote submission failed. Check server logs."
-                : null,
-        };
+            return new ReviewResponse
+            {
+                Status = "Reviewed",
+                ReviewDepth = reviewDepth.ToString(),
+                Recommendation = MapVerdictToRecommendation(reviewResult.Summary.Verdict),
+                Summary = summaryMarkdown,
+                IssueCount = reviewResult.InlineComments.Count,
+                ErrorCount = errors,
+                WarningCount = warnings,
+                InfoCount = info,
+                Vote = (voteFailed || voteSkipped) ? null : vote,
+                ErrorMessage = voteFailed
+                    ? "Review posted but vote submission failed. Check server logs."
+                    : null,
+            };
 
         } // end if (!simulationOnly)
 

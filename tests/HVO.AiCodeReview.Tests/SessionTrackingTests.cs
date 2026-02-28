@@ -31,7 +31,7 @@ public class SessionTrackingTests
         var s = new ReviewSession();
 
         Assert.AreEqual(ReviewSessionStatus.Queued, s.Status);
-        Assert.IsNotNull(s.RequestedAtUtc);
+        Assert.AreNotEqual(default(DateTime), s.RequestedAtUtc);
         Assert.IsNull(s.CompletedAtUtc);
     }
 
@@ -79,8 +79,11 @@ public class SessionTrackingTests
         s.Start();
         s.Complete("Approved");
 
-        Assert.IsTrue(s.CompletedAtUtc >= s.RequestedAtUtc,
+        Assert.IsNotNull(s.CompletedAtUtc);
+        Assert.IsTrue(s.CompletedAtUtc.Value >= s.RequestedAtUtc,
             "CompletedAtUtc should be >= RequestedAtUtc.");
+        Assert.IsTrue(s.TotalDurationMs >= 0,
+            "TotalDurationMs should be non-negative.");
     }
 
     // ── Orchestrator integration: SessionId in response ──────────────────

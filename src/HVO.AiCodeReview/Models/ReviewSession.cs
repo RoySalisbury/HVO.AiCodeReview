@@ -10,7 +10,7 @@ namespace AiCodeReview.Models;
 public class ReviewSession
 {
     /// <summary>Unique identifier for this review execution.</summary>
-    public Guid SessionId { get; set; } = Guid.NewGuid();
+    public Guid SessionId { get; private set; } = Guid.NewGuid();
 
     /// <summary>UTC timestamp when the review request was received.</summary>
     public DateTime RequestedAtUtc { get; set; } = DateTime.UtcNow;
@@ -104,6 +104,7 @@ public class ReviewSession
     {
         Status = ReviewSessionStatus.Completed;
         CompletedAtUtc = DateTime.UtcNow;
+        TotalDurationMs = (long)(CompletedAtUtc.Value - RequestedAtUtc).TotalMilliseconds;
         Verdict = verdict;
         Vote = vote;
     }
@@ -113,6 +114,7 @@ public class ReviewSession
     {
         Status = ReviewSessionStatus.Failed;
         CompletedAtUtc = DateTime.UtcNow;
+        TotalDurationMs = (long)(CompletedAtUtc.Value - RequestedAtUtc).TotalMilliseconds;
         ErrorMessage = ex.Message;
         ErrorType = ex.GetType().Name;
     }

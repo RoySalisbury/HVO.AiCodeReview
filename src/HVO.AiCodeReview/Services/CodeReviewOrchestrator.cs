@@ -666,6 +666,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 session.FilesReviewed = fileChanges.Count;
                 session.InlineCommentsPosted = postedComments;
                 session.ModelName = reviewResult.ModelName;
+                session.PromptTokens = reviewResult.PromptTokens;
+                session.CompletionTokens = reviewResult.CompletionTokens;
                 session.TotalTokens = reviewResult.TotalTokens;
                 session.AiDurationMs = reviewResult.AiDurationMs;
                 session.EstimatedCost = estimatedCost;
@@ -681,6 +683,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         {
             session.FilesReviewed = fileChanges.Count;
             session.ModelName = reviewResult.ModelName;
+            session.PromptTokens = reviewResult.PromptTokens;
+            session.CompletionTokens = reviewResult.CompletionTokens;
             session.TotalTokens = reviewResult.TotalTokens;
             session.AiDurationMs = reviewResult.AiDurationMs;
             session.EstimatedCost = CalculateEstimatedCost(

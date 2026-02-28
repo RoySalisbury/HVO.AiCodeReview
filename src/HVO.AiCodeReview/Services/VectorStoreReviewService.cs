@@ -797,8 +797,12 @@ public class VectorStoreReviewService
             {
                 var changedPaths = new HashSet<string>(
                     fileChanges.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
-                var uploadedToOriginal = fileChanges.ToDictionary(
-                    f => GetUploadFilename(f.FilePath), f => f.FilePath, StringComparer.OrdinalIgnoreCase);
+                var uploadedToOriginal = fileChanges
+                    .GroupBy(f => GetUploadFilename(f.FilePath), StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Last().FilePath,
+                        StringComparer.OrdinalIgnoreCase);
 
                 foreach (var comment in result.InlineComments)
                 {

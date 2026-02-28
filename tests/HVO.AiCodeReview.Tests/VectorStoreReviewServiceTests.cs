@@ -351,6 +351,32 @@ public class VectorStoreReviewServiceTests
         Assert.AreEqual("src/Valid.cs", result.InlineComments[1].FilePath);
     }
 
+    [TestMethod]
+    public void ParseReviewResponse_DuplicateUploadFilenames_DoesNotThrow()
+    {
+        // src/Foo.cs → src/Foo.cs.txt, and src/Foo.cs.txt → src/Foo.cs.txt
+        // Both map to the same upload key. Should not throw ArgumentException.
+        var json = @"{
+            ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
+            ""inlineComments"": [
+                { ""filePath"": ""src/Foo.cs.txt"", ""startLine"": 1, ""comment"": ""dup"", ""status"": ""active"" }
+            ],
+            ""recommendedVote"": 10
+        }";
+        var files = new List<FileChange>
+        {
+            new() { FilePath = "src/Foo.cs", ChangeType = "edit", ModifiedContent = "// a" },
+            new() { FilePath = "src/Foo.cs.txt", ChangeType = "edit", ModifiedContent = "// b" },
+        };
+
+        var result = VectorStoreReviewService.ParseReviewResponse(json, files);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual(1, result.InlineComments.Count);
+        // Last-wins: src/Foo.cs.txt keeps its own path since .txt is a supported extension
+        Assert.AreEqual("src/Foo.cs.txt", result.InlineComments[0].FilePath);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // ReviewStrategy enum
     // ═══════════════════════════════════════════════════════════════════

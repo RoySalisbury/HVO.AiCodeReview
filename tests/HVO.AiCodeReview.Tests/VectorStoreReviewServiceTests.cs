@@ -142,6 +142,75 @@ public class VectorStoreReviewServiceTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // BuildUploadFileMap
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void BuildUploadFileMap_NoCollisions_MatchesGetUploadFilename()
+    {
+        var paths = new[] { "src/app.js", "Models/User.cs", "Dockerfile" };
+        var map = VectorStoreReviewService.BuildUploadFileMap(paths);
+
+        Assert.AreEqual(3, map.Count);
+        Assert.AreEqual("src/app.js", map["src/app.js"]);
+        Assert.AreEqual("Models/User.cs.txt", map["Models/User.cs"]);
+        Assert.AreEqual("Dockerfile.txt", map["Dockerfile"]);
+    }
+
+    [TestMethod]
+    public void BuildUploadFileMap_Collision_CsAndCsTxt_Disambiguated()
+    {
+        // src/Foo.cs → would naively become src/Foo.cs.txt
+        // src/Foo.cs.txt → stays src/Foo.cs.txt (supported extension)
+        // Without disambiguation, both map to "src/Foo.cs.txt"
+        var paths = new[] { "src/Foo.cs", "src/Foo.cs.txt" };
+        var map = VectorStoreReviewService.BuildUploadFileMap(paths);
+
+        Assert.AreEqual(2, map.Count);
+        // The real .txt file keeps its name
+        Assert.AreEqual("src/Foo.cs.txt", map["src/Foo.cs.txt"]);
+        // The .cs file gets disambiguated
+        Assert.AreEqual("src/Foo.cs_1.txt", map["src/Foo.cs"],
+            "Colliding file should be disambiguated with _1.txt suffix");
+    }
+
+    [TestMethod]
+    public void BuildUploadFileMap_Collision_UniqueUploadNames()
+    {
+        var paths = new[] { "src/Foo.cs", "src/Foo.cs.txt" };
+        var map = VectorStoreReviewService.BuildUploadFileMap(paths);
+
+        var uploadNames = map.Values.ToList();
+        Assert.AreEqual(uploadNames.Distinct(StringComparer.OrdinalIgnoreCase).Count(), uploadNames.Count,
+            "All upload names must be unique");
+    }
+
+    [TestMethod]
+    public void BuildUploadFileMap_MultipleCollisions_AllDisambiguated()
+    {
+        // Two different unsupported extensions that would both collide
+        // after .txt append — edge case with three files
+        var paths = new[] { "config.yml", "config.yml.txt", "data.json" };
+        var map = VectorStoreReviewService.BuildUploadFileMap(paths);
+
+        Assert.AreEqual(3, map.Count);
+        Assert.AreEqual("config.yml.txt", map["config.yml.txt"]);
+        Assert.AreEqual("config.yml_1.txt", map["config.yml"]);
+        Assert.AreEqual("data.json", map["data.json"]); // no collision
+    }
+
+    [TestMethod]
+    public void BuildUploadFileMap_NoUnsupportedExtensions_NoChanges()
+    {
+        var paths = new[] { "app.js", "style.css", "data.json" };
+        var map = VectorStoreReviewService.BuildUploadFileMap(paths);
+
+        Assert.AreEqual("app.js", map["app.js"]);
+        Assert.AreEqual("style.css", map["style.css"]);
+        Assert.AreEqual("data.json", map["data.json"]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // ParseReviewResponse
     // ═══════════════════════════════════════════════════════════════════
 
@@ -354,8 +423,8 @@ public class VectorStoreReviewServiceTests
     [TestMethod]
     public void ParseReviewResponse_DuplicateUploadFilenames_DoesNotThrow()
     {
-        // src/Foo.cs → src/Foo.cs.txt, and src/Foo.cs.txt → src/Foo.cs.txt
-        // Both map to the same upload key. Should not throw ArgumentException.
+        // Without BuildUploadFileMap (backward compat fallback): both files map to
+        // the same upload key via GetUploadFilename. GroupBy+Last prevents the crash.
         var json = @"{
             ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
             ""inlineComments"": [
@@ -375,6 +444,39 @@ public class VectorStoreReviewServiceTests
         Assert.AreEqual(1, result.InlineComments.Count);
         // Last-wins: src/Foo.cs.txt keeps its own path since .txt is a supported extension
         Assert.AreEqual("src/Foo.cs.txt", result.InlineComments[0].FilePath);
+    }
+
+    [TestMethod]
+    public void ParseReviewResponse_WithUploadFileMap_DisambiguatedPaths()
+    {
+        // When BuildUploadFileMap is used, src/Foo.cs maps to src/Foo.cs_1.txt
+        // and src/Foo.cs.txt stays as-is. The assistant might return the disambiguated
+        // name, which should map back to the original path.
+        var files = new List<FileChange>
+        {
+            new() { FilePath = "src/Foo.cs", ChangeType = "edit", ModifiedContent = "// a" },
+            new() { FilePath = "src/Foo.cs.txt", ChangeType = "edit", ModifiedContent = "// b" },
+        };
+
+        var uploadFileMap = VectorStoreReviewService.BuildUploadFileMap(
+            files.Select(f => f.FilePath));
+
+        var json = @"{
+            ""summary"": { ""verdict"": ""APPROVED"", ""description"": ""test"" },
+            ""inlineComments"": [
+                { ""filePath"": ""src/Foo.cs_1.txt"", ""startLine"": 1, ""comment"": ""for .cs file"", ""status"": ""active"" },
+                { ""filePath"": ""src/Foo.cs.txt"", ""startLine"": 5, ""comment"": ""for .txt file"", ""status"": ""active"" }
+            ],
+            ""recommendedVote"": 10
+        }";
+
+        var result = VectorStoreReviewService.ParseReviewResponse(json, files, uploadFileMap);
+
+        Assert.AreEqual(2, result.InlineComments.Count);
+        Assert.AreEqual("src/Foo.cs", result.InlineComments[0].FilePath,
+            "Disambiguated name src/Foo.cs_1.txt should map back to src/Foo.cs");
+        Assert.AreEqual("src/Foo.cs.txt", result.InlineComments[1].FilePath,
+            "Real .txt file should keep its original path");
     }
 
     // ═══════════════════════════════════════════════════════════════════

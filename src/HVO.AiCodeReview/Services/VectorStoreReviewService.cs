@@ -69,7 +69,8 @@ public class VectorStoreReviewService
             using var httpClient = CreateHttpClient();
 
             // ── Step 1: Build filename mapping and upload files ──────────
-            var fileMap = new ConcurrentDictionary<string, string>(); // originalPath → uploadedName
+            var fileMap = BuildUploadFileMap(fileChanges.Select(f => f.FilePath));
+            var concurrentFileMap = new ConcurrentDictionary<string, string>(fileMap, StringComparer.OrdinalIgnoreCase);
 
             _logger.LogInformation("[Vector] Uploading {Count} files for PR #{PrId}...",
                 fileChanges.Count, prInfo.PullRequestId);
@@ -88,8 +89,8 @@ public class VectorStoreReviewService
                         return (string?)null;
                     }
 
-                    var uploadedName = GetUploadFilename(file.FilePath);
-                    fileMap[file.FilePath] = uploadedName;
+                    var uploadedName = concurrentFileMap.GetOrAdd(
+                        file.FilePath, f => GetUploadFilename(f));
 
                     var fileId = await UploadFileAsync(httpClient, content, uploadedName, cancellationToken);
                     lock (uploadedFileIds)
@@ -135,7 +136,7 @@ public class VectorStoreReviewService
                 vectorStoreId, sw.ElapsedMilliseconds);
 
             // ── Step 4: Create Assistant with file_search ────────────────
-            var systemPrompt = BuildVectorSystemPrompt(fileMap, prInfo, workItems);
+            var systemPrompt = BuildVectorSystemPrompt(concurrentFileMap, prInfo, workItems);
             assistantId = await CreateAssistantAsync(httpClient, vectorStoreId, systemPrompt, cancellationToken);
 
             _logger.LogInformation("[Vector] Created assistant {AsstId}", assistantId);
@@ -182,7 +183,7 @@ public class VectorStoreReviewService
             _logger.LogInformation("[Vector] Run completed in {Ms}ms, response length: {Len} chars",
                 sw.ElapsedMilliseconds, responseText.Length);
 
-            var reviewResult = ParseReviewResponse(responseText, fileChanges);
+            var reviewResult = ParseReviewResponse(responseText, fileChanges, concurrentFileMap);
 
             // Set metrics
             reviewResult.ModelName = _openAiSettings.DeploymentName;
@@ -204,6 +205,8 @@ public class VectorStoreReviewService
     /// <summary>
     /// Compute the upload filename. Unsupported extensions get .txt appended.
     /// Includes directory path in filename so the model sees project structure.
+    /// NOTE: For batch uploads, prefer <see cref="BuildUploadFileMap"/> which
+    /// detects collisions (e.g., file.cs → file.cs.txt colliding with an actual file.cs.txt).
     /// </summary>
     internal static string GetUploadFilename(string originalPath)
     {
@@ -218,6 +221,72 @@ public class VectorStoreReviewService
         }
 
         return normalized;
+    }
+
+    /// <summary>
+    /// Build upload filename mappings for a batch of files, detecting and resolving
+    /// collisions where appending .txt would clash with an existing file in the set.
+    /// For example, if the PR contains both "src/Foo.cs" and "src/Foo.cs.txt",
+    /// naively renaming "src/Foo.cs" → "src/Foo.cs.txt" collides with the real
+    /// "src/Foo.cs.txt". In that case, disambiguate with "src/Foo.cs_1.txt".
+    /// </summary>
+    internal static Dictionary<string, string> BuildUploadFileMap(IEnumerable<string> originalPaths)
+    {
+        var paths = originalPaths.ToList();
+
+        // First pass: compute naïve upload names and collect all of them
+        // to detect which ones would collide.
+        var naiveMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
+        {
+            naiveMap[path] = GetUploadFilename(path);
+        }
+
+        // Collect all upload names to detect duplicates
+        var uploadNameCounts = naiveMap
+            .GroupBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (uploadNameCounts.Count == 0)
+            return naiveMap; // No collisions — fast path
+
+        // Second pass: disambiguate collisions by appending _N before .txt
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in paths)
+        {
+            var uploadName = naiveMap[path];
+
+            if (uploadNameCounts.Contains(uploadName))
+            {
+                // For files that already had a supported extension (no rename needed),
+                // keep the original name since it's unique in the source.
+                // For files that had .txt appended, disambiguate.
+                var normalized = path.Replace('\\', '/').TrimStart('/');
+                if (uploadName != normalized)
+                {
+                    // This file had .txt appended — it's the one causing the collision.
+                    // Disambiguate: file.cs.txt → file.cs_1.txt, file.cs_2.txt, etc.
+                    var baseName = normalized; // e.g., "src/Foo.cs"
+                    var counter = 1;
+                    var candidate = $"{baseName}_{counter}.txt";
+                    while (usedNames.Contains(candidate))
+                    {
+                        counter++;
+                        candidate = $"{baseName}_{counter}.txt";
+                    }
+                    uploadName = candidate;
+                }
+            }
+
+            usedNames.Add(uploadName);
+            result[path] = uploadName;
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -751,7 +820,17 @@ public class VectorStoreReviewService
     /// Parse the assistant's JSON response into a <see cref="CodeReviewResult"/>.
     /// Handles common JSON wrapper issues (markdown fences, leading text).
     /// </summary>
-    internal static CodeReviewResult ParseReviewResponse(string responseText, List<FileChange> fileChanges)
+    /// <param name="responseText">Raw assistant response.</param>
+    /// <param name="fileChanges">The changed files in this PR.</param>
+    /// <param name="uploadFileMap">
+    /// Optional pre-built map of originalPath → uploadedName.
+    /// When provided, used to reverse-map assistant-returned paths back to PR paths.
+    /// When null, falls back to computing the map via <see cref="GetUploadFilename"/>.
+    /// </param>
+    internal static CodeReviewResult ParseReviewResponse(
+        string responseText,
+        List<FileChange> fileChanges,
+        IDictionary<string, string>? uploadFileMap = null)
     {
         // Strip markdown JSON fences if present
         var text = responseText.Trim();
@@ -797,11 +876,12 @@ public class VectorStoreReviewService
             {
                 var changedPaths = new HashSet<string>(
                     fileChanges.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
-                var uploadedToOriginal = fileChanges
-                    .GroupBy(f => GetUploadFilename(f.FilePath), StringComparer.OrdinalIgnoreCase)
+                var uploadedToOriginal = (uploadFileMap ?? fileChanges.ToDictionary(
+                        f => f.FilePath, f => GetUploadFilename(f.FilePath), StringComparer.OrdinalIgnoreCase))
+                    .GroupBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(
                         g => g.Key,
-                        g => g.Last().FilePath,
+                        g => g.Last().Key,
                         StringComparer.OrdinalIgnoreCase);
 
                 foreach (var comment in result.InlineComments)

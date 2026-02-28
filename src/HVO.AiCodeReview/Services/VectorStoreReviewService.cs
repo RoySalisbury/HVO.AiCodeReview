@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
@@ -68,8 +69,7 @@ public class VectorStoreReviewService
             using var httpClient = CreateHttpClient();
 
             // ── Step 1: Build filename mapping and upload files ──────────
-            var fileMap = new Dictionary<string, string>(); // originalPath → uploadedName
-            var reverseMap = new Dictionary<string, string>(); // uploadedName → originalPath
+            var fileMap = new ConcurrentDictionary<string, string>(); // originalPath → uploadedName
 
             _logger.LogInformation("[Vector] Uploading {Count} files for PR #{PrId}...",
                 fileChanges.Count, prInfo.PullRequestId);
@@ -90,7 +90,6 @@ public class VectorStoreReviewService
 
                     var uploadedName = GetUploadFilename(file.FilePath);
                     fileMap[file.FilePath] = uploadedName;
-                    reverseMap[uploadedName] = file.FilePath;
 
                     var fileId = await UploadFileAsync(httpClient, content, uploadedName, cancellationToken);
                     lock (uploadedFileIds)
@@ -546,7 +545,7 @@ public class VectorStoreReviewService
     /// Includes the filename mapping so the AI reports original filenames.
     /// </summary>
     private string BuildVectorSystemPrompt(
-        Dictionary<string, string> fileMap,
+        IDictionary<string, string> fileMap,
         PullRequestInfo prInfo,
         List<WorkItemInfo>? workItems)
     {
@@ -790,6 +789,37 @@ public class VectorStoreReviewService
             // Ensure summary has correct file count
             result.Summary ??= new ReviewSummary();
             result.Summary.FilesChanged = fileChanges.Count;
+
+            // Normalize assistant-returned file paths in inline comments so they match
+            // the PR's actual changed file paths used by ValidateInlineComments.
+            // This handles leading slashes and ".txt" suffixes from uploaded filenames.
+            if (result.InlineComments is { Count: > 0 })
+            {
+                var changedPaths = new HashSet<string>(
+                    fileChanges.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
+                var uploadedToOriginal = fileChanges
+                    .GroupBy(f => GetUploadFilename(f.FilePath), StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Last().FilePath,
+                        StringComparer.OrdinalIgnoreCase);
+
+                foreach (var comment in result.InlineComments)
+                {
+                    if (string.IsNullOrWhiteSpace(comment?.FilePath))
+                        continue;
+
+                    var normalized = comment.FilePath.TrimStart('/');
+
+                    if (!changedPaths.Contains(normalized) &&
+                        uploadedToOriginal.TryGetValue(normalized, out var originalPath))
+                    {
+                        normalized = originalPath;
+                    }
+
+                    comment.FilePath = normalized;
+                }
+            }
 
             return result;
         }

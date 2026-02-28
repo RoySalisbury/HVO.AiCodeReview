@@ -36,6 +36,63 @@ public static class CodeReviewServiceFactory
         services.Configure<AzureOpenAISettings>(
             configuration.GetSection(AzureOpenAISettings.SectionName));
 
+        // Register depth-model resolver (per-depth model selection)
+        services.AddSingleton<DepthModelResolver>(sp =>
+        {
+            var settings = sp.GetRequiredService<IOptions<AiProviderSettings>>().Value;
+            var reviewProfile = sp.GetRequiredService<IOptions<ReviewProfile>>().Value;
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var pipeline = sp.GetService<PromptAssemblyPipeline>();
+            var adapterResolver = sp.GetService<ModelAdapterResolver>();
+            var defaultService = sp.GetRequiredService<ICodeReviewService>();
+            var logger = loggerFactory.CreateLogger<DepthModelResolver>();
+
+            var depthServices = new Dictionary<ReviewDepth, ICodeReviewService>();
+
+            if (settings.DepthModels.Count > 0)
+            {
+                foreach (var (depthName, providerKey) in settings.DepthModels)
+                {
+                    if (!Enum.TryParse<ReviewDepth>(depthName, ignoreCase: true, out var depth))
+                    {
+                        logger.LogWarning(
+                            "DepthModels: unknown depth '{Depth}' — skipping (valid: Quick, Standard, Deep)",
+                            depthName);
+                        continue;
+                    }
+
+                    if (!settings.Providers.TryGetValue(providerKey, out var providerConfig))
+                    {
+                        logger.LogWarning(
+                            "DepthModels: provider '{Provider}' for depth {Depth} not found in Providers — using default",
+                            providerKey, depth);
+                        continue;
+                    }
+
+                    if (!providerConfig.Enabled)
+                    {
+                        logger.LogWarning(
+                            "DepthModels: provider '{Provider}' for depth {Depth} is disabled — using default",
+                            providerKey, depth);
+                        continue;
+                    }
+
+                    var service = CreateProvider(
+                        providerKey, providerConfig, loggerFactory,
+                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver);
+
+                    depthServices[depth] = service;
+
+                    var displayName = providerConfig.DisplayName.Length > 0 ? providerConfig.DisplayName : providerKey;
+                    logger.LogInformation(
+                        "DepthModels: {Depth} → '{Provider}' (model: {Model})",
+                        depth, displayName, providerConfig.Model);
+                }
+            }
+
+            return new DepthModelResolver(depthServices, defaultService, logger);
+        });
+
         services.AddSingleton<ICodeReviewService>(sp =>
         {
             var settings = sp.GetRequiredService<IOptions<AiProviderSettings>>().Value;

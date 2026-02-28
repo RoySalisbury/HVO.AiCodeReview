@@ -9,25 +9,64 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 {
     private readonly IAzureDevOpsService _devOpsService;
     private readonly ICodeReviewService _reviewService;
+    private readonly DepthModelResolver _depthModelResolver;
+    private readonly VectorStoreReviewService _vectorService;
+    private readonly ModelAdapterResolver _modelAdapterResolver;
     private readonly AzureDevOpsSettings _devOpsSettings;
     private readonly AiProviderSettings _aiProviderSettings;
+    private readonly AssistantsSettings _assistantsSettings;
     private readonly IReviewRateLimiter _rateLimiter;
     private readonly ILogger<CodeReviewOrchestrator> _logger;
 
     public CodeReviewOrchestrator(
         IAzureDevOpsService devOpsService,
         ICodeReviewService reviewService,
+        DepthModelResolver depthModelResolver,
+        VectorStoreReviewService vectorService,
+        ModelAdapterResolver modelAdapterResolver,
         IOptions<AzureDevOpsSettings> devOpsSettings,
         IOptions<AiProviderSettings> aiProviderSettings,
+        IOptions<AssistantsSettings> assistantsSettings,
         IReviewRateLimiter rateLimiter,
         ILogger<CodeReviewOrchestrator> logger)
     {
         _devOpsService = devOpsService;
         _reviewService = reviewService;
+        _depthModelResolver = depthModelResolver;
+        _vectorService = vectorService;
+        _modelAdapterResolver = modelAdapterResolver;
         _devOpsSettings = devOpsSettings.Value;
         _aiProviderSettings = aiProviderSettings.Value;
+        _assistantsSettings = assistantsSettings.Value;
         _rateLimiter = rateLimiter;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Resolves the AI review service for the given depth.
+    /// Returns the depth-specific model if configured via DepthModels;
+    /// otherwise falls back to the default active provider.
+    /// </summary>
+    private ICodeReviewService GetServiceForDepth(ReviewDepth depth)
+        => _depthModelResolver.Resolve(depth);
+
+    /// <summary>
+    /// Calculates the estimated cost in USD for the given model and token usage.
+    /// Returns null if the model has no pricing configured.
+    /// </summary>
+    private decimal? CalculateEstimatedCost(string? modelName, int? promptTokens, int? completionTokens)
+    {
+        if (string.IsNullOrWhiteSpace(modelName) || promptTokens is null || completionTokens is null)
+            return null;
+
+        var adapter = _modelAdapterResolver.Resolve(modelName);
+        var cost = adapter.CalculateCost(promptTokens.Value, completionTokens.Value);
+
+        if (cost.HasValue)
+            _logger.LogInformation("Estimated cost for model '{Model}': ${Cost:F6} ({PromptTokens} prompt + {CompletionTokens} completion tokens)",
+                modelName, cost.Value, promptTokens.Value, completionTokens.Value);
+
+        return cost;
     }
 
     public async Task<ReviewResponse> ExecuteReviewAsync(
@@ -38,6 +77,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         bool forceReview = false,
         bool simulationOnly = false,
         ReviewDepth reviewDepth = ReviewDepth.Standard,
+        ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
         CancellationToken cancellationToken = default)
     {
         try
@@ -108,7 +148,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     return await HandleReviewAsync(
                         project, repository, pullRequestId, prInfo, metadata,
                         currentIteration, action == ReviewAction.ReReview, progress,
-                        simulationOnly, reviewDepth, cancellationToken);
+                        simulationOnly, reviewDepth, reviewStrategy, cancellationToken);
 
                 default:
                     throw new InvalidOperationException($"Unexpected review action: {action}");
@@ -295,6 +335,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IProgress<ReviewStatusUpdate>? progress,
         bool simulationOnly = false,
         ReviewDepth reviewDepth = ReviewDepth.Standard,
+        ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -421,6 +462,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             _logger.LogWarning(ex, "Failed to retrieve work items for PR #{PrId} — continuing without AC context", pullRequestId);
         }
 
+        // ── Resolve depth-specific AI service ────────────────────────
+        var activeService = GetServiceForDepth(reviewDepth);
+
         // ── Pass 1: PR-level summary (cross-file context) ────────────
         PrSummaryResult? prSummary = null;
         try
@@ -428,7 +472,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             ReportProgress(progress, ReviewStep.AnalyzingCode,
                 "Pass 1: Generating cross-file PR summary...", 30);
 
-            prSummary = await _reviewService.GeneratePrSummaryAsync(prInfo, fileChanges, workItems);
+            prSummary = await activeService.GeneratePrSummaryAsync(prInfo, fileChanges, workItems);
 
             if (prSummary != null)
             {
@@ -478,7 +522,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             // Standard or Deep — run Pass 2 (and optionally Pass 3)
             (reviewResult, deepAnalysis) = await HandleStandardOrDeepPassesAsync(
                 prInfo, pullRequestId, fileChanges, prSummary, workItems,
-                reviewDepth, reviewLabel, progress, cancellationToken);
+                reviewDepth, reviewStrategy, reviewLabel, activeService, progress, cancellationToken);
         }
 
         // ── Validate & sanitize inline comments from AI ─────────────────
@@ -596,7 +640,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                         ReportProgress(progress, ReviewStep.PostingInlineComments,
                             $"AI-verifying {verificationCandidates.Count} prior comment(s) for resolution...", 63);
 
-                        var verificationResults = await _reviewService.VerifyThreadResolutionsAsync(verificationCandidates);
+                        var verificationResults = await activeService.VerifyThreadResolutionsAsync(verificationCandidates);
 
                         foreach (var result in verificationResults.Where(r => r.IsFixed))
                         {
@@ -776,6 +820,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
             totalSw.Stop();
 
+            var estimatedCost = CalculateEstimatedCost(
+                reviewResult.ModelName, reviewResult.PromptTokens, reviewResult.CompletionTokens);
+
             var historyEntry = new ReviewHistoryEntry
             {
                 Action = isReReview ? "Re-Review" : "Full Review",
@@ -793,6 +840,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 TotalTokens = reviewResult.TotalTokens,
                 AiDurationMs = reviewResult.AiDurationMs,
                 TotalDurationMs = totalSw.ElapsedMilliseconds,
+                EstimatedCost = estimatedCost,
                 ReviewDepth = reviewDepth.ToString(),
             };
             await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration,
@@ -827,6 +875,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 ErrorMessage = voteFailed
                     ? "Review posted but vote submission failed. Check server logs."
                     : null,
+                PromptTokens = reviewResult.PromptTokens,
+                CompletionTokens = reviewResult.CompletionTokens,
+                TotalTokens = reviewResult.TotalTokens,
+                AiDurationMs = reviewResult.AiDurationMs,
+                EstimatedCost = estimatedCost,
             };
 
         } // end if (!simulationOnly)
@@ -842,6 +895,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
             var simVote = reviewResult.RecommendedVote;
             var statusLabel = "Simulated";
+            var simEstimatedCost = CalculateEstimatedCost(
+                reviewResult.ModelName, reviewResult.PromptTokens, reviewResult.CompletionTokens);
 
             var completionMsg2 = $"Simulation complete: {reviewResult.Summary.Verdict} (nothing posted)";
             ReportProgress(progress, ReviewStep.Complete, completionMsg2, 100);
@@ -863,6 +918,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 Vote = simVote,
                 Verdict = reviewResult.Summary.Verdict,
                 VerdictJustification = reviewResult.Summary.VerdictJustification,
+                PromptTokens = reviewResult.PromptTokens,
+                CompletionTokens = reviewResult.CompletionTokens,
+                TotalTokens = reviewResult.TotalTokens,
+                AiDurationMs = reviewResult.AiDurationMs,
+                EstimatedCost = simEstimatedCost,
                 InlineComments = lineSpecificComments.Select(c => new InlineCommentDto
                 {
                     FilePath = c.FilePath,
@@ -903,101 +963,75 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Runs Pass 2 (per-file parallel review) and optionally Pass 3 (Deep holistic analysis).
+    /// Runs Pass 2 (per-file parallel review or Vector Store review) and optionally Pass 3 (Deep holistic analysis).
     /// Extracted from HandleReviewAsync to keep the depth-branching logic clean.
     /// </summary>
     private async Task<(CodeReviewResult reviewResult, DeepAnalysisResult? deepAnalysis)> HandleStandardOrDeepPassesAsync(
         PullRequestInfo prInfo, int pullRequestId,
         List<FileChange> fileChanges, PrSummaryResult? prSummary,
         List<WorkItemInfo>? workItems,
-        ReviewDepth reviewDepth, string reviewLabel,
+        ReviewDepth reviewDepth, ReviewStrategy reviewStrategy, string reviewLabel,
+        ICodeReviewService activeService,
         IProgress<ReviewStatusUpdate>? progress,
         CancellationToken cancellationToken)
     {
-        // ── Pass 2: AI analysis (parallel per-file for accuracy) ──────
         cancellationToken.ThrowIfCancellationRequested();
 
-        var maxParallel = Math.Max(1, _aiProviderSettings.MaxParallelReviews);
-
-        ReportProgress(progress, ReviewStep.AnalyzingCode,
-            $"Analyzing {fileChanges.Count} files with AI (parallel, max {maxParallel} concurrent, {reviewLabel.ToLower()})...", 35);
-
-        _logger.LogInformation("{Label}: Reviewing {FileCount} files in parallel (max {MaxParallel} concurrent)",
-            reviewLabel, fileChanges.Count, maxParallel);
-
-        var semaphore = new SemaphoreSlim(maxParallel, maxParallel);
-        int completedFiles = 0;
-        var perFileResults = new CodeReviewResult[fileChanges.Count];
-
-        try
+        // ── Resolve effective strategy (Auto mode) ──────────────────────
+        var effectiveStrategy = reviewStrategy;
+        if (reviewStrategy == ReviewStrategy.Auto)
         {
-            var tasks = fileChanges.Select(async (file, index) =>
-            {
-                await semaphore.WaitAsync(cancellationToken);
-                try
-                {
-                    var result = await _reviewService.ReviewFileAsync(prInfo, file, fileChanges.Count, workItems);
-                    perFileResults[index] = result;
+            effectiveStrategy = fileChanges.Count <= _assistantsSettings.AutoThreshold
+                ? ReviewStrategy.FileByFile
+                : ReviewStrategy.Vector;
 
-                    var done = Interlocked.Increment(ref completedFiles);
-                    var pct = 35 + (int)(25.0 * done / fileChanges.Count);
-                    ReportProgress(progress, ReviewStep.AnalyzingCode,
-                        $"Analyzed {done}/{fileChanges.Count} files...", pct);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "AI review failed for {FilePath}", file.FilePath);
-                    // Return a safe fallback result for this file
-                    perFileResults[index] = new CodeReviewResult
-                    {
-                        Summary = new ReviewSummary
-                        {
-                            FilesChanged = 1,
-                            Verdict = "APPROVED",
-                            VerdictJustification = $"AI review failed for {file.FilePath}: {ex.Message}",
-                        },
-                        FileReviews = new List<FileReview>
-                        {
-                            new FileReview { FilePath = file.FilePath, Verdict = "CONCERN", ReviewText = $"AI review failed: {ex.Message}" }
-                        },
-                    };
-                }
-                finally
-                {
-                    semaphore.Release();
-                }
-            }).ToArray();
-
-            await Task.WhenAll(tasks);
-        }
-        finally
-        {
-            semaphore.Dispose();
+            _logger.LogInformation(
+                "[Auto] {FileCount} files vs threshold {Threshold} → using {Strategy} strategy",
+                fileChanges.Count, _assistantsSettings.AutoThreshold, effectiveStrategy);
         }
 
-        // ── Merge per-file results ──────────────────────────────────────
-        var reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);
-
-        // ── Add Pass 1 token usage to the merged total ──────────────────
-        if (prSummary != null)
+        // ── RPM capacity warning ─────────────────────────────────────
+        // Estimate total API calls: 1 (Pass 1 summary, already done) + N files (Pass 2)
+        // + 1 (Pass 3 deep analysis, if Deep mode). Warn if exceeding 80% of model RPM.
+        if (effectiveStrategy == ReviewStrategy.FileByFile)
         {
-            reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (prSummary.PromptTokens ?? 0);
-            reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (prSummary.CompletionTokens ?? 0);
-            reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (prSummary.TotalTokens ?? 0);
-            reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (prSummary.AiDurationMs ?? 0);
-
-            // Store the PR summary intent as the merged description when it is otherwise empty
-            if (!string.IsNullOrWhiteSpace(prSummary.Intent)
-                && (string.IsNullOrWhiteSpace(reviewResult.Summary?.Description)))
+            var adapter = _modelAdapterResolver.Resolve(activeService.ModelName);
+            if (adapter.RequestsPerMinute is > 0 and var rpm)
             {
-                reviewResult.Summary ??= new ReviewSummary();
-                reviewResult.Summary.Description = prSummary.Intent;
+                int estimatedCalls = 1 + fileChanges.Count + (reviewDepth == ReviewDepth.Deep ? 1 : 0);
+                double capacityPct = (double)estimatedCalls / rpm * 100;
+
+                if (capacityPct >= 80)
+                {
+                    _logger.LogWarning(
+                        "[RPM] PR #{PrId} will make ~{EstimatedCalls} API calls against model '{Model}' ({Rpm} RPM) — " +
+                        "{CapacityPct:F0}% of per-minute capacity. Review may be throttled to avoid rate-limit errors.",
+                        pullRequestId, estimatedCalls, activeService.ModelName, rpm, capacityPct);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "[RPM] PR #{PrId}: ~{EstimatedCalls} calls vs {Rpm} RPM ({CapacityPct:F0}% capacity) — within limits",
+                        pullRequestId, estimatedCalls, rpm, capacityPct);
+                }
             }
         }
 
-        _logger.LogInformation("{Label} complete ({FileCount} files, parallel): {Verdict} with {InlineCount} inline comments",
-            reviewLabel, fileChanges.Count,
-            reviewResult.Summary.Verdict, reviewResult.InlineComments.Count);
+        // ── Pass 2: Branch on strategy ──────────────────────────────────
+        CodeReviewResult reviewResult;
+
+        if (effectiveStrategy == ReviewStrategy.Vector)
+        {
+            reviewResult = await HandleVectorPassAsync(
+                prInfo, pullRequestId, fileChanges, prSummary, workItems,
+                reviewStrategy, reviewLabel, activeService, progress, cancellationToken);
+        }
+        else
+        {
+            reviewResult = await HandleFileByFilePassAsync(
+                prInfo, pullRequestId, fileChanges, prSummary, workItems,
+                reviewLabel, activeService, progress, cancellationToken);
+        }
 
         // ── Pass 3: Deep holistic re-evaluation (Deep mode only) ────────
         DeepAnalysisResult? deepAnalysis = null;
@@ -1011,7 +1045,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 ReportProgress(progress, ReviewStep.AnalyzingCode,
                     "Pass 3: Deep holistic re-evaluation...", 62);
 
-                deepAnalysis = await _reviewService.GenerateDeepAnalysisAsync(
+                deepAnalysis = await activeService.GenerateDeepAnalysisAsync(
                     prInfo, prSummary, reviewResult, fileChanges);
 
                 if (deepAnalysis != null)
@@ -1058,6 +1092,212 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
 
         return (reviewResult, deepAnalysis);
+    }
+
+    /// <summary>
+    /// Pass 2 — FileByFile: per-file parallel Chat Completions review (original behavior).
+    /// </summary>
+    private async Task<CodeReviewResult> HandleFileByFilePassAsync(
+        PullRequestInfo prInfo, int pullRequestId,
+        List<FileChange> fileChanges, PrSummaryResult? prSummary,
+        List<WorkItemInfo>? workItems,
+        string reviewLabel,
+        ICodeReviewService activeService,
+        IProgress<ReviewStatusUpdate>? progress,
+        CancellationToken cancellationToken)
+    {
+        var maxParallel = Math.Max(1, _aiProviderSettings.MaxParallelReviews);
+
+        // ── RPM-aware throttling ────────────────────────────────────────
+        // Resolve the model adapter to get the deployment's RPM limit.
+        // Each task claims a time slot so calls are spaced at least (60s / RPM) apart.
+        var adapter = _modelAdapterResolver.Resolve(activeService.ModelName);
+        int effectiveRpm = adapter.RequestsPerMinute ?? 0;
+        int rpmDelayMs = effectiveRpm > 0
+            ? (int)Math.Ceiling(60_000.0 / effectiveRpm)
+            : 0;
+
+        // Clamp concurrency when RPM is very low (avoid wasting semaphore slots waiting on delay)
+        if (rpmDelayMs > 0)
+        {
+            int rpmDerivedParallel = Math.Max(1, effectiveRpm / 10); // heuristic: allow ~6s of pipelined calls
+            if (rpmDerivedParallel < maxParallel)
+            {
+                _logger.LogInformation(
+                    "[RPM] Reducing concurrency from {Configured} → {Effective} for model '{Model}' ({Rpm} RPM, {DelayMs}ms between calls)",
+                    maxParallel, rpmDerivedParallel, activeService.ModelName, effectiveRpm, rpmDelayMs);
+                maxParallel = rpmDerivedParallel;
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "[RPM] Throttling model '{Model}' at {DelayMs}ms between calls ({Rpm} RPM, {MaxParallel} concurrent)",
+                    activeService.ModelName, rpmDelayMs, effectiveRpm, maxParallel);
+            }
+        }
+
+        long nextCallTick = 0; // shared ticket for RPM spacing
+
+        ReportProgress(progress, ReviewStep.AnalyzingCode,
+            $"Pass 2 (FileByFile): Analyzing {fileChanges.Count} files (max {maxParallel} concurrent, {reviewLabel.ToLower()})...", 35);
+
+        _logger.LogInformation("{Label}: Reviewing {FileCount} files in parallel (max {MaxParallel} concurrent)",
+            reviewLabel, fileChanges.Count, maxParallel);
+
+        var semaphore = new SemaphoreSlim(maxParallel, maxParallel);
+        int completedFiles = 0;
+        var perFileResults = new CodeReviewResult[fileChanges.Count];
+
+        try
+        {
+            var tasks = fileChanges.Select(async (file, index) =>
+            {
+                await semaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    // RPM rate limiting: claim a time slot and wait if needed
+                    if (rpmDelayMs > 0)
+                    {
+                        long mySlot;
+                        while (true)
+                        {
+                            long current = Interlocked.Read(ref nextCallTick);
+                            long now = Environment.TickCount64;
+                            long proposed = Math.Max(current, now) + rpmDelayMs;
+                            if (Interlocked.CompareExchange(ref nextCallTick, proposed, current) == current)
+                            {
+                                mySlot = proposed - rpmDelayMs;
+                                break;
+                            }
+                        }
+                        long delay = mySlot - Environment.TickCount64;
+                        if (delay > 0)
+                            await Task.Delay((int)delay, cancellationToken);
+                    }
+
+                    var result = await activeService.ReviewFileAsync(prInfo, file, fileChanges.Count, workItems);
+                    perFileResults[index] = result;
+
+                    var done = Interlocked.Increment(ref completedFiles);
+                    var pct = 35 + (int)(25.0 * done / fileChanges.Count);
+                    ReportProgress(progress, ReviewStep.AnalyzingCode,
+                        $"Analyzed {done}/{fileChanges.Count} files...", pct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "AI review failed for {FilePath}", file.FilePath);
+                    perFileResults[index] = new CodeReviewResult
+                    {
+                        Summary = new ReviewSummary
+                        {
+                            FilesChanged = 1,
+                            Verdict = "APPROVED",
+                            VerdictJustification = $"AI review failed for {file.FilePath}: {ex.Message}",
+                        },
+                        FileReviews = new List<FileReview>
+                        {
+                            new FileReview { FilePath = file.FilePath, Verdict = "CONCERN", ReviewText = $"AI review failed: {ex.Message}" }
+                        },
+                    };
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }).ToArray();
+
+            await Task.WhenAll(tasks);
+        }
+        finally
+        {
+            semaphore.Dispose();
+        }
+
+        // Merge per-file results
+        var reviewResult = MergeBatchResults(perFileResults.ToList(), fileChanges.Count);
+
+        // Add Pass 1 token usage
+        if (prSummary != null)
+        {
+            reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (prSummary.PromptTokens ?? 0);
+            reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (prSummary.CompletionTokens ?? 0);
+            reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (prSummary.TotalTokens ?? 0);
+            reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (prSummary.AiDurationMs ?? 0);
+
+            if (!string.IsNullOrWhiteSpace(prSummary.Intent)
+                && string.IsNullOrWhiteSpace(reviewResult.Summary?.Description))
+            {
+                reviewResult.Summary ??= new ReviewSummary();
+                reviewResult.Summary.Description = prSummary.Intent;
+            }
+        }
+
+        _logger.LogInformation("{Label} complete ({FileCount} files, FileByFile): {Verdict} with {InlineCount} inline comments",
+            reviewLabel, fileChanges.Count,
+            reviewResult.Summary.Verdict, reviewResult.InlineComments.Count);
+
+        return reviewResult;
+    }
+
+    /// <summary>
+    /// Pass 2 — Vector: upload all files to a Vector Store and review in a single Assistants API run.
+    /// Falls back to FileByFile if Auto mode was used and Vector fails.
+    /// </summary>
+    private async Task<CodeReviewResult> HandleVectorPassAsync(
+        PullRequestInfo prInfo, int pullRequestId,
+        List<FileChange> fileChanges, PrSummaryResult? prSummary,
+        List<WorkItemInfo>? workItems,
+        ReviewStrategy originalStrategy,
+        string reviewLabel,
+        ICodeReviewService activeService,
+        IProgress<ReviewStatusUpdate>? progress,
+        CancellationToken cancellationToken)
+    {
+        ReportProgress(progress, ReviewStep.AnalyzingCode,
+            $"Pass 2 (Vector): Uploading {fileChanges.Count} files to Vector Store for cross-file review...", 35);
+
+        try
+        {
+            var reviewResult = await _vectorService.ReviewAllFilesAsync(
+                prInfo, fileChanges, prSummary, workItems, cancellationToken);
+
+            // Add Pass 1 token usage
+            if (prSummary != null)
+            {
+                reviewResult.PromptTokens = (reviewResult.PromptTokens ?? 0) + (prSummary.PromptTokens ?? 0);
+                reviewResult.CompletionTokens = (reviewResult.CompletionTokens ?? 0) + (prSummary.CompletionTokens ?? 0);
+                reviewResult.TotalTokens = (reviewResult.TotalTokens ?? 0) + (prSummary.TotalTokens ?? 0);
+                reviewResult.AiDurationMs = (reviewResult.AiDurationMs ?? 0) + (prSummary.AiDurationMs ?? 0);
+
+                if (!string.IsNullOrWhiteSpace(prSummary.Intent)
+                    && string.IsNullOrWhiteSpace(reviewResult.Summary?.Description))
+                {
+                    reviewResult.Summary ??= new ReviewSummary();
+                    reviewResult.Summary.Description = prSummary.Intent;
+                }
+            }
+
+            _logger.LogInformation("{Label} complete ({FileCount} files, Vector): {Verdict} with {InlineCount} inline comments",
+                reviewLabel, fileChanges.Count,
+                reviewResult.Summary.Verdict, reviewResult.InlineComments.Count);
+
+            return reviewResult;
+        }
+        catch (Exception ex) when (originalStrategy == ReviewStrategy.Auto)
+        {
+            // Auto mode: fall back to FileByFile on Vector failure
+            _logger.LogWarning(ex,
+                "[Vector] Vector Store review failed for PR #{PrId} — falling back to FileByFile (Auto mode)",
+                pullRequestId);
+
+            ReportProgress(progress, ReviewStep.AnalyzingCode,
+                "Vector Store review failed — falling back to FileByFile...", 36);
+
+            return await HandleFileByFilePassAsync(
+                prInfo, pullRequestId, fileChanges, prSummary, workItems,
+                reviewLabel, activeService, progress, cancellationToken);
+        }
+        // If Vector mode was explicitly requested and fails, let the exception propagate
     }
 
     /// <summary>

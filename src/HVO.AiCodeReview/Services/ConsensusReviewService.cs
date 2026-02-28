@@ -22,6 +22,9 @@ public class ConsensusReviewService : ICodeReviewService
     private readonly int _threshold;
     private readonly ILogger<ConsensusReviewService> _logger;
 
+    /// <inheritdoc />
+    public string ModelName => string.Join("+", _providers.Select(p => p.Service.ModelName));
+
     /// <summary>
     /// Create a consensus service wrapping multiple providers.
     /// </summary>

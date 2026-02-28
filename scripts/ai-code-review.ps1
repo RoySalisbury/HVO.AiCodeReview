@@ -37,7 +37,9 @@ param(
     [string]$ProjectName = $env:SYSTEM_TEAMPROJECT,
     [string]$RepositoryName = $env:BUILD_REPOSITORY_NAME,
     [string]$PullRequestId = $env:SYSTEM_PULLREQUEST_PULLREQUESTID,
-    [int]$TimeoutSeconds = 600
+    [int]$TimeoutSeconds = 600,
+    [ValidateSet('FileByFile','Auto','Vector')]
+    [string]$ReviewStrategy = 'FileByFile'
 )
 
 # Validate required parameters
@@ -70,6 +72,7 @@ $body = @{
     projectName    = $ProjectName
     repositoryName = $RepositoryName
     pullRequestId  = [int]$PullRequestId
+    reviewStrategy = $ReviewStrategy
 } | ConvertTo-Json
 
 try {

@@ -65,6 +65,9 @@ public class ReviewHistoryEntry
     public long? AiDurationMs { get; set; }
     public long? TotalDurationMs { get; set; }
 
+    /// <summary>Estimated cost in USD based on model pricing and token usage.</summary>
+    public decimal? EstimatedCost { get; set; }
+
     /// <summary>Review depth mode used: Quick, Standard, or Deep.</summary>
     public string? ReviewDepth { get; set; }
 }

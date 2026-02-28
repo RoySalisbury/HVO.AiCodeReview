@@ -11,6 +11,9 @@ namespace AiCodeReview.Tests.Helpers;
 /// </summary>
 public class FakeCodeReviewService : ICodeReviewService
 {
+    /// <inheritdoc />
+    public string ModelName => "fake-model";
+
     /// <summary>
     /// Override this to return custom results in a specific test.
     /// When null the default fake result is used.

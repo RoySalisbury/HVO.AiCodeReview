@@ -24,5 +24,6 @@ public interface ICodeReviewOrchestrator
         bool forceReview = false,
         bool simulationOnly = false,
         ReviewDepth reviewDepth = ReviewDepth.Standard,
+        ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
         CancellationToken cancellationToken = default);
 }

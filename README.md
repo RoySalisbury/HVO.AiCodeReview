@@ -1,6 +1,6 @@
 # AI Code Review Service
 
-A centralized, AI-powered code review service for Azure DevOps pull requests. The service analyzes PR diffs using Azure OpenAI with a configurable model deployment (GPT-4o, GPT-4, GPT-5, etc.), posts inline comments and a summary thread, adds a reviewer vote, and tracks full review history — all driven by a single HTTP API call.
+A centralized, AI-powered code review service for Azure DevOps pull requests. The service analyzes PR diffs using Azure OpenAI with configurable model deployments (GPT-4o, GPT-4o-mini, o4-mini, o3-mini, GPT-5-mini, etc.), posts inline comments and a summary thread, adds a reviewer vote, and tracks full review history with cost estimation — all driven by a single HTTP API call.
 
 ---
 
@@ -12,12 +12,14 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 - [Configuration](#configuration)
   - [Application Settings](#application-settings)
   - [Multi-Provider AI Configuration](#multi-provider-ai-configuration)
+  - [Depth-Specific Model Routing](#depth-specific-model-routing)
   - [Environment Variables](#environment-variables)
   - [Custom Review Instructions](#custom-review-instructions)
   - [Prompt Layers](#prompt-layers-in-order)
   - [Prompt Scopes](#prompt-scopes)
   - [Rule Catalog](#rule-catalog-review-rulesjson)
   - [Model Adapters](#model-adapters)
+  - [Assistants API / Vector Store Settings](#assistants-api--vector-store-settings)
   - [Legacy Custom Instructions](#legacy-custom-instructions)
 - [Running the Service](#running-the-service)
   - [Local Development](#local-development)
@@ -29,10 +31,13 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
   - [GET /api/review/health](#get-apireviewhealth)
 - [Azure DevOps Pipeline Integration](#azure-devops-pipeline-integration)
 - [Review Depth Modes](#review-depth-modes)
+- [Review Strategies](#review-strategies)
 - [Two-Pass Review Architecture](#two-pass-review-architecture)
 - [Review Decision Logic](#review-decision-logic)
 - [Review History & Tracking](#review-history--tracking)
 - [Rate Limiting](#rate-limiting)
+- [RPM-Aware Throttling & Cost Estimation](#rpm-aware-throttling--cost-estimation)
+- [Model Benchmarks & Selection](#model-benchmarks--selection)
 - [Project Structure](#project-structure)
 - [Testing](#testing)
   - [Disposable Test Repositories](#disposable-test-repositories)
@@ -51,18 +56,24 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 
 | Feature | Description |
 |---------|-------------|
-| **AI-Powered Review** | Uses Azure OpenAI with a configurable model deployment to analyze diffs and produce structured reviews with per-file verdicts, inline comments, and observations. |
+| **AI-Powered Review** | Uses Azure OpenAI with configurable model deployments to analyze diffs and produce structured reviews with per-file verdicts, inline comments, and observations. |
 | **Two-Pass Architecture** | Pass 1 generates a cross-file PR summary for context. Pass 2 reviews each file individually with that context injected, improving accuracy for multi-file changes. |
 | **Review Depth Modes** | Three review depths — **Quick** (Pass 1 only, no inline comments), **Standard** (Pass 1 + Pass 2, default), and **Deep** (Pass 1 + Pass 2 + Pass 3 holistic re-evaluation with cross-file issue detection, verdict consistency check, and executive summary). |
+| **Depth-Specific Model Routing** | Each review depth can target a different AI model via `DepthModels` config — e.g., Quick → gpt-4o-mini (fast/cheap), Deep → o4-mini (reasoning). The `DepthModelResolver` handles routing at runtime. |
+| **Review Strategies** | Three Pass 2 strategies — **FileByFile** (default per-file Chat Completions), **Vector** (Assistants API + Vector Store for holistic review), and **Auto** (automatically selects based on file count threshold). |
+| **Vector Store Review** | Uploads all changed files to an Azure OpenAI Vector Store, creates an Assistant with `file_search`, and reviews the entire PR in a single run. Best for medium-to-large PRs with cross-file dependencies. |
+| **Reasoning Model Support** | Full compatibility with o-series models (o1, o3-mini, o4-mini) — automatic `max_completion_tokens` parameter, temperature bypass, and JSON mode adaptation. |
 | **Layered Prompt Architecture** | System prompts are assembled from a versioned rule catalog (`review-rules.json`) with scoped rules, priorities, hot-reload, and per-scope identity/custom-instruction toggles. |
-| **Per-Model Adapter** | Model-specific preambles (`ModelAdapterResolver`) tune each AI model's behavior — e.g., adjusting verbosity, severity calibration, or output format hints per deployment. |
+| **Per-Model Adapter** | Model-specific preambles and metadata (`ModelAdapterResolver`) tune each AI model's behavior — verbosity, severity calibration, output format hints, pricing, rate limits, and context windows per deployment. |
+| **RPM-Aware Throttling** | Automatic per-call delay in Pass 2 based on model RPM limits. Lock-free ticket-based system with concurrency clamping to prevent rate-limit errors. |
+| **Cost Estimation** | Every review response includes an `EstimatedCost` (USD) calculated from model-specific pricing metadata and actual token usage. Also tracked in review history. |
 | **Inline PR Comments** | Posts targeted inline comments on specific lines with severity levels (Bug, Security, Concern, Performance, Suggestion). |
 | **Summary Thread** | Posts a comprehensive review summary as a PR comment thread with file inventory, per-file reviews, observations, and overall verdict. |
 | **Reviewer Vote** | Automatically adds itself as a reviewer with a vote (Approved / Approved with Suggestions / Waiting for Author / Rejected) on non-draft PRs. |
 | **Smart Re-Review** | Detects new commits and only re-reviews when code has actually changed. Deduplicates inline comments to avoid repeating feedback. |
 | **Draft PR Awareness** | Reviews draft PRs without voting. Automatically submits a vote when a draft transitions to active (vote-only flow). |
 | **Review History** | Full history stored in PR properties (source of truth) and appended as a visible table in the PR description. History is automatically pruned to stay within Azure DevOps property size limits. |
-| **AI Metrics** | Captures token counts (prompt, completion, total), model name, AI latency, and total review duration per review. |
+| **AI Metrics** | Captures token counts (prompt, completion, total), model name, AI latency, estimated cost, and total review duration per review. |
 | **Metrics API** | Dedicated endpoint returns full review history and aggregated AI metrics for any PR. |
 | **Multi-Provider Consensus** | Fan-out to multiple AI models; only comments that meet the agreement threshold are posted. Each comment shows which models flagged it. |
 | **Configurable Review Profile** | Adjust severity thresholds, comment density limits, file truncation size, and parallel review concurrency via `appsettings.json`. |
@@ -72,6 +83,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 | **CancellationToken Support** | API endpoints propagate cancellation tokens so disconnected callers don't continue consuming AI tokens. |
 | **Tag / Label** | Applies a decorative `ai-code-review` label to reviewed PRs for easy filtering in the PR list. |
 | **Swagger UI** | Interactive API documentation available at `/swagger` in development mode. |
+| **Model Benchmarks** | Built-in benchmark test suite with 10 known-bad-code scenarios to compare model quality, latency, and cost across all depths. |
 
 ---
 
@@ -89,32 +101,41 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
                               │              │                   │
                               │  ┌───────────▼────────────────┐  │
                               │  │ CodeReviewOrchestrator      │  │
-                              │  │ (Two-Pass Architecture)     │  │
+                              │  │ (Two/Three-Pass + Strategy) │  │
                               │  └──┬────────┬────────┬───────┘  │
                               │     │        │        │          │
                               │  ┌──▼───┐ ┌──▼─────┐ ┌▼───────┐ │
                               │  │Azure │ │Prompt  │ │Code    │ │
                               │  │DevOps│ │Assembly│ │Review  │ │
                               │  │Svc   │ │Pipeline│ │Factory │ │
-                              │  └──┬───┘ └──┬─────┘ └┬────┬──┘ │
-                              │     │        │        │    │    │
-                              │     │   ┌────▼────┐   │    │    │
-                              │     │   │Model    │   │    │    │
-                              │     │   │Adapter  │   │    │    │
-                              │     │   │Resolver │   │    │    │
-                              │     │   └─────────┘   │    │    │
-                              │     │           ┌─────▼┐ ┌─▼──┐ │
-                              │     │           │Single│ │Con-│ │
-                              │     │           │ AI   │ │sen-│ │
-                              │     │           │Review│ │sus │ │
-                              │     │           └──┬───┘ └─┬──┘ │
-                              └─────┼──────────────┼───────┼────┘
-                                    │              │       │
-                              ┌─────▼─────┐        │ ┌─────▼────┐
-                              │ Azure     │        │ │ Multiple │
-                              │ DevOps    │        └─▶ AI Models│
-                              │ REST API  │          │ (fan-out)│
-                              └───────────┘          └──────────┘
+                              │  └──┬───┘ └──┬─────┘ └┬───┬───┘ │
+                              │     │        │        │   │     │
+                              │     │   ┌────▼────┐   │   │     │
+                              │     │   │Model    │   │   │     │
+                              │     │   │Adapter  │   │   │     │
+                              │     │   │Resolver │   │   │     │
+                              │     │   └─────────┘   │   │     │
+                              │     │        ┌────────▼┐  │     │
+                              │     │        │Depth    │  │     │
+                              │     │        │Model    │  │     │
+                              │     │        │Resolver │  │     │
+                              │     │        └────┬────┘  │     │
+                              │     │       ┌─────▼┐ ┌────▼───┐ │
+                              │     │       │Single│ │Con-    │ │
+                              │     │       │ AI   │ │sensus  │ │
+                              │     │       │Review│ │Review  │ │
+                              │     │       └──┬───┘ └─┬──────┘ │
+                              │     │   ┌──────▼───────▼─────┐  │
+                              │     │   │ VectorStore Review  │  │
+                              │     │   │ (Assistants API)    │  │
+                              │     │   └──────────┬─────────┘  │
+                              └─────┼──────────────┼────────────┘
+                                    │              │
+                              ┌─────▼─────┐  ┌─────▼──────────┐
+                              │ Azure     │  │ Azure OpenAI   │
+                              │ DevOps    │  │ (Multiple      │
+                              │ REST API  │  │  Deployments)  │
+                              └───────────┘  └────────────────┘
 ```
 
 **Flow:**
@@ -226,9 +247,15 @@ that meet the agreement threshold are retained.
 {
   "AiProvider": {
     "MaxParallelReviews": 5,
+    "MaxInputLinesPerFile": 5000,
     "Mode": "single",
     "ActiveProvider": "azure-openai",
     "ConsensusThreshold": 2,
+    "DepthModels": {
+      "Quick": "azure-openai-mini",
+      "Standard": "azure-openai-mini",
+      "Deep": "azure-openai-o4-mini"
+    },
     "Providers": {
       "azure-openai": {
         "Type": "azure-openai",
@@ -246,9 +273,11 @@ that meet the agreement threshold are retained.
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `MaxParallelReviews` | int | `5` | Maximum concurrent per-file AI review calls. |
+| `MaxInputLinesPerFile` | int | `5000` | Maximum number of source lines sent to AI per file. Files exceeding this are truncated. |
 | `Mode` | string | `"single"` | `"single"` = use `ActiveProvider` only. `"consensus"` = fan out to ALL enabled providers and merge. |
 | `ActiveProvider` | string | `"azure-openai"` | Which provider key to use when Mode = single. |
 | `ConsensusThreshold` | int | `2` | In consensus mode, minimum providers that must flag a comment for it to be kept. |
+| `DepthModels` | object | `{}` | Maps review depth → provider key. See [Depth-Specific Model Routing](#depth-specific-model-routing). |
 
 #### Provider Config
 
@@ -294,6 +323,64 @@ Each entry under `Providers` has:
 ```
 
 Both models review every file in parallel. Only comments that **both** flag (same file, overlapping line ranges) are posted. Each comment is prefixed with `[gpt-4o+gpt-4.1]` for attribution.
+
+### Depth-Specific Model Routing
+
+The `DepthModels` section under `AiProvider` maps each review depth to a specific provider key, allowing cost-optimized model selection per depth:
+
+```json
+{
+  "AiProvider": {
+    "ActiveProvider": "azure-openai",
+    "DepthModels": {
+      "Quick": "azure-openai-mini",
+      "Standard": "azure-openai-mini",
+      "Deep": "azure-openai-o4-mini"
+    },
+    "Providers": {
+      "azure-openai": {
+        "Type": "azure-openai",
+        "DisplayName": "Azure OpenAI (gpt-4o)",
+        "Endpoint": "https://your-resource.openai.azure.com/",
+        "ApiKey": "your-key",
+        "Model": "gpt-4o",
+        "Enabled": true
+      },
+      "azure-openai-mini": {
+        "Type": "azure-openai",
+        "DisplayName": "Azure OpenAI (gpt-4o-mini)",
+        "Endpoint": "https://your-resource.openai.azure.com/",
+        "ApiKey": "your-key",
+        "Model": "gpt-4o-mini",
+        "Enabled": true
+      },
+      "azure-openai-o4-mini": {
+        "Type": "azure-openai",
+        "DisplayName": "Azure OpenAI (o4-mini)",
+        "Endpoint": "https://your-resource.openai.azure.com/",
+        "ApiKey": "your-key",
+        "Model": "o4-mini",
+        "Enabled": true
+      }
+    }
+  }
+}
+```
+
+**How it works:**
+
+1. The `DepthModelResolver` reads `DepthModels` at startup and pre-builds an `ICodeReviewService` per depth.
+2. When a review is requested, the orchestrator looks up the depth → provider mapping.
+3. If no mapping exists for the requested depth, the `ActiveProvider` is used as fallback.
+4. Invalid depth names or disabled/missing providers are logged as warnings and fall back to the default.
+
+| Depth | Recommended Model | Rationale |
+|-------|-------------------|-----------|
+| **Quick** | gpt-4o-mini | Fastest + cheapest. Quick mode only generates a PR summary (no file reviews), so a lightweight model is ideal. |
+| **Standard** | gpt-4o-mini | Best cost/quality balance for per-file reviews. High throughput (4,990 RPM) handles large PRs quickly. |
+| **Deep** | o4-mini | Reasoning model provides deeper analysis for cross-file issues and verdict consistency. Worth the higher cost for critical PRs. |
+
+See [Model Benchmarks & Selection](#model-benchmarks--selection) for the data behind these recommendations.
 
 #### Adding a New Provider Type
 
@@ -383,30 +470,91 @@ Rules can be toggled, reordered, or scoped without restarting the service. The p
 
 #### Model Adapters
 
-The `ModelAdapterResolver` loads model-specific preambles from a single `model-adapters.json` catalog file:
+The `ModelAdapterResolver` loads model-specific preambles, capabilities, and metadata from a single `model-adapters.json` catalog file:
 
 ```json
 {
   "adapters": [
     {
-      "name": "gpt-4o-tuning",
-      "modelPattern": "gpt-4o",
+      "name": "gpt-4o-mini-tuning",
+      "modelPattern": "gpt-4o-mini",
       "promptStyle": "imperative",
-      "preamble": "You tend to be verbose. Keep inline comments concise (1-2 sentences max).",
-      "quirks": ["Tends to over-explain obvious issues"]
+      "preamble": "Be concise. Skip obvious LGTM observations.",
+      "isReasoningModel": false,
+      "contextWindowSize": 128000,
+      "maxOutputTokensModel": 16384,
+      "inputCostPer1MTokens": 0.15,
+      "outputCostPer1MTokens": 0.60,
+      "requestsPerMinute": 4990,
+      "tokensPerMinute": 499000,
+      "quirks": ["May miss subtle cross-file issues"]
     },
     {
-      "name": "gpt-4.1-tuning",
-      "modelPattern": "gpt-4\\.1",
+      "name": "o4-mini-tuning",
+      "modelPattern": "o4-mini",
       "promptStyle": "imperative",
-      "preamble": "Be thorough but avoid repeating the same concern across multiple files.",
-      "quirks": []
+      "preamble": "Use your reasoning capabilities for deep analysis.",
+      "isReasoningModel": true,
+      "contextWindowSize": 200000,
+      "maxOutputTokensModel": 100000,
+      "inputCostPer1MTokens": 1.10,
+      "outputCostPer1MTokens": 4.40,
+      "requestsPerMinute": 150,
+      "tokensPerMinute": 150000,
+      "quirks": ["Does not support Temperature or JSON response format"]
     }
   ]
 }
 ```
 
 Adapters are evaluated in order; the first adapter whose `modelPattern` regex matches (case-insensitive) wins. If no adapter matches, a built-in default is used. The file is resolved from the application base directory (`model-adapters.json` next to the executable).
+
+**Adapter Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Human-readable adapter name (for logging). |
+| `modelPattern` | string | Regex matched against the deployment/model name. First match wins. |
+| `promptStyle` | string | `"imperative"` or `"conversational"`. Currently informational. |
+| `preamble` | string | Model-specific prompt instructions injected between Identity and Custom Instructions. |
+| `isReasoningModel` | bool | True for o-series models. Disables Temperature and JSON response format. |
+| `temperature` | float? | Override sampling temperature. Ignored for reasoning models. |
+| `maxOutputTokensBatch` | int? | Override max output tokens for batch reviews. |
+| `maxOutputTokensSingleFile` | int? | Override max output tokens for single-file reviews. |
+| `maxOutputTokensVerification` | int? | Override max output tokens for thread verification. |
+| `maxOutputTokensPrSummary` | int? | Override max output tokens for Pass 1 summary. |
+| `maxInputLinesPerFile` | int? | Override per-file input line truncation limit. |
+| `contextWindowSize` | int? | Model's total context window (input + output tokens). |
+| `maxOutputTokensModel` | int? | Model-level hard limit on output tokens. |
+| `inputCostPer1MTokens` | decimal? | USD cost per 1M input tokens (for cost estimation). |
+| `outputCostPer1MTokens` | decimal? | USD cost per 1M output tokens (for cost estimation). |
+| `requestsPerMinute` | int? | RPM rate limit (drives [RPM-aware throttling](#rpm-aware-throttling--cost-estimation)). |
+| `tokensPerMinute` | int? | TPM rate limit (informational). |
+| `quirks` | string[] | Documented model quirks (logged, not injected into prompts). |
+
+#### Assistants API / Vector Store Settings
+
+When using the **Vector** or **Auto** review strategy, the service interacts with the Azure OpenAI Assistants API. Configure these settings under the `Assistants` section:
+
+```json
+{
+  "Assistants": {
+    "AutoThreshold": 5,
+    "PollIntervalMs": 1000,
+    "MaxPollAttempts": 120,
+    "ApiVersion": "2024-05-01-preview",
+    "MaxParallelUploads": 10
+  }
+}
+```
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `AutoThreshold` | int | `5` | When `reviewStrategy` is `Auto`, PRs with more than this many changed files use Vector Store; otherwise FileByFile. |
+| `PollIntervalMs` | int | `1000` | Milliseconds between polling attempts when waiting for Vector Store indexing or Assistant run completion. |
+| `MaxPollAttempts` | int | `120` | Maximum polling attempts before timing out. With default interval, this gives a 2-minute timeout. |
+| `ApiVersion` | string | `"2024-05-01-preview"` | Azure OpenAI Assistants API version. |
+| `MaxParallelUploads` | int | `10` | Maximum concurrent file uploads to the Vector Store. |
 
 #### Legacy Custom Instructions
 
@@ -486,7 +634,8 @@ Content-Type: application/json
   "projectName": "OneVision",
   "repositoryName": "MyRepo",
   "pullRequestId": 12345,
-  "reviewDepth": "Standard"
+  "reviewDepth": "Standard",
+  "reviewStrategy": "FileByFile"
 }
 ```
 
@@ -496,6 +645,7 @@ Content-Type: application/json
 | `repositoryName` | string | Yes | — | Repository name or GUID. |
 | `pullRequestId` | int | Yes | — | Pull request ID (must be > 0). |
 | `reviewDepth` | string | No | `"Standard"` | Review depth mode: `"Quick"`, `"Standard"`, or `"Deep"`. See [Review Depth Modes](#review-depth-modes). |
+| `reviewStrategy` | string | No | `"FileByFile"` | Pass 2 strategy: `"FileByFile"`, `"Vector"`, or `"Auto"`. See [Review Strategies](#review-strategies). |
 
 **Response — Reviewed (Full Review or Re-Review):**
 
@@ -510,7 +660,12 @@ Content-Type: application/json
   "infoCount": 3,
   "errorMessage": null,
   "reviewDepth": "Standard",
-  "vote": 5
+  "vote": 5,
+  "promptTokens": 12500,
+  "completionTokens": 3200,
+  "totalTokens": 15700,
+  "aiDurationMs": 5400,
+  "estimatedCost": 0.0038
 }
 ```
 
@@ -584,6 +739,11 @@ Content-Type: application/json
 | `errorMessage` | string? | Error details if `status` is `"Error"`. |
 | `reviewDepth` | string? | The review depth used: `"Quick"`, `"Standard"`, or `"Deep"`. `null` for non-reviewed responses. |
 | `vote` | int? | Vote cast: `10` (Approved), `5` (Approved w/ Suggestions), `-5` (Waiting for Author), `-10` (Rejected), or `null`. |
+| `promptTokens` | int? | Total prompt (input) tokens consumed across all AI calls. |
+| `completionTokens` | int? | Total completion (output) tokens consumed. |
+| `totalTokens` | int? | Sum of prompt + completion tokens. |
+| `aiDurationMs` | long? | AI inference time in milliseconds (sum of all AI calls). |
+| `estimatedCost` | decimal? | Estimated cost in USD based on model pricing and actual token usage. Requires pricing data in the model adapter. |
 
 ---
 
@@ -631,7 +791,8 @@ GET /api/review/metrics?project=OneVision&repository=MyRepo&pullRequestId=12345
       "completionTokens": 3200,
       "totalTokens": 15700,
       "aiDurationMs": 5400,
-      "totalDurationMs": 8200
+      "totalDurationMs": 8200,
+      "estimatedCost": 0.0511
     },
     {
       "reviewNumber": 2,
@@ -834,6 +995,44 @@ The deep analysis section is appended to the PR summary with a 🔍 badge. If th
 
 ---
 
+## Review Strategies
+
+The `reviewStrategy` field controls how Pass 2 (per-file review) is executed:
+
+| Strategy | Description |
+|----------|-------------|
+| **FileByFile** (default) | Each file is reviewed individually via Chat Completions. The orchestrator sends each file's diff with the Pass 1 summary as context. Best for small-to-medium PRs. |
+| **Vector** | All changed files are uploaded to an Azure OpenAI Vector Store, an Assistant is created with `file_search` capability, and the entire PR is reviewed in a single Assistants API run. Best for medium-to-large PRs with cross-file dependencies. |
+| **Auto** | Smart selection based on file count. If the number of changed files exceeds `Assistants:AutoThreshold` (default: 5), uses Vector; otherwise uses FileByFile. |
+
+### Vector Store Review Flow
+
+When the Vector strategy is used, the `VectorStoreReviewService` follows a 7-step process:
+
+```
+1. Upload all changed files to Azure OpenAI Files API (parallel, up to MaxParallelUploads)
+2. Create a Vector Store containing all uploaded files
+3. Poll until the Vector Store indexing completes
+4. Create an Assistant with file_search tool and the code review prompt
+5. Create a thread with the review request and start a run
+6. Poll until the Assistant run completes
+7. Parse the structured JSON response and clean up (delete assistant, vector store, files)
+```
+
+The service includes built-in retry logic for rate-limit errors (HTTP 429) with exponential backoff up to 5 retries. All resources (assistant, vector store, files) are cleaned up after the review completes, even on failure.
+
+**When to use each strategy:**
+
+| Scenario | Recommended Strategy |
+|----------|---------------------|
+| Small PR (1–5 files) | FileByFile |
+| Medium PR (5–15 files) | Auto or Vector |
+| Large PR (15+ files) | Vector |
+| Cross-file refactoring | Vector |
+| Quick depth mode | FileByFile (Vector is skipped) |
+
+---
+
 ## Two-Pass Review Architecture
 
 When a full review or re-review is triggered, the orchestrator uses a two-pass architecture for higher-quality results:
@@ -925,6 +1124,7 @@ Each history entry also captures AI metrics (when an AI call was made):
 - **Token Counts** — Prompt tokens, completion tokens, total tokens (aggregated across all passes).
 - **Review Depth** — The depth mode used (`Quick`, `Standard`, or `Deep`).
 - **Timing** — AI response time (`aiDurationMs`) and total end-to-end duration (`totalDurationMs`).
+- **Estimated Cost** — Cost in USD calculated from model pricing metadata and actual token usage.
 
 ---
 
@@ -946,6 +1146,100 @@ The service includes an in-memory rate limiter that prevents the same PR from be
 | `MinReviewIntervalMinutes` | `5` | Minutes to wait between reviews on the same PR. Set to `0` to disable. |
 
 > **Note:** The rate limiter is in-memory and resets when the service restarts. This is by design for simplicity; if you need persistent rate limiting across restarts or multiple instances, consider using Redis or a similar distributed cache.
+
+---
+
+## RPM-Aware Throttling & Cost Estimation
+
+### RPM-Aware Throttling
+
+During Pass 2 (per-file review), the orchestrator automatically throttles API calls based on the model's RPM (requests per minute) limit from the model adapter metadata:
+
+1. **Automatic delay calculation** — The minimum interval between API calls is calculated as `60 / RPM` seconds (e.g., 150 RPM → 400ms between calls).
+2. **Lock-free ticket system** — Each file review acquires a "ticket number" and waits the appropriate multiple of the delay interval before proceeding. This prevents thundering-herd scenarios without using locks.
+3. **Concurrency clamping** — `MaxParallelReviews` is automatically clamped to `min(configured, RPM)` so the service never launches more concurrent reviews than the model can handle.
+4. **RPM capacity warning** — Before Pass 2 begins, if the estimated number of API calls exceeds 80% of the model's RPM, a warning is logged to help identify potential throttling.
+
+This is driven entirely by the `requestsPerMinute` field in `model-adapters.json`. If no RPM data is configured, no throttling is applied.
+
+### Cost Estimation
+
+Every review response includes an `EstimatedCost` field (decimal, USD) when pricing data is available in the model adapter:
+
+- **Calculation** — `(promptTokens / 1M × inputCostPer1MTokens) + (completionTokens / 1M × outputCostPer1MTokens)`
+- **History tracking** — Each `ReviewHistoryEntry` also captures the estimated cost, enabling cost-over-time analysis via the metrics API.
+- **Pricing source** — Configured per adapter in `model-adapters.json` via `inputCostPer1MTokens` and `outputCostPer1MTokens`.
+- **Null when unavailable** — If pricing data is missing from the adapter, the field is omitted from the JSON response.
+
+**Example cost per review (typical 10-file PR at Standard depth):**
+
+| Model | ~Prompt Tokens | ~Completion Tokens | Estimated Cost |
+|-------|---------------:|------------------:|---------------:|
+| gpt-4o-mini | 25,000 | 5,000 | ~$0.007 |
+| gpt-4o | 25,000 | 5,000 | ~$0.113 |
+| o4-mini | 25,000 | 5,000 | ~$0.050 |
+
+---
+
+## Model Benchmarks & Selection
+
+The project includes a benchmark test suite (`ModelBenchmarkTests.cs`) that evaluates all configured models against **10 known-bad-code issues** to measure detection quality, latency, and cost at each review depth.
+
+### Known-Bad-Code Test Issues
+
+The benchmark uses a deliberately vulnerable C# file containing these 10 issues:
+
+| # | Issue | Category |
+|---|-------|----------|
+| 1 | Hardcoded database credentials | Security |
+| 2 | SQL injection (string concatenation) | Security |
+| 3 | Path traversal (unsanitized user input) | Security |
+| 4 | Null dereference (no null check) | Bug |
+| 5 | `HttpClient` created in a loop (socket exhaustion) | Performance |
+| 6 | Exception silently swallowed (empty catch) | Bug |
+| 7 | Sensitive data logged to console | Security |
+| 8 | `async void` method (fire-and-forget) | Bug |
+| 9 | Double `Dispose` (manual + using) | Bug |
+| 10 | API key in query string | Security |
+
+### Model Comparison
+
+Each model is tested at all three review depths. The "Quality Score" is the number of issues detected out of 10:
+
+| Model | Context | Max Out | RPM | $/1M In | $/1M Out | Quality (Std) | Speed |
+|-------|--------:|--------:|----:|--------:|---------:|:-------------:|:-----:|
+| **gpt-4o-mini** | 128K | 16K | 4,990 | $0.15 | $0.60 | 7–8/10 | Fast |
+| **gpt-4o** | 128K | 4K | 2,700 | $2.50 | $10.00 | 8–9/10 | Medium |
+| **o3-mini** | 200K | 100K | 100 | $1.10 | $4.40 | 8–9/10 | Slow |
+| **o4-mini** | 200K | 100K | 150 | $1.10 | $4.40 | 9–10/10 | Slow |
+| **gpt-5-mini** | 400K | 128K | 501 | $0.25 | $2.00 | 8–9/10 | Medium |
+
+### Selected Depth → Model Mapping
+
+Based on benchmark results, the following defaults are configured:
+
+```
+Quick    → gpt-4o-mini   (fastest, cheapest — ideal for PR summary only)
+Standard → gpt-4o-mini   (best cost/quality balance for per-file reviews)
+Deep     → o4-mini       (reasoning model — best quality for deep analysis)
+```
+
+**Why these models?**
+
+- **gpt-4o-mini** detects 7–8 out of 10 issues at ~$0.007 per review with 4,990 RPM throughput. For Quick mode (no file reviews) and Standard mode (per-file), this provides excellent value.
+- **o4-mini** detects 9–10 out of 10 issues and excels at cross-file reasoning (Deep Pass 3). The higher cost (~$0.05 per review) is justified for critical PRs and release branches.
+- **gpt-4o** provides higher quality (8–9/10) but at 16× the cost of gpt-4o-mini. Reserved for consensus mode or manual overrides.
+- **o3-mini** matches o4-mini quality with similar pricing but lower RPM (100 vs 150). o4-mini is preferred.
+
+### Running Benchmarks
+
+```bash
+# Run all benchmark tests (requires real Azure OpenAI — costs money)
+dotnet test --filter TestCategory=Benchmark
+
+# Results include per-model quality scores, token counts, latency, and estimated cost
+# Output is printed as both console tables and Markdown tables for documentation
+```
 
 ---
 
@@ -985,45 +1279,57 @@ HVO.AiCodeReview/
 │       ├── appsettings.Development.template.json # Dev config template
 │       ├── custom-instructions.json    # Optional AI review instructions
 │       ├── review-rules.json           # Layered prompt rule catalog (hot-reloadable)
+│       ├── model-adapters.json         # Per-model adapter catalog (pricing, RPM, quirks)
 │       │
 │       ├── Controllers/
 │       │   └── CodeReviewController.cs # API endpoints (w/ CancellationToken)
 │       │
 │       ├── Models/
-│       │   ├── AiProviderSettings.cs       # Multi-provider AI configuration
+│       │   ├── AiProviderSettings.cs       # Multi-provider AI configuration + DepthModels
+│       │   ├── AssistantsSettings.cs       # Assistants API / Vector Store settings
 │       │   ├── AzureDevOpsSettings.cs      # Azure DevOps configuration
 │       │   ├── AzureOpenAISettings.cs      # Legacy Azure OpenAI settings
 │       │   ├── CodeReviewResult.cs         # AI review result (summary, verdicts, comments)
-│       │   ├── FileChange.cs              # File diff with unified diff & changed ranges
+│       │   ├── DeepAnalysisResult.cs       # Pass 3 deep analysis result model
+│       │   ├── FileChange.cs               # File diff with unified diff & changed ranges
+│       │   ├── ModelAdapter.cs             # Model adapter config + CalculateCost() helper
+│       │   ├── PrSummaryResult.cs          # Pass 1 PR summary result model
 │       │   ├── PullRequestInfo.cs          # PR info from Azure DevOps
-│       │   ├── ReviewMetadata.cs           # PR properties metadata
+│       │   ├── ReviewDepth.cs              # ReviewDepth enum (Quick, Standard, Deep)
+│       │   ├── ReviewMetadata.cs           # PR properties metadata + history entries
 │       │   ├── ReviewMetricsResponse.cs    # Metrics API response DTO
 │       │   ├── ReviewProfile.cs            # Configurable review profile (thresholds, density)
-│       │   ├── ReviewRequest.cs            # POST request DTO
-│       │   ├── ReviewResponse.cs           # POST response DTO
-│       │   └── ReviewStatusUpdate.cs       # Progress tracking model
+│       │   ├── ReviewRequest.cs            # POST request DTO (depth + strategy)
+│       │   ├── ReviewResponse.cs           # POST response DTO (w/ tokens, cost)
+│       │   ├── ReviewRuleCatalog.cs        # Prompt rule catalog models
+│       │   ├── ReviewStatusUpdate.cs       # Progress tracking model
+│       │   ├── ReviewStrategy.cs           # ReviewStrategy enum (FileByFile, Vector, Auto)
+│       │   └── WorkItemInfo.cs             # Work item integration model
 │       │
 │       ├── Services/
-│       │   ├── CodeReviewOrchestrator.cs   # Two-pass review flow orchestration
+│       │   ├── CodeReviewOrchestrator.cs   # Two/three-pass review flow + RPM throttling
 │       │   ├── ICodeReviewOrchestrator.cs  # Orchestrator interface
-│       │   ├── AzureOpenAiReviewService.cs # Azure OpenAI provider implementation
+│       │   ├── AzureOpenAiReviewService.cs # Azure OpenAI Chat Completions provider
+│       │   ├── VectorStoreReviewService.cs # Azure OpenAI Assistants API + Vector Store provider
 │       │   ├── ConsensusReviewService.cs   # Multi-provider consensus aggregator
-│       │   ├── CodeReviewServiceFactory.cs # Config-driven provider factory + DI
+│       │   ├── CodeReviewServiceFactory.cs # Config-driven provider factory + DepthModels DI
+│       │   ├── DepthModelResolver.cs       # Depth → ICodeReviewService routing
 │       │   ├── ICodeReviewService.cs       # AI service interface (provider-agnostic)
 │       │   ├── AzureDevOpsService.cs       # Azure DevOps REST API client
 │       │   ├── IAzureDevOpsService.cs      # DevOps service interface
 │       │   ├── PromptAssemblyPipeline.cs   # Layered prompt assembly with hot-reload
-│       │   ├── ModelAdapterResolver.cs     # Per-model adapter preamble resolver
+│       │   ├── ModelAdapterResolver.cs     # Per-model adapter preamble + metadata resolver
 │       │   └── ReviewRateLimiter.cs        # In-memory rate limiter
 │       │
 │       └── Properties/
 │           └── launchSettings.json     # Dev launch profiles
 │
 └── tests/
-    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (219 total)
+    └── HVO.AiCodeReview.Tests/         # MSTest unit + integration tests (315 total)
         ├── HVO.AiCodeReview.Tests.csproj
         ├── appsettings.Test.json           # Test config (gitignored)
         ├── appsettings.Test.template.json  # Test config template
+        ├── MSTestSettings.cs               # MSTest parallelism configuration
         ├── ReviewLifecycleTests.cs         # 5 parallel lifecycle tests
         ├── ServiceIntegrationTests.cs      # 7 service-level tests
         ├── UnifiedDiffTests.cs             # 9 diff algorithm unit tests
@@ -1036,9 +1342,16 @@ HVO.AiCodeReview/
         ├── FileClassificationTests.cs      # 24 file classification tests
         ├── ThreadManagementTests.cs        # 17 thread management tests
         ├── BuildSummaryMarkdownTests.cs    # 10 summary formatting tests
+        ├── ReviewDepthTests.cs             # 22 depth mode + integration tests
+        ├── RaceConditionTests.cs           # 3 concurrency / thread-safety tests
+        ├── VectorStoreReviewServiceTests.cs # 24 vector store unit tests
+        ├── VectorStoreIntegrationTest.cs   # 1 live vector store integration test
+        ├── ModelBenchmarkTests.cs          # 8 model benchmark tests (5 models × 3 depths)
         ├── AiQualityVerificationTests.cs   # 3 known-bad-code LiveAI tests
-        ├── AiSmokeTest.cs                 # 2 manual AI smoke tests
-        ├── ReviewFlowIntegrationTests.cs  # Legacy lifecycle (Ignored)
+        ├── LiveAiDepthModeTests.cs         # 4 depth mode LiveAI tests
+        ├── AiSmokeTest.cs                  # 2 manual AI smoke tests
+        ├── SimulationPR63643.cs            # 1 simulation/manual test
+        ├── ReviewFlowIntegrationTests.cs   # 3 legacy lifecycle (Ignored)
         └── Helpers/
             ├── FakeCodeReviewService.cs    # Deterministic AI replacement
             ├── TestServiceBuilder.cs       # Shared DI builder (FakeAi + RealAi)
@@ -1122,17 +1435,22 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `UnifiedDiffTests.cs` | 9 | Unit | LCS-based unified diff computation and `@@ hunk @@` header parsing. Pure unit tests — no external dependencies. |
 | `MultiProviderTests.cs` | 18 | Unit | Factory tests (fallback, single, consensus, unknown type, disabled provider), consensus aggregation (overlap detection, threshold, voting, metrics), and settings binding. No external dependencies. |
 | `LayeredPromptTests.cs` | 38 | Unit | Prompt assembly pipeline tests: scope filtering, rule ordering, identity/custom-instruction toggles, cache behavior, hot-reload, model adapter injection, and edge cases. |
-| `ModelAdapterTests.cs` | 35 | Unit | Model adapter resolver tests: pattern matching, file loading, fallback behavior, multi-adapter scenarios, and caching. |
+| `ModelAdapterTests.cs` | 35 | Unit | Model adapter resolver tests: pattern matching, file loading, fallback behavior, multi-adapter scenarios, caching, pricing metadata, and cost calculation. |
 | `TwoPassReviewTests.cs` | 21 | Unit | Two-pass architecture: Pass 1 summary generation, Pass 2 cross-file context injection, merge logic, and fallback when Pass 1 fails. |
-| `ReviewDepthTests.cs` | 23 | Unit + Integration | Review depth modes: enum parsing, JSON serialization, Quick/Standard/Deep summary badges, deep analysis rendering, verdict override, Quick/Standard/Deep integration tests with disposable repos. |
+| `ReviewDepthTests.cs` | 22 | Unit + Integration | Review depth modes: enum parsing, JSON serialization, Quick/Standard/Deep summary badges, deep analysis rendering, verdict override, Quick/Standard/Deep integration tests with disposable repos. |
 | `ReviewProfileTests.cs` | 13 | Unit | Configurable review profile: severity thresholds, density settings, truncation limits, and defaults. |
 | `TruncationConfigTests.cs` | 14 | Unit | File truncation limit configuration: default 5000 lines, configurable override, edge cases. |
 | `FileClassificationTests.cs` | 24 | Unit | File type detection, binary exclusion, generated-file detection, language categorization. |
 | `ThreadManagementTests.cs` | 17 | Unit | Comment thread lifecycle: deduplication, status transitions, fixed-thread resolution, attribution tags. |
 | `BuildSummaryMarkdownTests.cs` | 10 | Unit | Summary thread Markdown formatting: file inventory, verdict display, observation tables. |
+| `RaceConditionTests.cs` | 3 | Unit | Concurrency and thread-safety tests for shared state and parallel review operations. |
+| `VectorStoreReviewServiceTests.cs` | 24 | Unit | Vector Store review service: file upload, vector store creation, assistant lifecycle, response parsing, cleanup, error handling. |
+| `VectorStoreIntegrationTest.cs` | 1 | LiveAI | Live Vector Store integration test against real Azure OpenAI Assistants API. |
+| `ModelBenchmarkTests.cs` | 8 | Benchmark | Model quality comparison: 5 individual model tests + 3 all-model comparison tests (one per depth). Runs against 10 known-bad-code issues. Produces comparison tables and cost estimates. |
 | `AiQualityVerificationTests.cs` | 3 | LiveAI | Push code with **known, deliberate issues** (hardcoded secrets, SQL injection, null derefs, resource leaks) and verify the real AI flags them. Includes a fix-and-reverify cycle. Run with `--filter TestCategory=LiveAI`. |
 | `LiveAiDepthModeTests.cs` | 4 | LiveAI | Real AI tests for all three review depth modes: Quick (no inline), Standard (inline + verdicts), Deep (+ cross-file analysis). Includes a depth comparison test that runs all 3 modes on the same multi-file known-bad code and compares output. Uses `PushMultipleFilesAsync` for cross-file scenarios. |
 | `AiSmokeTest.cs` | 2 | Manual | Manual-only tests that call real Azure OpenAI (basic prompt + JSON mode). Run with `--filter TestCategory=Manual`. |
+| `SimulationPR63643.cs` | 1 | Manual | Simulation test against a specific PR for debugging and validation. |
 | `ReviewFlowIntegrationTests.cs` | 3 (Ignored) | — | Legacy monolithic lifecycle test. Replaced by `ReviewLifecycleTests.cs`. Kept for reference. |
 
 ### Test Infrastructure
@@ -1149,13 +1467,16 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 # From repo root
 
 # All automated tests (fake AI — fast, no API cost)
-dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI'
+dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI&TestCategory!=Benchmark'
 
 # LiveAI tests only (real Azure OpenAI — costs money, slower)
 dotnet test --filter TestCategory=LiveAI
 
-# Everything including LiveAI (but not manual)
-dotnet test --filter 'TestCategory!=Manual'
+# Benchmark tests only (real Azure OpenAI — runs all models × all depths)
+dotnet test --filter TestCategory=Benchmark
+
+# Everything including LiveAI (but not manual or benchmark)
+dotnet test --filter 'TestCategory!=Manual&TestCategory!=Benchmark'
 
 # AI Smoke tests (manual)
 dotnet test --filter TestCategory=Manual
@@ -1246,15 +1567,15 @@ The `scripts/` folder contains pipeline integration helpers:
 
 Planned improvements to the testing infrastructure:
 
-| Enhancement | Description | Priority |
-|-------------|-------------|----------|
-| **Multi-model comparison** | Run the same `LiveAI` tests against different models (gpt-4o, gpt-4.1, gpt-5) and compare comment quality, latency, and cost. `TestServiceBuilder.BuildWithRealAi(modelOverride)` already supports this. | High |
+| Enhancement | Description | Status |
+|-------------|-------------|--------|
+| **Multi-model comparison** | Run the same tests against different models and compare comment quality, latency, and cost. | ✅ Done — `ModelBenchmarkTests.cs` covers 5 models × 3 depths with quality scoring and cost estimation. |
+| **Cost & latency tracking** | Instrument tests to log token usage and wall-clock time per model, enabling data-driven model selection. | ✅ Done — Benchmark tests capture token counts, latency, and estimated cost per model. `ReviewResponse` includes `EstimatedCost`. |
 | **Refactor ServiceIntegrationTests** | Migrate `ServiceIntegrationTests.cs` from its private `BuildServices()` to use `TestServiceBuilder.BuildWithFakeAi()` for consistency. | Medium |
 | **Multi-file PR edge cases** | Test PRs with 10–50 changed files to verify parallel review, density threshold, and rate limiting under load. | Medium |
 | **Large file density threshold** | Push a single file with 1000+ lines and only 2 changes to verify the density-based threshold correctly skips low-density files. | Medium |
 | **Language-specific known-bad-code** | Expand `KnownBadCode` samples beyond C# to include TypeScript, Python, Java, and SQL to test the AI's cross-language review capability. | Low |
 | **Flaky test detection** | Run `LiveAI` tests N times and track which assertions are non-deterministic due to AI variability. Adjust thresholds accordingly. | Low |
-| **Cost & latency tracking** | Instrument `LiveAI` tests to log token usage and wall-clock time per model, enabling data-driven model selection. | Low |
 | **Pipeline integration tests** | Stand up a real Azure DevOps pipeline webhook scenario end-to-end in a disposable project. | Future |
 
 ---

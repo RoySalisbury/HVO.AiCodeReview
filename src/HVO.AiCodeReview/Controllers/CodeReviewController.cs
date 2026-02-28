@@ -36,10 +36,10 @@ public class ReviewController : ControllerBase
     public async Task<IActionResult> PostReview([FromBody] ReviewRequest request, CancellationToken cancellationToken)
     {
         _logger.LogInformation(
-            "Review requested: {Project}/{Repo} PR #{PrId}{Simulation} [Depth={Depth}]",
+            "Review requested: {Project}/{Repo} PR #{PrId}{Simulation} [Depth={Depth}, Strategy={Strategy}]",
             request.ProjectName, request.RepositoryName, request.PullRequestId,
             request.SimulationOnly ? " [SIMULATION]" : "",
-            request.ReviewDepth);
+            request.ReviewDepth, request.ReviewStrategy);
 
         // V1: Use a logging-only progress handler. In V2, this would be an SSE stream writer.
         var progress = new Progress<ReviewStatusUpdate>(update =>
@@ -56,6 +56,7 @@ public class ReviewController : ControllerBase
             request.ForceReview,
             request.SimulationOnly,
             request.ReviewDepth,
+            request.ReviewStrategy,
             cancellationToken);
 
         if (response.Status == "Error")

@@ -56,6 +56,28 @@ public class ReviewResponse
     /// <summary>Justification for the verdict.</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? VerdictJustification { get; set; }
+
+    // ── Token usage metrics ─────────────────────────────────────────────────
+
+    /// <summary>Total prompt (input) tokens consumed across all AI calls.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? PromptTokens { get; set; }
+
+    /// <summary>Total completion (output) tokens consumed across all AI calls.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? CompletionTokens { get; set; }
+
+    /// <summary>Total tokens (prompt + completion) consumed across all AI calls.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? TotalTokens { get; set; }
+
+    /// <summary>Total AI inference time in milliseconds (sum of all AI calls).</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public long? AiDurationMs { get; set; }
+
+    /// <summary>Estimated cost in USD based on model pricing and token usage.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? EstimatedCost { get; set; }
 }
 
 /// <summary>Inline comment DTO for simulation responses.</summary>

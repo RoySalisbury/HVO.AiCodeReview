@@ -2065,7 +2065,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
         - Report ONLY genuine security vulnerabilities — no false positives.
         - Every finding MUST include a CWE reference when applicable.
         - Every finding MUST include a concrete remediation suggestion.
-        - If no security issues are found, return an empty findings array with riskLevel "None".
+        - If no security issues are found, return an empty findings array and set overallRiskLevel to "None".
         - Do NOT repeat issues already caught by the general code review.
 
         Respond with valid JSON matching this schema:

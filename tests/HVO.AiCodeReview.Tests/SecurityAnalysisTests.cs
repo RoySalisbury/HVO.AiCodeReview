@@ -304,7 +304,7 @@ public class SecurityAnalysisTests
         var response = new ReviewResponse { SecurityFindingCount = null, Status = "Reviewed" };
         var json = System.Text.Json.JsonSerializer.Serialize(response);
         Assert.IsFalse(json.Contains("SecurityFindingCount", StringComparison.OrdinalIgnoreCase)
-            && json.Contains("securityFindingCount"));
+            || json.Contains("securityFindingCount"));
     }
 
     // ── Prompt content tests ───────────────────────────────────────────

@@ -28,12 +28,10 @@ Thank you for your interest in contributing to HVO.AiCodeReview! This document o
 
 | Pattern | Use For |
 |---------|---------|
-| `feature/<issue#>-<short-desc>` | New features (e.g., `feature/34-rate-limit-handling`) |
-| `fix/<issue#>-<short-desc>` | Bug fixes (e.g., `fix/42-null-ref-on-empty-diff`) |
-| `docs/<issue#>-<short-desc>` | Documentation changes |
-| `refactor/<issue#>-<short-desc>` | Code refactoring with no behavior change |
+| `feature/<issue#>-<short-desc>` | New features and enhancements (e.g., `feature/34-rate-limit-handling`) |
+| `fix/<issue#>-<short-desc>` | Bug fixes and corrective changes (e.g., `fix/42-null-ref-on-empty-diff`) |
 
-Always branch from `main`.
+Always branch from `main`. Use the `feature/` or `fix/` pattern for all work, including documentation-only and refactor-only changes.
 
 ---
 

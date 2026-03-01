@@ -490,8 +490,6 @@ When using the **Vector** or **Auto** review strategy, the service interacts wit
 }
 ```
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
 | Setting | Type | Default | Required | Description |
 |---------|------|---------|----------|-------------|
 | `AutoThreshold` | `int` | `5` | No | When `reviewStrategy` is `Auto`, PRs with more than this many changed files use Vector Store; otherwise FileByFile. |

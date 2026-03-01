@@ -7,7 +7,7 @@
 - [Model Comparison (Specs)](#model-comparison-specs)
 - [Selected Depth → Model Mapping](#selected-depth--model-mapping)
 - [Security Pass Benchmark Results (2026-03-01)](#security-pass-benchmark-results-2026-03-01)
-- [Benchmark History](#benchmark-history)
+- [Benchmark History](#benchmark-history-1)
 - [Running Benchmarks](#running-benchmarks)
 
 The project includes a benchmark test suite (`ModelBenchmarkTests.cs`) that evaluates all configured models against **10 known-bad-code issues** to measure detection quality, latency, and cost at each review depth.

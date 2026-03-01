@@ -74,7 +74,7 @@ The PAT used for integration tests requires the following **additional** scope b
 
 ```bash
 # From repo root
-dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQualifiedName!~CleanupTestPR'
+dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=LiveDevOps'
 ```
 
 ## Test Categories

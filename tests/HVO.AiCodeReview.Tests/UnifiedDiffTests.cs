@@ -2,6 +2,8 @@ using AiCodeReview.Services;
 
 namespace AiCodeReview.Tests;
 
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class UnifiedDiffTests
 {

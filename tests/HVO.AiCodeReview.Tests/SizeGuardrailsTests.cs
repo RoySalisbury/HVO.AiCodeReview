@@ -7,6 +7,8 @@ namespace AiCodeReview.Tests;
 /// Unit tests for PR size guardrails: file prioritization, threshold evaluation,
 /// changed-line counting, and summary markdown integration.
 /// </summary>
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class SizeGuardrailsTests
 {

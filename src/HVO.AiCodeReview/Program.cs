@@ -54,6 +54,11 @@ builder.Services.Configure<AssistantsSettings>(
 builder.Services.Configure<SizeGuardrailsSettings>(
     builder.Configuration.GetSection(SizeGuardrailsSettings.SectionName));
 
+// Test coverage gap detection (informational observations)
+builder.Services.Configure<TestCoverageSettings>(
+    builder.Configuration.GetSection(TestCoverageSettings.SectionName));
+builder.Services.AddSingleton<TestCoverageGapDetector>();
+
 // ---------------------------------------------------------------------------
 // HTTP client for Azure DevOps API calls (with Polly resilience)
 // ---------------------------------------------------------------------------

@@ -15,6 +15,8 @@ namespace AiCodeReview.Tests;
 /// All tests use in-memory <see cref="FakeCodeReviewService"/> instances —
 /// no real AI calls are made.
 /// </summary>
+[TestCategory("Integration")]
+[TestCategory("Integration")]
 [TestClass]
 public class MultiProviderTests
 {

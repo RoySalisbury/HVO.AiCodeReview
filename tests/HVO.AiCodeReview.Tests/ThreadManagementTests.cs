@@ -7,6 +7,8 @@ namespace AiCodeReview.Tests;
 /// Unit tests for thread management: semantic deduplication, line overlap detection,
 /// reply building, and the ExistingCommentThread model extensions.
 /// </summary>
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class ThreadManagementTests
 {

@@ -11,6 +11,8 @@ namespace AiCodeReview.Tests;
 /// Covers: adapter loading, pattern matching, parameter overrides,
 /// prompt pipeline integration, fallback behavior, and shipped profiles.
 /// </summary>
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class ModelAdapterTests
 {

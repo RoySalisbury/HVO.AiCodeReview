@@ -314,10 +314,13 @@ HVO.AiCodeReview/
 
 ## Testing
 
-473 tests across unit, integration, LiveAI, and benchmark categories. Tests run against disposable Azure DevOps repositories with a 6-layer safety system to prevent accidental deletion.
+524 tests across Unit, Integration, LiveDevOps, LiveAI, Benchmark, and Manual categories. Tests run against disposable Azure DevOps repositories with a 6-layer safety system to prevent accidental deletion.
 
 ```bash
-# All automated tests (fake AI — fast, no API cost)
+# All automated tests (fake AI + fake DevOps — fast, no API cost)
+dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=LiveDevOps'
+
+# Include LiveDevOps tests (needs Azure DevOps PAT)
 dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI&TestCategory!=Benchmark'
 ```
 

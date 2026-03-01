@@ -8,6 +8,8 @@ namespace AiCodeReview.Tests;
 /// Focuses on rejection / needs-work verdicts, ensuring blocking issues
 /// are always surfaced with file paths — even when fileReviews is empty.
 /// </summary>
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class BuildSummaryMarkdownTests
 {

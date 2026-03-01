@@ -11,6 +11,8 @@ namespace AiCodeReview.Tests;
 /// Validates that MaxInputLinesPerFile flows through settings, factory, and
 /// the review service's prompt builder.
 /// </summary>
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class TruncationConfigTests
 {

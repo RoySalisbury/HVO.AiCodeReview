@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 
 namespace AiCodeReview.Tests;
 
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class RateLimitTests
 {

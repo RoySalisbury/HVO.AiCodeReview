@@ -69,6 +69,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -129,6 +131,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -193,6 +197,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

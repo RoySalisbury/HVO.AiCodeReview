@@ -18,6 +18,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private readonly SizeGuardrailsSettings _sizeGuardrails;
     private readonly IReviewRateLimiter _rateLimiter;
     private readonly IGlobalRateLimitSignal _globalRateLimitSignal;
+    private readonly TestCoverageGapDetector _coverageGapDetector;
     private readonly ITelemetryService _telemetry;
     private readonly ILogger<CodeReviewOrchestrator> _logger;
 
@@ -32,6 +33,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IOptions<SizeGuardrailsSettings> sizeGuardrails,
         IReviewRateLimiter rateLimiter,
         IGlobalRateLimitSignal globalRateLimitSignal,
+        TestCoverageGapDetector coverageGapDetector,
         ITelemetryService telemetry,
         ILogger<CodeReviewOrchestrator> logger)
     {
@@ -45,6 +47,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _sizeGuardrails = sizeGuardrails.Value;
         _rateLimiter = rateLimiter;
         _globalRateLimitSignal = globalRateLimitSignal;
+        _coverageGapDetector = coverageGapDetector;
         _telemetry = telemetry;
         _logger = logger;
     }
@@ -444,6 +447,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Replace fileChanges with only reviewable files for AI analysis
         fileChanges = reviewableFiles;
 
+        // ── Test coverage gap detection (informational) ─────────────────
+        // Run against ALL files (reviewable + skipped) so test file changes are visible
+        var allFilesForGapCheck = reviewableFiles.Concat(skippedFiles).ToList();
+        var testCoverageGaps = _coverageGapDetector.DetectGaps(allFilesForGapCheck);
+
         // ── Size guardrails: warn if PR is large, optionally trim ────────
         fileChanges = PrioritizeFiles(fileChanges);
 
@@ -657,7 +665,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 project, repository, pullRequestId, reviewResult,
                 isReReview, nextReviewNumber, metadata, workItems,
                 skippedFiles, prSummary, reviewDepth, deepAnalysis, progress,
-                sizeWarning, session);
+                sizeWarning, session, testCoverageGaps);
 
             // ── Cast reviewer vote ──────────────────────────────────────
             var vote = reviewResult.RecommendedVote;
@@ -738,7 +746,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             pullRequestId, reviewResult, lineSpecificComments,
             fileChanges, skippedFiles, isReReview, nextReviewNumber, metadata,
             workItems, prSummary, reviewDepth, deepAnalysis, totalSw, progress,
-            sizeWarning, session);
+            sizeWarning, session, testCoverageGaps);
     }
 
     // ── Extracted helpers from HandleReviewAsync ────────────────────────────
@@ -1030,14 +1038,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         DeepAnalysisResult? deepAnalysis,
         IProgress<ReviewStatusUpdate>? progress,
         string? sizeWarning = null,
-        ReviewSession? session = null)
+        ReviewSession? session = null,
+        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null)
     {
         ReportProgress(progress, ReviewStep.PostingSummary,
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -1190,11 +1199,12 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         List<WorkItemInfo>? workItems, PrSummaryResult? prSummary,
         ReviewDepth reviewDepth, DeepAnalysisResult? deepAnalysis,
         Stopwatch totalSw, IProgress<ReviewStatusUpdate>? progress,
-        string? sizeWarning = null, ReviewSession? session = null)
+        string? sizeWarning = null, ReviewSession? session = null,
+        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null)
     {
         var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps);
 
         totalSw.Stop();
 
@@ -2024,7 +2034,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int reviewNumber = 0, ReviewMetadata? priorMetadata = null, List<WorkItemInfo>? workItems = null,
         List<FileChange>? skippedFiles = null, PrSummaryResult? prSummary = null,
         ReviewDepth reviewDepth = ReviewDepth.Standard, DeepAnalysisResult? deepAnalysis = null,
-        string? sizeWarning = null, Guid? sessionId = null)
+        string? sizeWarning = null, Guid? sessionId = null,
+        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
@@ -2170,6 +2181,25 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         sb.AppendLine("---");
         sb.AppendLine();
+
+        // Test coverage gap observations (informational — does not affect verdict)
+        if (testCoverageGaps != null && testCoverageGaps.Count > 0)
+        {
+            sb.AppendLine("### :test_tube: Test Coverage Gaps");
+            sb.AppendLine();
+            sb.AppendLine("The following production files were modified without corresponding test file changes:");
+            sb.AppendLine();
+
+            foreach (var gap in testCoverageGaps)
+            {
+                sb.AppendLine($"- `{gap.ProductionFile}` ({gap.ChangeType})");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("> :information_source: This is an informational observation based on file naming conventions. " +
+                "It does not affect the review verdict. Existing tests may already cover these changes.");
+            sb.AppendLine();
+        }
 
         // Code Changes Review (only CONCERN/NEEDS WORK/REJECTED or AI-failure entries)
         var filesWithIssues = result.FileReviews

@@ -20,6 +20,8 @@ namespace AiCodeReview.Tests;
 /// Creates a disposable test repo with a PR, exercises the features, then deletes the repo.
 /// Requires a valid Azure DevOps PAT in appsettings.Test.json.
 /// </summary>
+[TestCategory("LiveDevOps")]
+[TestCategory("LiveDevOps")]
 [TestClass]
 public class ServiceIntegrationTests
 {
@@ -60,6 +62,9 @@ public class ServiceIntegrationTests
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
         services.AddSingleton<ModelAdapterResolver>(sp =>
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
+        services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

@@ -10,6 +10,8 @@ namespace AiCodeReview.Tests;
 /// <see cref="TestServiceBuilder.BuildFullyFake"/> DI builder.
 /// These tests run entirely in-memory — no Azure DevOps credentials required.
 /// </summary>
+[TestCategory("Integration")]
+[TestCategory("Integration")]
 [TestClass]
 public class FakeDevOpsServiceTests
 {

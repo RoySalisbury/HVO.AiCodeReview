@@ -10,6 +10,8 @@ namespace AiCodeReview.Tests;
 /// These test pure logic (extension handling, filename mapping, response parsing)
 /// without requiring Azure OpenAI connectivity.
 /// </summary>
+[TestCategory("Unit")]
+[TestCategory("Unit")]
 [TestClass]
 public class VectorStoreReviewServiceTests
 {

@@ -86,17 +86,87 @@ See [configuration.md](configuration.md#depth-specific-model-routing) for how to
 |------|------------|--------|---------|---------|------------|-------|
 | 2026-03-01 | 3/10 ($0.002) | 8/10 ($0.035) | 3/10 ($0.020) | 3/10 ($0.029) | 0/10 (N/A) | Standard depth, first formal benchmark |
 
+---
+
+## Security Pass Benchmark Results (2026-03-01)
+
+The security benchmark suite (`SecurityBenchmarkTests.cs`) evaluates all models on the **dedicated security analysis prompt** by calling `GenerateSecurityAnalysisAsync` directly with known-bad code containing 5 planted vulnerability families. Unlike the general benchmark, this does NOT require a DevOps repo — it's a single AI call per model, making it fast and cheap to run.
+
+### Known Security Vulnerabilities (Test Code)
+
+| # | Vulnerability | Expected CWE |
+|---|--------------|-------------|
+| 1 | Hardcoded database credentials | CWE-798/CWE-259 |
+| 2 | Hardcoded API key | CWE-798 |
+| 3 | SQL injection (string concatenation) | CWE-89 |
+| 4 | Path traversal (unsanitized file name) | CWE-22 |
+| 5 | Sensitive data logged to console | CWE-532/CWE-200 |
+
+### Results
+
+| Model | Time | Risk | Findings | Families | CWE Accuracy | CWE% | OWASP% | Remediation% | Prompt Tok | Compl Tok | Total Tok | AI ms | Est. Cost |
+|-------|------|------|----------|----------|-------------|------|--------|-------------|------------|-----------|-----------|-------|-----------|
+| gpt-4o-mini | 00:07 | Critical | 5 | 5/5 | 5/5 | 100% | 100% | 100% | 960 | 611 | 1,571 | 7,166 | $0.0005 |
+| gpt-4o | 00:05 | Critical | 5 | 5/5 | 5/5 | 100% | 100% | 100% | 960 | 612 | 1,572 | 5,092 | $0.0085 |
+| o3-mini | 00:05 | Critical | 5 | 5/5 | 5/5 | 100% | 100% | 100% | 960 | 601 | 1,561 | 5,759 | $0.0037 |
+| o4-mini | 00:05 | Critical | 5 | 5/5 | 5/5 | 100% | 100% | 100% | 960 | 636 | 1,596 | 5,643 | $0.0039 |
+| gpt-5-mini | 00:08 | Critical | 5 | 5/5 | 5/5 | 100% | 100% | 100% | 960 | 649 | 1,609 | 8,165 | $0.0015 |
+
+### Quality Scoreboard
+
+All models achieved a perfect **100/100 (A+)** on the security prompt:
+
+| Model | Families (40) | CWE Accuracy (20) | Risk Level (15) | CWE% (10) | OWASP% (10) | Remediation (5) | **Total** | **Grade** |
+|-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| gpt-4o-mini | 40.0 | 20.0 | 15.0 | 10.0 | 10.0 | 5.0 | **100.0** | **A+** |
+| gpt-4o | 40.0 | 20.0 | 15.0 | 10.0 | 10.0 | 5.0 | **100.0** | **A+** |
+| o3-mini | 40.0 | 20.0 | 15.0 | 10.0 | 10.0 | 5.0 | **100.0** | **A+** |
+| o4-mini | 40.0 | 20.0 | 15.0 | 10.0 | 10.0 | 5.0 | **100.0** | **A+** |
+| gpt-5-mini | 40.0 | 20.0 | 15.0 | 10.0 | 10.0 | 5.0 | **100.0** | **A+** |
+
+### Selected Security Pass Model
+
+Since all models deliver identical quality on the current security prompt, the selection is purely cost-driven:
+
+```
+SecurityPass → gpt-4o-mini   ($0.0005/call — 17× cheaper than gpt-4o)
+```
+
+**Why gpt-4o-mini?** Every model scored 100/100 with 5/5 vulnerability families detected, correct CWE IDs, OWASP categories, and remediation advice. gpt-4o-mini does this at $0.0005/call vs $0.0085 for gpt-4o — a 17× cost saving with zero quality loss. As the security prompt is enhanced with more complex vulnerability patterns (buffer overruns, memory safety, race conditions, etc.), this benchmark should be re-run to verify the cheapest model still suffices.
+
+---
+
+## Benchmark History
+
+### General (Standard Depth)
+
+| Date | gpt-4o-mini | gpt-4o | o3-mini | o4-mini | gpt-5-mini | Notes |
+|------|------------|--------|---------|---------|------------|-------|
+| 2026-03-01 | 3/10 ($0.002) | 8/10 ($0.035) | 3/10 ($0.020) | 3/10 ($0.029) | 0/10 (N/A) | Standard depth, first formal benchmark |
+
+### Security Pass
+
+| Date | gpt-4o-mini | gpt-4o | o3-mini | o4-mini | gpt-5-mini | Notes |
+|------|------------|--------|---------|---------|------------|-------|
+| 2026-03-01 | 100/100 ($0.0005) | 100/100 ($0.0085) | 100/100 ($0.0037) | 100/100 ($0.0039) | 100/100 ($0.0015) | All models perfect on 5 vulnerability families |
+
 ## Running Benchmarks
 
 ```bash
 # Run all benchmark tests (requires real Azure OpenAI — costs money)
 dotnet test --filter TestCategory=Benchmark
 
-# Run a single model
+# Run a single model (general benchmark)
 dotnet test --filter "FullyQualifiedName~Benchmark_gpt4o_mini"
 
 # Run all models at a specific depth
 dotnet test --filter "FullyQualifiedName~Benchmark_AllModels_Standard"
+
+# Security benchmark — all models (no DevOps needed, single AI call per model)
+dotnet test --filter "FullyQualifiedName~SecurityBenchmark_AllModels"
+
+# Security benchmark — single model
+dotnet test --filter "FullyQualifiedName~SecurityBenchmark_gpt4o_mini"
 
 # Results include per-model quality scores, token counts, latency, and estimated cost
 # Output is printed as both console tables and Markdown tables for documentation

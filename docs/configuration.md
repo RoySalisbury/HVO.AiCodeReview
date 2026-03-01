@@ -100,6 +100,8 @@ that meet the agreement threshold are retained.
 | `ActiveProvider` | string | `"azure-openai"` | Which provider key to use when Mode = single. |
 | `ConsensusThreshold` | int | `2` | In consensus mode, minimum providers that must flag a comment for it to be kept. |
 | `DepthModels` | object | `{}` | Maps review depth → provider key. See [Depth-Specific Model Routing](#depth-specific-model-routing). |
+| `PassRouting` | object | `{}` | Maps review pass → provider key. See [Per-Pass Model Routing](#per-pass-model-routing-passrouting). |
+| `SecurityPassEnabled` | bool | `false` | Global default for the dedicated security review pass. When `true`, every review includes a security pass unless overridden per-request. |
 
 ### Provider Config
 
@@ -220,7 +222,7 @@ While `DepthModels` maps the review depth to a provider, `PassRouting` maps each
       "PrSummary": "azure-openai-mini",
       "PerFileReview": "azure-openai",
       "DeepReview": "azure-openai-o4-mini",
-      "SecurityPass": "azure-openai-o4-mini",
+      "SecurityPass": "azure-openai-mini",
       "ThreadVerification": "azure-openai-mini"
     },
     "Providers": {
@@ -260,7 +262,7 @@ While `DepthModels` maps the review depth to a provider, `PassRouting` maps each
 | `PrSummary` | Pass 1 — PR-level summary generation (cross-file context). |
 | `PerFileReview` | Pass 2 — Per-file parallel review. |
 | `DeepReview` | Pass 3 — Holistic deep analysis (Deep mode only). |
-| `SecurityPass` | Security-focused pass (future use). |
+| `SecurityPass` | Dedicated security analysis — OWASP Top 10, hardcoded secrets, injection risks, auth/authz. Runs after standard/deep passes. Default model: gpt-4o-mini. |
 | `ThreadVerification` | AI verification of prior comment threads during re-review. |
 
 ### Resolution Order
@@ -282,6 +284,7 @@ Use a cheap model for summaries and thread verification, a balanced model for pe
 | `PrSummary` | gpt-4o-mini | Summary generation is lightweight — cheap model suffices. |
 | `PerFileReview` | gpt-4o | Best quality for detailed per-file review comments. |
 | `DeepReview` | o4-mini | Reasoning model for cross-file analysis and verdict consistency. |
+| `SecurityPass` | gpt-4o-mini | All models scored 100/100 on security benchmarks — mini is 17× cheaper. See [Security Benchmarks](model-benchmarks.md#security-pass-benchmark-results-2026-03-01). |
 | `ThreadVerification` | gpt-4o-mini | Thread verification is simple yes/no — cheap model suffices. |
 
 ### PassModels in Review History

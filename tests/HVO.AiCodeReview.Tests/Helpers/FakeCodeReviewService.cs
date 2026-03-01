@@ -218,6 +218,50 @@ public class FakeCodeReviewService : ICodeReviewService
     }
 
     /// <summary>
+    /// Override to return custom security analysis results. When null the default fake analysis is used.
+    /// </summary>
+    public Func<PullRequestInfo, List<FileChange>, PrSummaryResult?, SecurityAnalysisResult?>? SecurityAnalysisFactory { get; set; }
+
+    /// <summary>
+    /// Fake security analysis generation for the dedicated security pass.
+    /// Returns a deterministic result or delegates to SecurityAnalysisFactory.
+    /// </summary>
+    public Task<SecurityAnalysisResult?> GenerateSecurityAnalysisAsync(
+        PullRequestInfo pullRequest,
+        List<FileChange> fileChanges,
+        PrSummaryResult? prSummary = null)
+    {
+        if (SecurityAnalysisFactory is not null)
+            return Task.FromResult(SecurityAnalysisFactory(pullRequest, fileChanges, prSummary));
+
+        var result = new SecurityAnalysisResult
+        {
+            ExecutiveSummary = $"Fake security analysis for PR #{pullRequest.PullRequestId}. No critical issues found.",
+            OverallRiskLevel = "Low",
+            Findings = new List<SecurityFinding>
+            {
+                new SecurityFinding
+                {
+                    Severity = "Critical",
+                    CweId = "CWE-79",
+                    OwaspCategory = "A03:2021 — Injection",
+                    Description = "Fake finding: potential XSS in user-rendered content.",
+                    FilePath = fileChanges.FirstOrDefault()?.FilePath ?? "unknown.cs",
+                    LineNumber = 42,
+                    Remediation = "Sanitize output before rendering to the browser.",
+                },
+            },
+            ModelName = "fake-model",
+            PromptTokens = 150,
+            CompletionTokens = 80,
+            TotalTokens = 230,
+            AiDurationMs = 15,
+        };
+
+        return Task.FromResult<SecurityAnalysisResult?>(result);
+    }
+
+    /// <summary>
     /// Returns exactly 2 inline comments per file — these are deterministic
     /// so the dedup logic can match them on subsequent calls.
     /// </summary>

@@ -228,6 +228,75 @@ public static class TestServiceBuilder
             fakeService: null,
             usesRealAi: true);
     }
+
+    /// <summary>
+    /// Builds the DI container with REAL AI but a <see cref="FakeDevOpsService"/>.
+    /// Use for tests that need live AI responses (e.g. validating prompt quality,
+    /// security analysis output) without requiring a real Azure DevOps repo.
+    /// This is cheaper and faster than <see cref="BuildWithRealAi"/> since it
+    /// avoids all DevOps API calls and disposable repo setup.
+    /// </summary>
+    public static TestContext BuildWithRealAiAndFakeDevOps(
+        string? modelOverride = null,
+        FakeDevOpsService? fakeDevOps = null,
+        IConfiguration? config = null)
+    {
+        config ??= LoadConfig();
+
+        if (!string.IsNullOrEmpty(modelOverride))
+        {
+            config = new ConfigurationBuilder()
+                .AddConfiguration(config)
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["AzureOpenAI:DeploymentName"] = modelOverride,
+                    ["AiProvider:Providers:azure-openai:Model"] = modelOverride,
+                })
+                .Build();
+        }
+
+        var devOps = fakeDevOps ?? new FakeDevOpsService();
+        var devOpsSettings = config.GetSection("AzureDevOps").Get<AzureDevOpsSettings>()!;
+        var project = config["TestSettings:Project"]!;
+
+        var services = new ServiceCollection();
+        services.AddLogging(b => { b.AddConsole(); b.SetMinimumLevel(LogLevel.Information); });
+        services.Configure<AzureDevOpsSettings>(config.GetSection("AzureDevOps"));
+        services.Configure<AiProviderSettings>(config.GetSection("AiProvider"));
+        services.Configure<AzureOpenAISettings>(config.GetSection("AzureOpenAI"));
+        services.Configure<AssistantsSettings>(config.GetSection("Assistants"));
+        services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
+        services.AddSingleton<IDevOpsService>(devOps);      // Fake DevOps
+        services.AddHttpClient();
+        services.AddCodeReviewService(config);               // Real AI
+        services.AddSingleton<ModelAdapterResolver>(sp =>
+            new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
+        services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
+        services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
+        services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
+        services.AddScoped<VectorStoreReviewService>();
+        services.AddScoped<ArchitectureContextProvider>();
+        services.AddTransient<CodeReviewOrchestrator>();
+
+        var sp = services.BuildServiceProvider();
+
+        var modelName = config["AiProvider:Providers:azure-openai:Model"]
+                     ?? config["AzureOpenAI:DeploymentName"]
+                     ?? "default";
+        Console.WriteLine($"  [TestServiceBuilder] Using REAL AI + FAKE DevOps: model={modelName}");
+
+        return new TestContext(
+            sp,
+            sp.GetRequiredService<CodeReviewOrchestrator>(),
+            sp.GetRequiredService<IDevOpsService>(),
+            devOpsSettings,
+            project,
+            fakeService: null,
+            usesRealAi: true,
+            fakeDevOps: devOps);
+    }
 }
 
 /// <summary>

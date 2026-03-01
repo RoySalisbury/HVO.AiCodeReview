@@ -139,7 +139,8 @@ public class PassModelResolverTests
         Assert.AreEqual("gpt-4o", resolver.GetService(ReviewPass.PerFileReview).ModelName);
         Assert.AreEqual("o1-preview", resolver.GetService(ReviewPass.DeepReview).ModelName);
         Assert.AreEqual("gpt-4o-mini", resolver.GetService(ReviewPass.ThreadVerification).ModelName);
-        // SecurityPass has no mapping → falls back to default
+        // SecurityPass has no explicit mapping here → falls back to default
+        // (in production, appsettings.json routes SecurityPass → azure-openai-mini)
         Assert.AreEqual("default-model", resolver.GetService(ReviewPass.SecurityPass).ModelName);
     }
 
@@ -245,6 +246,41 @@ public class PassModelResolverTests
             "PerFileReview has no pass routing → falls back to active provider (gpt-4o)");
         Assert.AreEqual("gpt-4o", resolver.GetService(ReviewPass.DeepReview).ModelName,
             "DeepReview has no pass routing → falls back to active provider (gpt-4o)");
+    }
+
+    [TestMethod]
+    [TestCategory("Unit")]
+    public void DI_SecurityPass_RoutesToMiniByDefault()
+    {
+        // Arrange: mirror production appsettings.json — SecurityPass → mini-provider
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiProvider:ActiveProvider"] = "default-provider",
+                ["AiProvider:Providers:default-provider:Type"] = "azure-openai",
+                ["AiProvider:Providers:default-provider:Endpoint"] = "https://test.openai.azure.com/",
+                ["AiProvider:Providers:default-provider:ApiKey"] = "fake-key",
+                ["AiProvider:Providers:default-provider:Model"] = "gpt-4o",
+                ["AiProvider:Providers:mini-provider:Type"] = "azure-openai",
+                ["AiProvider:Providers:mini-provider:Endpoint"] = "https://test.openai.azure.com/",
+                ["AiProvider:Providers:mini-provider:ApiKey"] = "fake-key",
+                ["AiProvider:Providers:mini-provider:Model"] = "gpt-4o-mini",
+                ["AiProvider:PassRouting:SecurityPass"] = "mini-provider",
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddCodeReviewService(config);
+
+        var sp = services.BuildServiceProvider();
+        var resolver = sp.GetRequiredService<ICodeReviewServiceResolver>();
+
+        // Act & Assert
+        Assert.AreEqual("gpt-4o-mini", resolver.GetService(ReviewPass.SecurityPass).ModelName,
+            "SecurityPass should route to gpt-4o-mini (cheapest model, equal quality per benchmark)");
+        Assert.AreEqual("gpt-4o", resolver.GetService(ReviewPass.PerFileReview).ModelName,
+            "Other passes should fall back to default provider");
     }
 
     // ── Orchestrator integration (verifies resolver is wired correctly) ───

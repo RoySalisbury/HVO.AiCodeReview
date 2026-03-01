@@ -26,6 +26,7 @@ Content-Type: application/json
 | `pullRequestId` | int | Yes | — | Pull request ID (must be > 0). |
 | `reviewDepth` | string | No | `"Standard"` | Review depth mode: `"Quick"`, `"Standard"`, or `"Deep"`. See [Review Depth Modes](architecture.md#review-depth-modes). |
 | `reviewStrategy` | string | No | `"FileByFile"` | Pass 2 strategy: `"FileByFile"`, `"Vector"`, or `"Auto"`. See [Review Strategies](architecture.md#review-strategies). |
+| `enableSecurityPass` | bool? | No | `null` | Enable/disable the dedicated security review pass for this request. `true` = always run, `false` = never run, `null` = use global `AiProvider:SecurityPassEnabled` setting. |
 
 **Response — Reviewed (Full Review or Re-Review):**
 
@@ -140,6 +141,7 @@ The `Location` header contains the status polling URL: `/api/review/status/{sess
 | `totalTokens` | int? | Sum of prompt + completion tokens. |
 | `aiDurationMs` | long? | AI inference time in milliseconds (sum of all AI calls). |
 | `estimatedCost` | decimal? | Estimated cost in USD based on model pricing and actual token usage. Requires pricing data in the model adapter. |
+| `securityFindingCount` | int? | Number of security findings from the dedicated security pass. `null` when the security pass was not enabled. |
 | `deltaInfo` | object? | Delta (incremental) review details. Present only for re-reviews where a subset of files were reviewed. See [DeltaInfo Object](#deltainfo-object). |
 
 #### DeltaInfo Object

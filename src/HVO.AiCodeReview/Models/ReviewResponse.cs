@@ -29,6 +29,10 @@ public class ReviewResponse
     /// <summary>Number of info/observation issues.</summary>
     public int InfoCount { get; set; }
 
+    /// <summary>Number of security findings from the dedicated security pass. Null when the security pass was not enabled.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? SecurityFindingCount { get; set; }
+
     /// <summary>Error message if Status is "Error".</summary>
     public string? ErrorMessage { get; set; }
 

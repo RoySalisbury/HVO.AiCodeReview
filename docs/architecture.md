@@ -70,9 +70,10 @@
 5. **Pass 1** generates a PR-level summary (cross-file context, work item alignment) using full diff context. In **Quick** mode, the orchestrator derives a verdict from risk areas and returns immediately — no inline comments.
 6. **Pass 2** (Standard and Deep only) reviews each file in parallel (controlled by `MaxParallelReviews`), injecting the Pass 1 summary for cross-file awareness. The **PromptAssemblyPipeline** builds prompts from the versioned rule catalog; the **ModelAdapterResolver** injects model-specific tuning.
 7. **Pass 3** (Deep only) performs a holistic re-evaluation of the entire PR — executive summary, cross-file issues, verdict consistency check, risk level, and recommendations. Can override the verdict if inconsistent.
-8. The **CodeReviewServiceFactory** creates either a single-provider or **ConsensusReviewService** (fan-out to multiple AI models, merge by agreement threshold).
-9. AI responses are validated, inline comments are filtered by changed-line proximity and density thresholds, and false positives are detected.
-10. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
+8. **Security Pass** (optional, any depth) — when enabled via `SecurityPassEnabled` or per-request `enableSecurityPass`, a dedicated security analysis runs after the standard/deep passes. Evaluates OWASP Top 10, hardcoded secrets, injection risks, and auth/authz patterns. Results are appended to the PR summary with risk badges and CWE/OWASP references.
+9. The **CodeReviewServiceFactory** creates either a single-provider or **ConsensusReviewService** (fan-out to multiple AI models, merge by agreement threshold).
+10. AI responses are validated, inline comments are filtered by changed-line proximity and density thresholds, and false positives are detected.
+11. Results are posted back to the PR as inline comments, a summary thread, reviewer vote, tag, metadata, and history.
 
 ---
 
@@ -125,6 +126,7 @@ HandleReviewAsync()
   ├── Pass 1 (PR Summary)     → GetServiceForPass(PrSummary, depth)     → gpt-4o-mini
   ├── Pass 2 (Per-File)        → GetServiceForPass(PerFileReview, depth) → gpt-4o
   ├── Pass 3 (Deep Analysis)   → GetServiceForPass(DeepReview, depth)    → o4-mini
+  ├── Security Pass (optional)  → GetServiceForPass(SecurityPass, depth)  → gpt-4o-mini
   └── Thread Verification      → GetServiceForPass(ThreadVerification, depth) → gpt-4o-mini
 ```
 

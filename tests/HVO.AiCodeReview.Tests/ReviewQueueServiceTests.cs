@@ -480,7 +480,8 @@ public class ReviewQueueServiceTests
             ReviewDepth reviewDepth = ReviewDepth.Standard,
             ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
             CancellationToken cancellationToken = default,
-            ReviewSession? session = null)
+            ReviewSession? session = null,
+            bool? enableSecurityPass = null)
         {
             await Task.Delay(_delay, cancellationToken);
             session?.Complete("Approved");
@@ -502,7 +503,8 @@ public class ReviewQueueServiceTests
             ReviewDepth reviewDepth = ReviewDepth.Standard,
             ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
             CancellationToken cancellationToken = default,
-            ReviewSession? session = null)
+            ReviewSession? session = null,
+            bool? enableSecurityPass = null)
         {
             throw new InvalidOperationException("Simulated orchestrator failure");
         }
@@ -525,7 +527,8 @@ public class ReviewQueueServiceTests
             ReviewDepth reviewDepth = ReviewDepth.Standard,
             ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
             CancellationToken cancellationToken = default,
-            ReviewSession? session = null)
+            ReviewSession? session = null,
+            bool? enableSecurityPass = null)
         {
             var index = Interlocked.Increment(ref _callIndex);
             _onCall(index); // may throw to simulate failure
@@ -554,7 +557,8 @@ public class ReviewQueueServiceTests
             ReviewDepth reviewDepth = ReviewDepth.Standard,
             ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
             CancellationToken cancellationToken = default,
-            ReviewSession? session = null)
+            ReviewSession? session = null,
+            bool? enableSecurityPass = null)
         {
             progress?.Report(new ReviewStatusUpdate
             {
@@ -590,7 +594,8 @@ public class ReviewQueueServiceTests
             ReviewDepth reviewDepth = ReviewDepth.Standard,
             ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
             CancellationToken cancellationToken = default,
-            ReviewSession? session = null)
+            ReviewSession? session = null,
+            bool? enableSecurityPass = null)
         {
             await _blockOn.WaitAsync(cancellationToken);
             session?.Complete("Approved");

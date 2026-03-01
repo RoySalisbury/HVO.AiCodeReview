@@ -278,11 +278,11 @@ public class ReviewControllerTests
         string project = "TestProject",
         string repo = "TestRepo",
         int prId = 1) => new()
-    {
-        ProjectName = project,
-        RepositoryName = repo,
-        PullRequestId = prId
-    };
+        {
+            ProjectName = project,
+            RepositoryName = repo,
+            PullRequestId = prId
+        };
 
     /// <summary>
     /// Minimal fake orchestrator that records calls and returns a preset response.
@@ -304,7 +304,8 @@ public class ReviewControllerTests
             ReviewDepth reviewDepth = ReviewDepth.Standard,
             ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
             CancellationToken cancellationToken = default,
-            ReviewSession? session = null)
+            ReviewSession? session = null,
+            bool? enableSecurityPass = null)
         {
             LastProject = project;
             LastRepository = repository;

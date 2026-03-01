@@ -90,6 +90,9 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `VectorStoreReviewServiceTests.cs` | 24 | Unit | Vector Store review service: file upload, vector store creation, assistant lifecycle, response parsing, cleanup, error handling. |
 | `VectorStoreIntegrationTest.cs` | 1 | LiveAI | Live Vector Store integration test against real Azure OpenAI Assistants API. |
 | `ModelBenchmarkTests.cs` | 8 | Benchmark | Model quality comparison: 5 individual model tests + 3 all-model comparison tests (one per depth). Runs against 10 known-bad-code issues. Produces comparison tables and cost estimates. |
+| `SecurityBenchmarkTests.cs` | 6 | Benchmark | Security pass model comparison: 5 individual model tests + 1 all-model comparison. Calls `GenerateSecurityAnalysisAsync` directly with known-bad code (no DevOps needed). Scores: family detection, CWE accuracy, OWASP/remediation coverage, composite 0–100 quality score with letter grade. |
+| `SecurityAnalysisTests.cs` | 30 | Unit | Security pass: model defaults, JSON roundtrip, FakeService, BuildSummaryMarkdown rendering (risk badges, CWE/OWASP, no CWE), prompt content, orchestrator integration (enabled/disabled/depths/factories), ReviewRequest/AiProviderSettings/ReviewResponse defaults. |
+| `LiveAiSecurityPassTests.cs` | 2 | LiveAI | Live AI security pass: known-bad code (detects ≥2 vulnerability families, ≥Medium risk, CWE references, remediation) and clean code (None/Low risk). Uses `BuildWithRealAiAndFakeDevOps`. |
 | `AiQualityVerificationTests.cs` | 3 | LiveAI | Push code with **known, deliberate issues** (hardcoded secrets, SQL injection, null derefs, resource leaks) and verify the real AI flags them. Includes a fix-and-reverify cycle. Run with `--filter TestCategory=LiveAI`. |
 | `LiveAiDepthModeTests.cs` | 4 | LiveAI | Real AI tests for all three review depth modes: Quick (no inline), Standard (inline + verdicts), Deep (+ cross-file analysis). Includes a depth comparison test that runs all 3 modes on the same multi-file known-bad code and compares output. Uses `PushMultipleFilesAsync` for cross-file scenarios. |
 | `AiSmokeTest.cs` | 2 | Manual | Manual-only tests that call real Azure OpenAI (basic prompt + JSON mode). Run with `--filter TestCategory=Manual`. |
@@ -109,9 +112,9 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 
 | Component | Purpose |
 |-----------|---------|
-| `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildFullyFake()` registers both `FakeCodeReviewService` and `FakeDevOpsService` for pure-logic tests with no external dependencies. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. |
+| `TestServiceBuilder.cs` | Shared DI container builder. `BuildWithFakeAi()` registers `FakeCodeReviewService` for deterministic tests. `BuildFullyFake()` registers both `FakeCodeReviewService` and `FakeDevOpsService` for pure-logic tests with no external dependencies. `BuildWithRealAi(modelOverride?)` registers the real `CodeReviewService` and optionally overrides the AI model deployment name. `BuildWithRealAiAndFakeDevOps()` uses real AI with a fake DevOps backend — ideal for testing AI prompt quality without needing a real Azure DevOps repo. |
 | `TestPullRequestHelper.cs` | Creates/manages disposable test repos with the 6-layer safety system (instance tracking, never-delete list, name prefix, marker file, creation recency, PAT ACL verification). Supports single-file (`PushNewCommitAsync`) and multi-file (`PushMultipleFilesAsync`) pushes for cross-file analysis testing. |
-| `FakeCodeReviewService.cs` | Deterministic fake with `ResultFactory`, `VerificationResultFactory`, and `DeepAnalysisFactory` for custom per-test behavior. Supports `ModelNameOverride` for per-pass model routing tests. Produces 2 stable inline comments per file for dedup testing. |
+| `FakeCodeReviewService.cs` | Deterministic fake with `ResultFactory`, `VerificationResultFactory`, `DeepAnalysisFactory`, and `SecurityAnalysisFactory` for custom per-test behavior. Supports `ModelNameOverride` for per-pass model routing tests. Produces 2 stable inline comments per file for dedup testing. |
 | `FakeDevOpsService.cs` | In-memory fake `IDevOpsService` that stores all state locally. Lets tests exercise the full orchestrator + dedup + metadata pipeline without calling a real Azure DevOps backend. Supports seed methods and factory overrides for custom test data. |
 
 ## Running Tests
@@ -133,6 +136,9 @@ dotnet test --filter TestCategory=LiveDevOps
 
 # Benchmark tests only (real Azure OpenAI — runs all models × all depths)
 dotnet test --filter TestCategory=Benchmark
+
+# Security benchmark only (real AI, no DevOps — compares models on security prompt)
+dotnet test --filter "TestCategory=Benchmark&FullyQualifiedName~SecurityBenchmark"
 
 # Everything including LiveAI (but not manual or benchmark)
 dotnet test --filter 'TestCategory!=Manual&TestCategory!=Benchmark'

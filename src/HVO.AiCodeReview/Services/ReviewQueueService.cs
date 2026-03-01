@@ -176,7 +176,8 @@ public class ReviewQueueService : BackgroundService
                 request.ReviewDepth,
                 request.ReviewStrategy,
                 linkedCts.Token,
-                session);
+                session,
+                request.EnableSecurityPass);
 
             // Store the response on the work item so the status endpoint can return it
             workItem.Response = response;

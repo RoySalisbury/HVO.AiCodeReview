@@ -658,6 +658,17 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             [ReviewPass.PrSummary.ToString()] = pass1Service.ModelName,
         };
 
+        // ── Security Pass — start in parallel with Pass 2/3 ─────────────
+        SecurityAnalysisResult? securityAnalysis = null;
+        var securityEnabled = enableSecurityPass ?? _aiProviderSettings.SecurityPassEnabled;
+        Task<SecurityAnalysisResult?>? securityTask = null;
+        if (securityEnabled)
+        {
+            var securityService = GetServiceForPass(ReviewPass.SecurityPass, reviewDepth);
+            passModels[ReviewPass.SecurityPass.ToString()] = securityService.ModelName;
+            securityTask = securityService.GenerateSecurityAnalysisAsync(prInfo, fileChanges, prSummary);
+        }
+
         // ── Quick mode: Pass 1 only — skip per-file reviews ────────────
         CodeReviewResult reviewResult;
         DeepAnalysisResult? deepAnalysis = null;
@@ -702,19 +713,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Store aggregated pass model information
         reviewResult.PassModels = passModels;
 
-        // ── Security Pass (optional, runs after standard/deep passes) ───
-        SecurityAnalysisResult? securityAnalysis = null;
-        var securityEnabled = enableSecurityPass ?? _aiProviderSettings.SecurityPassEnabled;
-        if (securityEnabled)
+        // ── Await security pass results ───────────────────────────────────
+        if (securityTask != null)
         {
             try
             {
                 ReportProgress(progress, ReviewStep.AnalyzingCode, "Running dedicated security analysis...", 55);
-                var securityService = GetServiceForPass(ReviewPass.SecurityPass, reviewDepth);
-                passModels[ReviewPass.SecurityPass.ToString()] = securityService.ModelName;
-
-                securityAnalysis = await securityService.GenerateSecurityAnalysisAsync(
-                    prInfo, fileChanges, prSummary);
+                securityAnalysis = await securityTask;
 
                 if (securityAnalysis != null)
                 {

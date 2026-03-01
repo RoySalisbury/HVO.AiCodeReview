@@ -81,6 +81,12 @@ public class ReviewResponse
     /// <summary>Estimated cost in USD based on model pricing and token usage.</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public decimal? EstimatedCost { get; set; }
+
+    // ── Incremental (delta) review information ──────────────────────────────
+
+    /// <summary>Delta review details when a re-review only processed changed files. Null for full reviews.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DeltaReviewInfo? DeltaInfo { get; set; }
 }
 
 /// <summary>Inline comment DTO for simulation responses.</summary>

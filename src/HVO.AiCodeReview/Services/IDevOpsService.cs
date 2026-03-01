@@ -74,6 +74,14 @@ public interface IDevOpsService : IDisposable
     Task<List<WorkItemComment>> GetWorkItemCommentsAsync(string project, int workItemId);
 
     /// <summary>
+    /// Get the set of file paths that changed between two iterations.
+    /// Used for incremental (delta) reviews to identify which files need re-review.
+    /// Returns an empty set if the iteration range is invalid or the API call fails.
+    /// </summary>
+    Task<HashSet<string>> GetIterationChangesAsync(string project, string repository, int pullRequestId,
+        int baseIteration, int targetIteration);
+
+    /// <summary>
     /// Resolve the service account identity ID (from config or auto-discovery).
     /// Useful for health checks to verify Azure DevOps connectivity.
     /// </summary>

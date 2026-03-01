@@ -482,6 +482,69 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 $"{deferredFiles.Count} lower-priority file(s) were deferred.";
         }
 
+        // ── Delta (incremental) review: only re-review changed files ────
+        DeltaReviewInfo? deltaInfo = null;
+        var carriedForwardFiles = new List<FileChange>();
+
+        if (isReReview && metadata.HasPreviousReview
+            && metadata.LastReviewedIteration > 0
+            && currentIteration > metadata.LastReviewedIteration)
+        {
+            ReportProgress(progress, ReviewStep.RetrievingChanges,
+                "Comparing iterations for incremental review...", 22);
+
+            var changedPaths = await _devOpsService.GetIterationChangesAsync(
+                project, repository, pullRequestId,
+                metadata.LastReviewedIteration, currentIteration);
+
+            if (changedPaths.Count > 0 && changedPaths.Count < fileChanges.Count)
+            {
+                // Split into delta (changed since last review) vs carried-forward (unchanged)
+                var deltaFiles = new List<FileChange>();
+
+                foreach (var fc in fileChanges)
+                {
+                    if (changedPaths.Contains(fc.FilePath))
+                        deltaFiles.Add(fc);
+                    else
+                        carriedForwardFiles.Add(fc);
+                }
+
+                deltaInfo = new DeltaReviewInfo
+                {
+                    IsDeltaReview = true,
+                    BaseIteration = metadata.LastReviewedIteration,
+                    CurrentIteration = currentIteration,
+                    TotalFilesInPr = allFileCount,
+                    DeltaFilesReviewed = deltaFiles.Count,
+                    CarriedForwardFiles = carriedForwardFiles.Count,
+                    ChangedFilePaths = deltaFiles.Select(f => f.FilePath).ToList(),
+                    CarriedForwardFilePaths = carriedForwardFiles.Select(f => f.FilePath).ToList(),
+                };
+
+                _logger.LogInformation(
+                    "{Label}: Incremental review — {Delta} files changed (iter {Base}→{Current}), " +
+                    "{CarriedForward} files carried forward from prior review",
+                    reviewLabel, deltaFiles.Count, metadata.LastReviewedIteration,
+                    currentIteration, carriedForwardFiles.Count);
+
+                // Only send delta files to AI for review
+                fileChanges = deltaFiles;
+            }
+            else if (changedPaths.Count == 0)
+            {
+                _logger.LogInformation(
+                    "{Label}: Iteration changes API returned 0 files — proceeding with full review of all {Count} files",
+                    reviewLabel, fileChanges.Count);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "{Label}: All {Count} reviewable files changed since last review — full review",
+                    reviewLabel, fileChanges.Count);
+            }
+        }
+
         if (fileChanges.Count == 0)
         {
             _logger.LogWarning("No reviewable file changes found for PR #{PrId}", pullRequestId);
@@ -648,6 +711,19 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             ? $"\n\n_[{attributionTag}]_"
             : "";
 
+        // ── Estimate token savings for delta reviews ────────────────────
+        if (deltaInfo is { IsDeltaReview: true, DeltaFilesReviewed: > 0 }
+            && reviewResult.TotalTokens is > 0)
+        {
+            // Proportion of tokens saved ≈ carried-forward share of total files
+            var totalReviewable = deltaInfo.DeltaFilesReviewed + deltaInfo.CarriedForwardFiles;
+            if (totalReviewable > 0)
+            {
+                var ratio = (double)deltaInfo.CarriedForwardFiles / totalReviewable;
+                deltaInfo.EstimatedTokenSavings = (int)(reviewResult.TotalTokens.Value / (1.0 - ratio) * ratio);
+            }
+        }
+
         if (!simulationOnly)
         {
             // ── Post inline comments (with thread resolution + dedup) ────
@@ -665,7 +741,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 project, repository, pullRequestId, reviewResult,
                 isReReview, nextReviewNumber, metadata, workItems,
                 skippedFiles, prSummary, reviewDepth, deepAnalysis, progress,
-                sizeWarning, session, testCoverageGaps);
+                sizeWarning, session, testCoverageGaps, deltaInfo);
 
             // ── Cast reviewer vote ──────────────────────────────────────
             var vote = reviewResult.RecommendedVote;
@@ -683,7 +759,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 project, repository, pullRequestId, prInfo, currentIteration,
                 isReReview, reviewResult, postedComments, fileChanges,
                 voteFailed, voteSkipped, vote, reviewDepth, estimatedCost,
-                totalSw, session);
+                totalSw, session, deltaInfo);
 
             // ── Build and return response ───────────────────────────────
             var completionMsg = BuildCompletionMessage(
@@ -717,7 +793,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 _telemetry.RecordMetric("review.ai_duration_ms", reviewResult.AiDurationMs.Value);
 
             return BuildReviewResponse(reviewResult, reviewDepth, summaryMarkdown,
-                voteFailed, voteSkipped, vote, estimatedCost, session);
+                voteFailed, voteSkipped, vote, estimatedCost, session, deltaInfo);
         }
 
         // ── Simulation path: build summary but don't post anything ──────
@@ -746,7 +822,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             pullRequestId, reviewResult, lineSpecificComments,
             fileChanges, skippedFiles, isReReview, nextReviewNumber, metadata,
             workItems, prSummary, reviewDepth, deepAnalysis, totalSw, progress,
-            sizeWarning, session, testCoverageGaps);
+            sizeWarning, session, testCoverageGaps, deltaInfo);
     }
 
     // ── Extracted helpers from HandleReviewAsync ────────────────────────────
@@ -1039,14 +1115,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IProgress<ReviewStatusUpdate>? progress,
         string? sizeWarning = null,
         ReviewSession? session = null,
-        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null)
+        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null,
+        DeltaReviewInfo? deltaInfo = null)
     {
         ReportProgress(progress, ReviewStep.PostingSummary,
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -1111,7 +1188,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         int postedComments, List<FileChange> fileChanges,
         bool voteFailed, bool voteSkipped, int vote,
         ReviewDepth reviewDepth, decimal? estimatedCost,
-        Stopwatch totalSw, ReviewSession? session = null)
+        Stopwatch totalSw, ReviewSession? session = null,
+        DeltaReviewInfo? deltaInfo = null)
     {
         var historyEntry = new ReviewHistoryEntry
         {
@@ -1134,6 +1212,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             EstimatedCost = estimatedCost,
             ReviewDepth = reviewDepth.ToString(),
             PassModels = reviewResult.PassModels,
+            // Delta review metrics
+            IsDeltaReview = deltaInfo?.IsDeltaReview ?? false,
+            DeltaFilesReviewed = deltaInfo?.DeltaFilesReviewed ?? 0,
+            CarriedForwardFiles = deltaInfo?.CarriedForwardFiles ?? 0,
         };
         await UpdateMetadataAndTag(project, repository, pullRequestId, prInfo, currentIteration,
             !voteFailed && !voteSkipped, historyEntry);
@@ -1159,7 +1241,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private static ReviewResponse BuildReviewResponse(
         CodeReviewResult reviewResult, ReviewDepth reviewDepth,
         string summaryMarkdown, bool voteFailed, bool voteSkipped,
-        int vote, decimal? estimatedCost, ReviewSession? session = null)
+        int vote, decimal? estimatedCost, ReviewSession? session = null,
+        DeltaReviewInfo? deltaInfo = null)
     {
         int errors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
         int warnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
@@ -1185,6 +1268,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             TotalTokens = reviewResult.TotalTokens,
             AiDurationMs = reviewResult.AiDurationMs,
             EstimatedCost = estimatedCost,
+            DeltaInfo = deltaInfo,
         };
     }
 
@@ -1200,11 +1284,12 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         ReviewDepth reviewDepth, DeepAnalysisResult? deepAnalysis,
         Stopwatch totalSw, IProgress<ReviewStatusUpdate>? progress,
         string? sizeWarning = null, ReviewSession? session = null,
-        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null)
+        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null,
+        DeltaReviewInfo? deltaInfo = null)
     {
         var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo);
 
         totalSw.Stop();
 
@@ -1233,6 +1318,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             Vote = simVote,
             Verdict = reviewResult.Summary.Verdict,
             VerdictJustification = reviewResult.Summary.VerdictJustification,
+            DeltaInfo = deltaInfo,
             PromptTokens = reviewResult.PromptTokens,
             CompletionTokens = reviewResult.CompletionTokens,
             TotalTokens = reviewResult.TotalTokens,
@@ -2035,7 +2121,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         List<FileChange>? skippedFiles = null, PrSummaryResult? prSummary = null,
         ReviewDepth reviewDepth = ReviewDepth.Standard, DeepAnalysisResult? deepAnalysis = null,
         string? sizeWarning = null, Guid? sessionId = null,
-        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null)
+        List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null,
+        DeltaReviewInfo? deltaInfo = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
@@ -2266,6 +2353,52 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
         // ── Acceptance Criteria / Definition of Done Analysis ────────────
         AppendAcceptanceCriteriaSection(sb, result, workItems);
+
+        // ── Incremental (Delta) Review Summary ─────────────────────────
+        if (deltaInfo is { IsDeltaReview: true })
+        {
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine("### :arrows_counterclockwise: Incremental Review");
+            sb.AppendLine();
+            sb.AppendLine($"This review analyzed only the files changed since the last review (iteration {deltaInfo.BaseIteration} → {deltaInfo.CurrentIteration}).");
+            sb.AppendLine();
+            sb.AppendLine($"| Metric | Count |");
+            sb.AppendLine($"|--------|------:|");
+            sb.AppendLine($"| Total files in PR | {deltaInfo.TotalFilesInPr} |");
+            sb.AppendLine($"| Files reviewed (delta) | {deltaInfo.DeltaFilesReviewed} |");
+            sb.AppendLine($"| Files carried forward | {deltaInfo.CarriedForwardFiles} |");
+            if (deltaInfo.EstimatedTokenSavings > 0)
+            {
+                sb.AppendLine($"| Estimated token savings | ~{deltaInfo.EstimatedTokenSavings:N0} |");
+            }
+            sb.AppendLine();
+
+            if (deltaInfo.ChangedFilePaths.Count > 0)
+            {
+                sb.AppendLine("<details><summary>Files reviewed in this pass</summary>");
+                sb.AppendLine();
+                foreach (var path in deltaInfo.ChangedFilePaths.OrderBy(p => p))
+                {
+                    sb.AppendLine($"- `{path}`");
+                }
+                sb.AppendLine();
+                sb.AppendLine("</details>");
+            }
+
+            if (deltaInfo.CarriedForwardFilePaths.Count > 0)
+            {
+                sb.AppendLine("<details><summary>Files carried forward from prior review</summary>");
+                sb.AppendLine();
+                foreach (var path in deltaInfo.CarriedForwardFilePaths.OrderBy(p => p))
+                {
+                    sb.AppendLine($"- `{path}`");
+                }
+                sb.AppendLine();
+                sb.AppendLine("</details>");
+            }
+        }
 
         // ── Session ID footer (for correlation / traceability) ──────────
         if (sessionId.HasValue)

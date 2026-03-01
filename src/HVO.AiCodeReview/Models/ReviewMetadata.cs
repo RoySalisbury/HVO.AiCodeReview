@@ -80,6 +80,16 @@ public class ReviewHistoryEntry
     /// Populated for both explicit per-pass routing and fallback-based routing.
     /// </summary>
     public Dictionary<string, string>? PassModels { get; set; }
+
+    // ── Delta (incremental) review metrics ──────────────────────────────
+    /// <summary>True if this review was an incremental (delta) review.</summary>
+    public bool IsDeltaReview { get; set; }
+
+    /// <summary>Number of files that changed since the last review (delta files sent to AI).</summary>
+    public int DeltaFilesReviewed { get; set; }
+
+    /// <summary>Number of files whose results were carried forward from the prior review.</summary>
+    public int CarriedForwardFiles { get; set; }
 }
 
 /// <summary>

@@ -321,6 +321,20 @@ public class FakeDevOpsService : IDevOpsService
     public virtual Task<string?> ResolveServiceIdentityAsync()
         => Task.FromResult<string?>("fake-identity-id");
 
+    // ── Iteration Changes (Delta Review) ────────────────────────────────
+
+    private HashSet<string>? _iterationChanges;
+
+    /// <summary>
+    /// Seed the file paths that should be returned by GetIterationChangesAsync.
+    /// </summary>
+    public void SeedIterationChanges(IEnumerable<string> changedPaths)
+        => _iterationChanges = new HashSet<string>(changedPaths, StringComparer.OrdinalIgnoreCase);
+
+    public virtual Task<HashSet<string>> GetIterationChangesAsync(
+        string project, string repository, int pullRequestId, int baseIteration, int targetIteration)
+        => Task.FromResult(_iterationChanges ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
     public void Dispose() { }
 }
 

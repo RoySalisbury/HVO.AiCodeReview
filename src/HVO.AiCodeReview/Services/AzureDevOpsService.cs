@@ -581,6 +581,61 @@ public class AzureDevOpsService : IDevOpsService
         }
     }
 
+    public async Task<HashSet<string>> GetIterationChangesAsync(
+        string project, string repository, int pullRequestId,
+        int baseIteration, int targetIteration)
+    {
+        var changedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            // ADO API: compare changes between two iterations
+            // GET /pullrequests/{id}/iterations/{iterationId}/changes?baseIteration={base}&api-version=7.1
+            var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}" +
+                      $"/iterations/{targetIteration}/changes?baseIteration={baseIteration}&{ApiVersion}";
+
+            _logger.LogDebug("GET iteration changes (base={Base}, target={Target}): {Url}",
+                baseIteration, targetIteration, url);
+
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+            if (json.TryGetProperty("changeEntries", out var entries))
+            {
+                foreach (var entry in entries.EnumerateArray())
+                {
+                    if (!entry.TryGetProperty("item", out var item))
+                        continue;
+
+                    // Skip folders
+                    if (item.TryGetProperty("isFolder", out var isFolder) && isFolder.GetBoolean())
+                        continue;
+
+                    var path = item.TryGetProperty("path", out var pathProp)
+                        ? pathProp.GetString() ?? string.Empty
+                        : string.Empty;
+
+                    if (!string.IsNullOrEmpty(path))
+                        changedPaths.Add(path);
+                }
+            }
+
+            _logger.LogInformation(
+                "Iteration changes for PR #{PrId} (iter {Base}→{Target}): {Count} file(s) changed",
+                pullRequestId, baseIteration, targetIteration, changedPaths.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to get iteration changes for PR #{PrId} (iter {Base}→{Target}) — falling back to full review",
+                pullRequestId, baseIteration, targetIteration);
+        }
+
+        return changedPaths;
+    }
+
     public async Task<List<FileChange>> GetPullRequestChangesAsync(
         string project, string repository, int pullRequestId, PullRequestInfo prInfo)
     {

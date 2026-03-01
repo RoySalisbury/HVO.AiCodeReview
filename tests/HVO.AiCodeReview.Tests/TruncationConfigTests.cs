@@ -198,7 +198,6 @@ public class TruncationConfigTests
     // ── AC-5: MaxInputLinesPerFile validation ──────────────────────────
 
     [TestMethod]
-    [ExpectedException(typeof(InvalidOperationException))]
     public void Factory_ThrowsOnZero_GlobalMaxInputLines()
     {
         var config = new ConfigurationBuilder()
@@ -220,11 +219,11 @@ public class TruncationConfigTests
         services.AddCodeReviewService(config);
         var sp = services.BuildServiceProvider();
         // Resolve triggers factory — should throw
-        sp.GetRequiredService<ICodeReviewService>();
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            sp.GetRequiredService<ICodeReviewService>());
     }
 
     [TestMethod]
-    [ExpectedException(typeof(InvalidOperationException))]
     public void Factory_ThrowsOnNegative_PerProviderMaxInputLines()
     {
         var config = new ConfigurationBuilder()
@@ -246,11 +245,11 @@ public class TruncationConfigTests
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddCodeReviewService(config);
         var sp = services.BuildServiceProvider();
-        sp.GetRequiredService<ICodeReviewService>();
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            sp.GetRequiredService<ICodeReviewService>());
     }
 
     [TestMethod]
-    [ExpectedException(typeof(InvalidOperationException))]
     public void Factory_LegacyFallback_ThrowsOnZeroMaxInputLines()
     {
         // No providers — triggers legacy fallback path
@@ -268,7 +267,8 @@ public class TruncationConfigTests
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.AddCodeReviewService(config);
         var sp = services.BuildServiceProvider();
-        sp.GetRequiredService<ICodeReviewService>();
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            sp.GetRequiredService<ICodeReviewService>());
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────

@@ -115,7 +115,7 @@ public class ExistingCommentThread
     public string LeadIn { get; set; } = string.Empty;
 
     /// <summary>Replies from other users (PR author, reviewers) within this thread.</summary>
-    public List<ThreadReply> Replies { get; set; } = new();
+    public List<ThreadReply> Replies { get; set; } = [];
 }
 
 /// <summary>
@@ -172,5 +172,5 @@ public class ThreadVerificationCandidate
     public string CurrentCode { get; set; } = string.Empty;
 
     /// <summary>Human replies within the thread (provides context like author explanations).</summary>
-    public List<ThreadReply> AuthorReplies { get; set; } = new();
+    public List<ThreadReply> AuthorReplies { get; set; } = [];
 }

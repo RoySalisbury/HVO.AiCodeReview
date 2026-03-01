@@ -15,7 +15,7 @@ public class ReviewMetricsResponse
     public bool VoteSubmitted { get; set; }
 
     /// <summary>Full history of every review action taken on this PR.</summary>
-    public List<ReviewHistoryEntry> History { get; set; } = new();
+    public List<ReviewHistoryEntry> History { get; set; } = [];
 
     // ── Aggregated Metrics ──────────────────────────────────────────────
     public int TotalPromptTokens { get; set; }

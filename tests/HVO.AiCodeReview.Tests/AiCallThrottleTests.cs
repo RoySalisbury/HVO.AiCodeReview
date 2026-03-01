@@ -76,7 +76,7 @@ public class AiCallThrottleTests
 
         // Third acquire should block — verify with timeout
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.ThrowsExceptionAsync<OperationCanceledException>(
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(
             () => throttle.AcquireAsync(cts.Token));
     }
 

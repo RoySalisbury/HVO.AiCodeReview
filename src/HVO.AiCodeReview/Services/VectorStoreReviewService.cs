@@ -890,12 +890,7 @@ public class VectorStoreReviewService
 
         try
         {
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-            };
-
-            var result = JsonSerializer.Deserialize<CodeReviewResult>(text, options);
+            var result = JsonSerializer.Deserialize<CodeReviewResult>(text, JsonSerializerOptions.Web);
             if (result == null)
                 throw new JsonException("Deserialized result was null.");
 

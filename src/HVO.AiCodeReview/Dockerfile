@@ -21,7 +21,7 @@ RUN dotnet publish src/HVO.AiCodeReview/HVO.AiCodeReview.csproj -c Release -o /a
 # ---------------------------------------------------------------------------
 # Runtime image
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 # Non-root user for security (explicit home directory avoids runtime issues)
@@ -30,7 +30,7 @@ USER appuser
 
 COPY --from=build /app/publish .
 
-# ASP.NET Core listens on 8080 by default in .NET 8 containers
+# ASP.NET Core listens on 8080 by default in .NET 8+ containers
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 

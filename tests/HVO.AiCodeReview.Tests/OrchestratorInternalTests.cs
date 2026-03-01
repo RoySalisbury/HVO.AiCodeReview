@@ -97,7 +97,7 @@ public class OrchestratorInternalTests
     //  MapVerdictToRecommendation
     // ═══════════════════════════════════════════════════════════════════
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("Approved", "Approved")]
     [DataRow("APPROVED", "Approved")]
     [DataRow("Approved With Suggestions", "ApprovedWithSuggestions")]
@@ -114,7 +114,7 @@ public class OrchestratorInternalTests
     //  VoteToLabel
     // ═══════════════════════════════════════════════════════════════════
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(10, "Approved")]
     [DataRow(5, "Approved with suggestions")]
     [DataRow(-5, "Waiting for author")]

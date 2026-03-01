@@ -21,20 +21,20 @@ public class PrSummaryResult
     /// Example: "FileA.cs renames method Foo → Bar; FileB.cs and FileC.cs are callers."
     /// </summary>
     [JsonPropertyName("crossFileRelationships")]
-    public List<string> CrossFileRelationships { get; set; } = new();
+    public List<string> CrossFileRelationships { get; set; } = [];
 
     /// <summary>
     /// High-risk areas the per-file reviews should pay special attention to.
     /// </summary>
     [JsonPropertyName("riskAreas")]
-    public List<RiskArea> RiskAreas { get; set; } = new();
+    public List<RiskArea> RiskAreas { get; set; } = [];
 
     /// <summary>
     /// Logical groupings of related files in the PR.
     /// Helps reviewers understand which files form a cohesive change.
     /// </summary>
     [JsonPropertyName("fileGroupings")]
-    public List<FileGrouping> FileGroupings { get; set; } = new();
+    public List<FileGrouping> FileGroupings { get; set; } = [];
 
     // ── AI Usage Metrics (populated by service, not from AI JSON) ──
 
@@ -70,7 +70,7 @@ public class FileGrouping
 
     /// <summary>File paths in this group.</summary>
     [JsonPropertyName("files")]
-    public List<string> Files { get; set; } = new();
+    public List<string> Files { get; set; } = [];
 
     /// <summary>Brief description of why these files are grouped together.</summary>
     [JsonPropertyName("description")]

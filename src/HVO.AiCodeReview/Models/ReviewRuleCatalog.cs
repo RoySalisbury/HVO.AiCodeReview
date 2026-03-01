@@ -19,13 +19,13 @@ public class ReviewRuleCatalog
     /// Scope definitions keyed by scope name (e.g., "batch", "single-file",
     /// "thread-verification", "pass-1").
     /// </summary>
-    public Dictionary<string, PromptScope> Scopes { get; set; } = new();
+    public Dictionary<string, PromptScope> Scopes { get; set; } = [];
 
     /// <summary>
     /// All configurable review rules. Each rule belongs to a scope and can be
     /// enabled/disabled, re-prioritized, or edited without a code change.
     /// </summary>
-    public List<ReviewRule> Rules { get; set; } = new();
+    public List<ReviewRule> Rules { get; set; } = [];
 }
 
 /// <summary>

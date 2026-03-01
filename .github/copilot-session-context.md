@@ -7,9 +7,9 @@
 
 ## 1. Project Overview
 
-**HVO.AiCodeReview** is a .NET 8 ASP.NET Core Web API that performs **AI-powered code reviews on Azure DevOps pull requests**. It analyzes PR diffs using Azure OpenAI, posts inline comments and summary threads, adds reviewer votes, and tracks full review history — all driven by a single HTTP API call.
+**HVO.AiCodeReview** is a .NET 10 ASP.NET Core Web API that performs **AI-powered code reviews on Azure DevOps pull requests**. It analyzes PR diffs using Azure OpenAI, posts inline comments and summary threads, adds reviewer votes, and tracks full review history — all driven by a single HTTP API call.
 
-- **Runtime**: .NET 8 / ASP.NET Core Web API on `http://localhost:5094`
+- **Runtime**: .NET 10 / ASP.NET Core Web API on `http://localhost:5094`
 - **AI**: Azure.AI.OpenAI v2.1.0, deployment `gpt-4o`
 - **Target**: Azure DevOps REST API v7.1
 - **Azure DevOps Org**: `HiltonGrandVacations`, Project: `OneVision`

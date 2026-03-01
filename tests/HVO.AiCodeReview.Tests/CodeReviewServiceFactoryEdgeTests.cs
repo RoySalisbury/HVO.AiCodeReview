@@ -32,7 +32,7 @@ public class CodeReviewServiceFactoryEdgeTests
         services.AddCodeReviewService(config);
         var sp = services.BuildServiceProvider();
 
-        Assert.ThrowsException<InvalidOperationException>(
+        Assert.ThrowsExactly<InvalidOperationException>(
             () => sp.GetRequiredService<ICodeReviewService>(),
             "Should throw when all providers are disabled");
     }
@@ -79,7 +79,7 @@ public class CodeReviewServiceFactoryEdgeTests
         services.AddCodeReviewService(config);
         var sp = services.BuildServiceProvider();
 
-        var ex = Assert.ThrowsException<InvalidOperationException>(
+        var ex = Assert.ThrowsExactly<InvalidOperationException>(
             () => sp.GetRequiredService<ICodeReviewService>());
         Assert.IsTrue(ex.Message.Contains("Unknown AI provider type"), ex.Message);
     }

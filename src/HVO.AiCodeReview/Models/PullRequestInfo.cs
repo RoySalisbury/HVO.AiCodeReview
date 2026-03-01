@@ -16,7 +16,7 @@ public class PullRequestInfo
     public string LastMergeSourceCommit { get; set; } = string.Empty;
     public string LastMergeTargetCommit { get; set; } = string.Empty;
     public bool IsDraft { get; set; }
-    public List<PullRequestReviewer> Reviewers { get; set; } = new();
+    public List<PullRequestReviewer> Reviewers { get; set; } = [];
 
     /// <summary>
     /// Cross-file summary produced by Pass 1 of the two-pass review.

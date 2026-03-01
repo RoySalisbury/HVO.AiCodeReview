@@ -25,10 +25,10 @@ public class DeltaReviewInfo
     public int CarriedForwardFiles { get; set; }
 
     /// <summary>File paths that changed since the last review.</summary>
-    public List<string> ChangedFilePaths { get; set; } = new();
+    public List<string> ChangedFilePaths { get; set; } = [];
 
     /// <summary>File paths whose results were carried forward from the prior review.</summary>
-    public List<string> CarriedForwardFilePaths { get; set; } = new();
+    public List<string> CarriedForwardFilePaths { get; set; } = [];
 
     /// <summary>
     /// Estimated token savings from not re-reviewing unchanged files.

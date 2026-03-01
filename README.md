@@ -67,7 +67,7 @@ A centralized, AI-powered code review service for Azure DevOps pull requests. Th
 ```
 ┌─────────────────────┐       ┌──────────────────────────────────┐
 │  Azure DevOps       │       │  AI Code Review Service           │
-│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API (.NET 8)    │
+│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API (.NET 10)   │
 └─────────────────────┘       │                                  │
                               │  ┌────────────────────────────┐  │
                               │  │ ReviewController            │  │
@@ -126,7 +126,7 @@ For a detailed walkthrough of the review flow, depth modes, strategies, and deci
 
 | Requirement | Details |
 |-------------|---------|
-| **.NET 8 SDK** | [Download](https://dotnet.microsoft.com/download/dotnet/8.0). Required to build and run. |
+| **.NET 10 SDK** | [Download](https://dotnet.microsoft.com/download/dotnet/10.0). Required to build and run. |
 | **Azure OpenAI Resource** | An Azure OpenAI resource with a deployed model (e.g., GPT-4o, GPT-4, GPT-5). You need the endpoint URL, API key, and deployment name. |
 | **Azure DevOps PAT** | A Personal Access Token for the Azure DevOps organization. Required permissions: **Code** (Read), **Pull Request Threads** (Read & Write), **Identity** (Read). |
 | **Azure DevOps Organization** | The organization name from your Azure DevOps URL (`https://dev.azure.com/{Organization}`). |
@@ -337,7 +337,7 @@ For full details — test categories, coverage targets, infrastructure, configur
 
 ## Dev Container
 
-The repo includes a full dev container configuration in `.devcontainer/` with .NET 8/9/10, Node.js, Python, Java, Go, Docker-in-Docker, Azure CLI, GitHub CLI, and more. PostgreSQL 16 and Redis 7 start automatically.
+The repo includes a full dev container configuration in `.devcontainer/` with .NET 10 (plus 8 and 9 for compatibility), Node.js, Python, Java, Go, Docker-in-Docker, Azure CLI, GitHub CLI, and more. PostgreSQL 16 and Redis 7 start automatically.
 
 Open the repo in VS Code and select "Reopen in Container" when prompted.
 

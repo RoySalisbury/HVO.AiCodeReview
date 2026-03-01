@@ -36,20 +36,13 @@ public interface IGlobalRateLimitSignal
 }
 
 /// <inheritdoc />
-public class GlobalRateLimitSignal : IGlobalRateLimitSignal
+public class GlobalRateLimitSignal(ILogger<GlobalRateLimitSignal> logger) : IGlobalRateLimitSignal
 {
-    private readonly ILogger<GlobalRateLimitSignal> _logger;
-
     /// <summary>
     /// Stores the UTC tick (100-ns units) at which the cooldown expires.
     /// 0 means no cooldown active.  Updated via <c>Interlocked</c>.
     /// </summary>
     private long _cooldownExpiresUtcTicks;
-
-    public GlobalRateLimitSignal(ILogger<GlobalRateLimitSignal> logger)
-    {
-        _logger = logger;
-    }
 
     /// <inheritdoc />
     public void SignalCooldown(TimeSpan duration)
@@ -68,7 +61,7 @@ public class GlobalRateLimitSignal : IGlobalRateLimitSignal
 
             if (Interlocked.CompareExchange(ref _cooldownExpiresUtcTicks, proposedExpiry, current) == current)
             {
-                _logger.LogWarning(
+                logger.LogWarning(
                     "[RateLimit] Global cooldown activated: all API calls paused for {Duration}s (until {Expiry:HH:mm:ss} UTC)",
                     (int)duration.TotalSeconds,
                     new DateTimeOffset(proposedExpiry, TimeSpan.Zero));
@@ -90,7 +83,7 @@ public class GlobalRateLimitSignal : IGlobalRateLimitSignal
             return;
 
         var remaining = TimeSpan.FromTicks(expiryTicks - now);
-        _logger.LogInformation(
+        logger.LogInformation(
             "[RateLimit] Waiting {Remaining:F1}s for global cooldown to expire...",
             remaining.TotalSeconds);
 

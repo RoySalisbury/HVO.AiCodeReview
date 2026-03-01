@@ -426,10 +426,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         try
         {
-            var result = JsonSerializer.Deserialize<CodeReviewResult>(content, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-            });
+            var result = JsonSerializer.Deserialize<CodeReviewResult>(content, JsonSerializerOptions.Web);
 
             if (result == null) result = new CodeReviewResult();
 
@@ -758,10 +755,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         try
         {
-            var result = JsonSerializer.Deserialize<PrSummaryResult>(content, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var result = JsonSerializer.Deserialize<PrSummaryResult>(content, JsonSerializerOptions.Web);
 
             if (result == null)
             {
@@ -1720,10 +1714,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         try
         {
-            var result = JsonSerializer.Deserialize<DeepAnalysisResult>(content, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var result = JsonSerializer.Deserialize<DeepAnalysisResult>(content, JsonSerializerOptions.Web);
 
             if (result == null)
             {

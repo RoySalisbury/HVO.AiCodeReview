@@ -124,6 +124,23 @@ Content-Type: application/json
 | `totalTokens` | int? | Sum of prompt + completion tokens. |
 | `aiDurationMs` | long? | AI inference time in milliseconds (sum of all AI calls). |
 | `estimatedCost` | decimal? | Estimated cost in USD based on model pricing and actual token usage. Requires pricing data in the model adapter. |
+| `deltaInfo` | object? | Delta (incremental) review details. Present only for re-reviews where a subset of files were reviewed. See [DeltaInfo Object](#deltainfo-object). |
+
+#### DeltaInfo Object
+
+When a re-review detects that only a subset of files changed since the last review, the response includes a `deltaInfo` object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `isDeltaReview` | bool | Always `true` when this object is present. |
+| `baseIteration` | int | The last-reviewed iteration (comparison base). |
+| `currentIteration` | int | The current iteration being reviewed. |
+| `totalFilesInPr` | int | Total files in the PR. |
+| `deltaFilesReviewed` | int | Number of files that changed and were sent to AI. |
+| `carriedForwardFiles` | int | Number of unchanged files with results carried forward. |
+| `changedFilePaths` | string[] | Paths of files reviewed in this pass. |
+| `carriedForwardFilePaths` | string[] | Paths of files carried forward from the prior review. |
+| `estimatedTokenSavings` | int | Approximate tokens saved by not re-reviewing unchanged files. |
 
 ---
 

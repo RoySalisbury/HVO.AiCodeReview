@@ -250,6 +250,63 @@ The orchestrator evaluates the PR state and metadata to determine the appropriat
 
 ---
 
+## Incremental (Delta) Review
+
+When a re-review is triggered (new commits pushed since the last review), the orchestrator can perform an **incremental review** — only analyzing files that actually changed between the last-reviewed iteration and the current iteration. Unchanged files have their prior review results carried forward.
+
+### How It Works
+
+```
+Re-Review Detected
+      │
+      ▼
+┌─────────────────────────────────┐
+│  Compare iterations via ADO API │
+│  (baseIteration → currentIter)  │
+└────────────┬────────────────────┘
+             │
+      ┌──────▼──────┐
+      │ Changed < N │───▶ Delta Review
+      │ (subset)    │     (only changed files sent to AI)
+      └──────┬──────┘
+             │ all changed or API error
+             ▼
+      Full Re-Review
+      (all files sent to AI)
+```
+
+1. **Iteration comparison** — The orchestrator calls the Azure DevOps iteration changes API (`GET pullrequests/{id}/iterations/{target}/changes?baseIteration={base}`) to get the set of files modified between the last-reviewed and current iterations.
+2. **File partitioning** — Reviewable files are split into:
+   - **Delta files** — changed since last review → sent to AI for review
+   - **Carried-forward files** — unchanged → prior review results preserved (existing inline comments remain active on the PR)
+3. **Delta summary** — The PR summary includes an "Incremental Review" section showing file counts, iteration range, and estimated token savings.
+4. **Token savings** — Estimated as the proportional share of tokens that would have been used to review the carried-forward files.
+
+### Fallback to Full Review
+
+The incremental review gracefully falls back to a full re-review when:
+- The iteration changes API returns no results (API error or edge case)
+- All reviewable files changed since the last review
+- This is the first review (no prior iteration to compare against)
+
+### Response & History
+
+The `ReviewResponse` includes a `DeltaInfo` object (when applicable):
+
+| Field | Description |
+|-------|-------------|
+| `IsDeltaReview` | Whether this was an incremental review |
+| `BaseIteration` | The last-reviewed iteration (comparison base) |
+| `CurrentIteration` | The current iteration being reviewed |
+| `TotalFilesInPr` | Total files in the PR |
+| `DeltaFilesReviewed` | Files changed and sent to AI |
+| `CarriedForwardFiles` | Files unchanged since last review |
+| `EstimatedTokenSavings` | Approximate tokens saved by not re-reviewing unchanged files |
+
+The `ReviewHistoryEntry` also captures delta metrics: `IsDeltaReview`, `DeltaFilesReviewed`, and `CarriedForwardFiles`.
+
+---
+
 ## Review History & Tracking
 
 Every review action generates a `ReviewHistoryEntry` stored in two places:

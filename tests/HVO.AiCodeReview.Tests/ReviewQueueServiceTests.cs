@@ -307,11 +307,11 @@ public class ReviewQueueServiceTests
     // ═══════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    public async Task Worker_SessionCancelledBetweenDequeueAndTransition_SkipsProcessing()
+    public async Task Worker_SessionAlreadyCancelledInStore_SkipsProcessing()
     {
-        // Verifies the atomic TryTransitionToInProgress guard:
-        // If a session is cancelled after dequeue but before transition,
-        // the worker skips it instead of processing.
+        // Verifies the TryTransitionToInProgress guard:
+        // If a session is already cancelled in the store when the worker
+        // attempts the Queued→InProgress transition, the worker skips it.
         var orchestrator = new DelayOrchestrator(delay: TimeSpan.FromMilliseconds(10));
         var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
         using var _ = sut;

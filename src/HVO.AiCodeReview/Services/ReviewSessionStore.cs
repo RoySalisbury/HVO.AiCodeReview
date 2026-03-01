@@ -22,7 +22,7 @@ public interface IReviewSessionStore
     /// <summary>
     /// Tries to cancel a queued (not yet started) session.
     /// Returns true if the session was found and cancelled.
-    /// Uses a thread-safe compare-and-swap on the session status.
+    /// Uses per-session locking to ensure thread-safe status updates.
     /// </summary>
     bool TryCancelQueued(Guid sessionId);
 
@@ -50,6 +50,7 @@ public interface IReviewSessionStore
 public class InMemoryReviewSessionStore : IReviewSessionStore
 {
     private readonly ConcurrentDictionary<Guid, ReviewSession> _sessions = new();
+    private readonly ConcurrentDictionary<Guid, object> _sessionLocks = new();
     private int _accessCounter;
     private const int EvictionInterval = 100;
     private static readonly TimeSpan CompletedRetention = TimeSpan.FromHours(1);
@@ -58,6 +59,7 @@ public class InMemoryReviewSessionStore : IReviewSessionStore
     public void Add(ReviewSession session)
     {
         _sessions[session.SessionId] = session;
+        _sessionLocks[session.SessionId] = new object();
         MaybeEvict();
     }
 
@@ -82,8 +84,10 @@ public class InMemoryReviewSessionStore : IReviewSessionStore
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
             return false;
+        if (!_sessionLocks.TryGetValue(sessionId, out var lockObj))
+            return false;
 
-        lock (session)
+        lock (lockObj)
         {
             if (session.Status != ReviewSessionStatus.Queued)
                 return false;
@@ -95,12 +99,15 @@ public class InMemoryReviewSessionStore : IReviewSessionStore
     }
 
     /// <inheritdoc />
+    /// <inheritdoc />
     public bool TryTransitionToInProgress(Guid sessionId)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
             return false;
+        if (!_sessionLocks.TryGetValue(sessionId, out var lockObj))
+            return false;
 
-        lock (session)
+        lock (lockObj)
         {
             if (session.Status != ReviewSessionStatus.Queued)
                 return false;
@@ -131,6 +138,9 @@ public class InMemoryReviewSessionStore : IReviewSessionStore
             .ToList();
 
         foreach (var key in toRemove)
+        {
             _sessions.TryRemove(key, out _);
+            _sessionLocks.TryRemove(key, out _);
+        }
     }
 }

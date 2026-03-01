@@ -16,6 +16,8 @@ public class ReviewQueueService : BackgroundService
     private readonly IReviewSessionStore _sessionStore;
     private readonly ReviewQueueSettings _settings;
     private readonly ILogger<ReviewQueueService> _logger;
+    private readonly int _maxQueueDepth;
+    private readonly int _maxConcurrentReviews;
 
     public ReviewQueueService(
         IServiceScopeFactory scopeFactory,
@@ -29,13 +31,11 @@ public class ReviewQueueService : BackgroundService
         _logger = logger;
 
         // Clamp to minimum 1 to avoid ArgumentOutOfRangeException
-        var maxQueue = Math.Max(1, _settings.MaxQueueDepth);
-        var maxWorkers = Math.Max(1, _settings.MaxConcurrentReviews);
-        _settings.MaxQueueDepth = maxQueue;
-        _settings.MaxConcurrentReviews = maxWorkers;
+        _maxQueueDepth = Math.Max(1, _settings.MaxQueueDepth);
+        _maxConcurrentReviews = Math.Max(1, _settings.MaxConcurrentReviews);
 
         _channel = Channel.CreateBounded<ReviewWorkItem>(
-            new BoundedChannelOptions(maxQueue)
+            new BoundedChannelOptions(_maxQueueDepth)
             {
                 FullMode = BoundedChannelFullMode.Wait,
                 SingleReader = false,
@@ -52,7 +52,7 @@ public class ReviewQueueService : BackgroundService
         if (!_channel.Writer.TryWrite(workItem))
         {
             _logger.LogWarning("Review queue is full ({Depth}). Rejecting session {SessionId}.",
-                _settings.MaxQueueDepth, workItem.Session.SessionId);
+                _maxQueueDepth, workItem.Session.SessionId);
             return false;
         }
 
@@ -72,10 +72,10 @@ public class ReviewQueueService : BackgroundService
     {
         _logger.LogInformation(
             "ReviewQueueService started. Workers: {Workers}, MaxQueue: {Queue}, MaxAiCalls: {AiCalls}, Timeout: {Timeout}m",
-            _settings.MaxConcurrentReviews, _settings.MaxQueueDepth,
+            _maxConcurrentReviews, _maxQueueDepth,
             _settings.MaxConcurrentAiCalls, _settings.SessionTimeoutMinutes);
 
-        var workers = new Task[_settings.MaxConcurrentReviews];
+        var workers = new Task[_maxConcurrentReviews];
         for (int i = 0; i < workers.Length; i++)
         {
             var workerId = i + 1;

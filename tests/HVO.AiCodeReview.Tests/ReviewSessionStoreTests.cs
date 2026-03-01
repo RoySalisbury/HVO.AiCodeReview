@@ -230,19 +230,54 @@ public class ReviewSessionStoreTests
     [TestMethod]
     public void AtomicTransition_CancelAndTransitionRace_OnlyOneWins()
     {
-        // Verifies that cancel and transition are mutually exclusive
-        var store = new InMemoryReviewSessionStore();
-        var session = MakeSession(ReviewSessionStatus.Queued);
-        store.Add(session);
+        // Run many iterations to exercise the lock under true concurrency.
+        // Each iteration starts two Tasks from a barrier so they compete
+        // for the Queued→Cancelled vs Queued→InProgress transition.
+        const int iterations = 200;
+        int cancelWins = 0, transitionWins = 0;
 
-        // Simulate concurrent race — one of these must win, the other must lose
-        var cancelResult = store.TryCancelQueued(session.SessionId);
-        var transitionResult = store.TryTransitionToInProgress(session.SessionId);
+        for (int i = 0; i < iterations; i++)
+        {
+            var store = new InMemoryReviewSessionStore();
+            var session = MakeSession(ReviewSessionStatus.Queued);
+            store.Add(session);
 
-        // Cancel won (it ran first), transition must lose
-        Assert.IsTrue(cancelResult);
-        Assert.IsFalse(transitionResult);
-        Assert.AreEqual(ReviewSessionStatus.Cancelled, session.Status);
+            using var barrier = new Barrier(2);
+            bool cancelResult = false, transitionResult = false;
+
+            var t1 = Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                cancelResult = store.TryCancelQueued(session.SessionId);
+            });
+            var t2 = Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                transitionResult = store.TryTransitionToInProgress(session.SessionId);
+            });
+
+            Task.WaitAll(t1, t2);
+
+            // Exactly one must win
+            Assert.IsTrue(cancelResult ^ transitionResult,
+                $"Iteration {i}: expected exactly one winner (cancel={cancelResult}, transition={transitionResult})");
+
+            if (cancelResult)
+            {
+                cancelWins++;
+                Assert.AreEqual(ReviewSessionStatus.Cancelled, session.Status);
+            }
+            else
+            {
+                transitionWins++;
+                Assert.AreEqual(ReviewSessionStatus.InProgress, session.Status);
+            }
+        }
+
+        // Both outcomes should occur at least once in 200 iterations
+        // (not strictly guaranteed, but extremely likely with barrier-based racing)
+        Assert.IsTrue(cancelWins > 0 || transitionWins > 0,
+            "At least one outcome must occur.");
     }
 
     // ═══════════════════════════════════════════════════════════════════

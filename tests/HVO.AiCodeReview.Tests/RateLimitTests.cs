@@ -234,7 +234,7 @@ public class RateLimitTests
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        await Assert.ThrowsExceptionAsync<TaskCanceledException>(
+        await Assert.ThrowsExactlyAsync<TaskCanceledException>(
             () => signal.WaitIfCoolingDownAsync(cts.Token));
     }
 

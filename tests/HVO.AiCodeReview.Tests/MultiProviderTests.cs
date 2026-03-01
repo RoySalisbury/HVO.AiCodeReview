@@ -144,7 +144,7 @@ public class MultiProviderTests
 
         var sp = services.BuildServiceProvider();
 
-        var ex = Assert.ThrowsException<InvalidOperationException>(
+        var ex = Assert.ThrowsExactly<InvalidOperationException>(
             () => sp.GetRequiredService<ICodeReviewService>());
 
         Assert.IsTrue(ex.Message.Contains("nonexistent-provider"),
@@ -196,7 +196,6 @@ public class MultiProviderTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [ExpectedException(typeof(InvalidOperationException))]
     public void Consensus_EmptyProviders_Throws()
     {
         var logger = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Warning))
@@ -204,7 +203,8 @@ public class MultiProviderTests
         var emptyProviders = new List<(string Name, ICodeReviewService Service)>();
 
         // Should throw — at least one provider is required
-        _ = new ConsensusReviewService(emptyProviders, threshold: 1, logger);
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            new ConsensusReviewService(emptyProviders, threshold: 1, logger));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -550,7 +550,7 @@ public class MultiProviderTests
         var prInfo = new PullRequestInfo { PullRequestId = 1, Title = "Test PR" };
         var files = new List<FileChange> { new() { FilePath = "/file.cs", ModifiedContent = "// test" } };
 
-        await Assert.ThrowsExceptionAsync<AggregateException>(
+        await Assert.ThrowsExactlyAsync<AggregateException>(
             () => consensus.ReviewAsync(prInfo, files),
             "Should throw AggregateException when all providers fail.");
 

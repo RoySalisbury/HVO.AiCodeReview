@@ -997,7 +997,7 @@ public class AzureDevOpsServiceHttpTests
             });
 
         var svc = CreateService(handler);
-        await Assert.ThrowsExceptionAsync<HttpRequestException>(() =>
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(() =>
             svc.ReplyToThreadAsync(Project, Repo, PrId, 55, "text"));
     }
 

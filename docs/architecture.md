@@ -5,7 +5,7 @@
 ```
 ┌─────────────────────┐       ┌──────────────────────────────────┐
 │  Azure DevOps       │       │  AI Code Review Service           │
-│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API (.NET 8)    │
+│  Pipeline / Webhook  │──────▶│  ASP.NET Core Web API (.NET 10)   │
 └─────────────────────┘       │                                  │
                               │  ┌────────────────────────────┐  │
                               │  │ ReviewController            │  │

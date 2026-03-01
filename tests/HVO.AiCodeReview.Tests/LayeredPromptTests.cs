@@ -384,7 +384,7 @@ public class LayeredPromptTests
         var path = WriteCatalog(catalog);
         using var pipeline = new PromptAssemblyPipeline(NullLogger, path);
 
-        Assert.ThrowsException<ArgumentException>(() => pipeline.AssemblePrompt("nonexistent-scope"));
+        Assert.ThrowsExactly<ArgumentException>(() => pipeline.AssemblePrompt("nonexistent-scope"));
     }
 
     // ═══════════════════════════════════════════════════════════════════════

@@ -107,7 +107,7 @@ public class ResilienceTests
         var devOps = BuildServiceWithResilience(handler);
 
         // Act & Assert — 404 is not transient, shouldn't retry, should throw
-        await Assert.ThrowsExceptionAsync<HttpRequestException>(
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(
             () => devOps.HasReviewTagAsync("TestProject", "TestRepo", 1),
             "Expected HttpRequestException for non-transient 404");
 
@@ -129,7 +129,7 @@ public class ResilienceTests
         var devOps = BuildServiceWithResilience(handler);
 
         // Act & Assert — should eventually fail after max retries
-        await Assert.ThrowsExceptionAsync<HttpRequestException>(
+        await Assert.ThrowsExactlyAsync<HttpRequestException>(
             () => devOps.HasReviewTagAsync("TestProject", "TestRepo", 1),
             "Expected HttpRequestException after retries exhausted");
 

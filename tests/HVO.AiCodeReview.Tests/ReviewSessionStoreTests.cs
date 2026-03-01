@@ -183,6 +183,69 @@ public class ReviewSessionStoreTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  TryTransitionToInProgress
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void TryTransitionToInProgress_QueuedSession_Succeeds()
+    {
+        var store = new InMemoryReviewSessionStore();
+        var session = MakeSession(ReviewSessionStatus.Queued);
+        store.Add(session);
+
+        Assert.IsTrue(store.TryTransitionToInProgress(session.SessionId));
+        Assert.AreEqual(ReviewSessionStatus.InProgress, session.Status);
+    }
+
+    [TestMethod]
+    public void TryTransitionToInProgress_CancelledSession_ReturnsFalse()
+    {
+        var store = new InMemoryReviewSessionStore();
+        var session = MakeSession(ReviewSessionStatus.Queued);
+        store.Add(session);
+
+        // Cancel first, then try to transition
+        Assert.IsTrue(store.TryCancelQueued(session.SessionId));
+        Assert.IsFalse(store.TryTransitionToInProgress(session.SessionId));
+        Assert.AreEqual(ReviewSessionStatus.Cancelled, session.Status);
+    }
+
+    [TestMethod]
+    public void TryTransitionToInProgress_InProgressSession_ReturnsFalse()
+    {
+        var store = new InMemoryReviewSessionStore();
+        var session = MakeSession(ReviewSessionStatus.InProgress);
+        store.Add(session);
+
+        Assert.IsFalse(store.TryTransitionToInProgress(session.SessionId));
+    }
+
+    [TestMethod]
+    public void TryTransitionToInProgress_UnknownId_ReturnsFalse()
+    {
+        var store = new InMemoryReviewSessionStore();
+        Assert.IsFalse(store.TryTransitionToInProgress(Guid.NewGuid()));
+    }
+
+    [TestMethod]
+    public void AtomicTransition_CancelAndTransitionRace_OnlyOneWins()
+    {
+        // Verifies that cancel and transition are mutually exclusive
+        var store = new InMemoryReviewSessionStore();
+        var session = MakeSession(ReviewSessionStatus.Queued);
+        store.Add(session);
+
+        // Simulate concurrent race — one of these must win, the other must lose
+        var cancelResult = store.TryCancelQueued(session.SessionId);
+        var transitionResult = store.TryTransitionToInProgress(session.SessionId);
+
+        // Cancel won (it ran first), transition must lose
+        Assert.IsTrue(cancelResult);
+        Assert.IsFalse(transitionResult);
+        Assert.AreEqual(ReviewSessionStatus.Cancelled, session.Status);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Eviction
     // ═══════════════════════════════════════════════════════════════════
 

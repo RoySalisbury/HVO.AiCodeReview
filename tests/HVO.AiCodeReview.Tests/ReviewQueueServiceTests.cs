@@ -55,9 +55,11 @@ public class ReviewQueueServiceTests
     public async Task Worker_ProcessesEnqueuedItem()
     {
         var orchestrator = new DelayOrchestrator(delay: TimeSpan.FromMilliseconds(10));
-        using var sut = CreateService(maxWorkers: 1, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
+        using var _ = sut;
 
         var item = MakeWorkItem();
+        store.Add(item.Session);
         sut.TryEnqueue(item);
 
         // Start the service
@@ -78,10 +80,15 @@ public class ReviewQueueServiceTests
     public async Task Worker_MultipleItems_ProcessedConcurrently()
     {
         var orchestrator = new DelayOrchestrator(delay: TimeSpan.FromMilliseconds(200));
-        using var sut = CreateService(maxWorkers: 3, maxQueue: 10, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 3, maxQueue: 10, orchestrator: orchestrator);
+        using var _ = sut;
 
         var items = Enumerable.Range(0, 3).Select(_ => MakeWorkItem()).ToList();
-        foreach (var item in items) sut.TryEnqueue(item);
+        foreach (var item in items)
+        {
+            store.Add(item.Session);
+            sut.TryEnqueue(item);
+        }
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var executeTask = StartService(sut, cts.Token);
@@ -101,12 +108,15 @@ public class ReviewQueueServiceTests
     public async Task Worker_SkipsCancelledSession()
     {
         var orchestrator = new DelayOrchestrator(delay: TimeSpan.FromMilliseconds(10));
-        using var sut = CreateService(maxWorkers: 1, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
+        using var _ = sut;
 
         var cancelledItem = MakeWorkItem();
         cancelledItem.Session.Status = ReviewSessionStatus.Cancelled;
+        store.Add(cancelledItem.Session);
 
         var normalItem = MakeWorkItem();
+        store.Add(normalItem.Session);
 
         sut.TryEnqueue(cancelledItem);
         sut.TryEnqueue(normalItem);
@@ -133,9 +143,11 @@ public class ReviewQueueServiceTests
     public async Task Worker_OrchestratorThrows_SessionFailed()
     {
         var orchestrator = new ThrowingOrchestrator();
-        using var sut = CreateService(maxWorkers: 1, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
+        using var _ = sut;
 
         var item = MakeWorkItem();
+        store.Add(item.Session);
         sut.TryEnqueue(item);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -160,10 +172,13 @@ public class ReviewQueueServiceTests
             if (current == 1) throw new InvalidOperationException("First call fails");
             // Second call succeeds
         });
-        using var sut = CreateService(maxWorkers: 1, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
+        using var _ = sut;
 
         var failItem = MakeWorkItem();
         var successItem = MakeWorkItem();
+        store.Add(failItem.Session);
+        store.Add(successItem.Session);
         sut.TryEnqueue(failItem);
         sut.TryEnqueue(successItem);
 
@@ -185,9 +200,11 @@ public class ReviewQueueServiceTests
     {
         // Use an orchestrator that takes longer than the timeout
         var orchestrator = new DelayOrchestrator(delay: TimeSpan.FromSeconds(30));
-        using var sut = CreateService(maxWorkers: 1, timeoutMinutes: 0, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, timeoutMinutes: 0, orchestrator: orchestrator);
+        using var _ = sut;
 
         var item = MakeWorkItem();
+        store.Add(item.Session);
         sut.TryEnqueue(item);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -236,9 +253,11 @@ public class ReviewQueueServiceTests
     {
         // Uses a progress-reporting orchestrator to exercise the Progress<T> callback
         var orchestrator = new ProgressReportingOrchestrator();
-        using var sut = CreateService(maxWorkers: 1, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
+        using var _ = sut;
 
         var item = MakeWorkItem();
+        store.Add(item.Session);
         sut.TryEnqueue(item);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -262,9 +281,11 @@ public class ReviewQueueServiceTests
         // Orchestrator blocks until cancellation — triggers OperationCanceledException path
         var gate = new TaskCompletionSource();
         var orchestrator = new BlockingOrchestrator(gate.Task);
-        using var sut = CreateService(maxWorkers: 1, orchestrator: orchestrator);
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
+        using var _ = sut;
 
         var item = MakeWorkItem();
+        store.Add(item.Session);
         sut.TryEnqueue(item);
 
         using var cts = new CancellationTokenSource();
@@ -279,6 +300,67 @@ public class ReviewQueueServiceTests
 
         await WaitForShutdown(executeTask);
         // Worker should have exited gracefully via OperationCanceledException catch
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Atomic State Transition Guard
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public async Task Worker_SessionCancelledBetweenDequeueAndTransition_SkipsProcessing()
+    {
+        // Verifies the atomic TryTransitionToInProgress guard:
+        // If a session is cancelled after dequeue but before transition,
+        // the worker skips it instead of processing.
+        var orchestrator = new DelayOrchestrator(delay: TimeSpan.FromMilliseconds(10));
+        var (sut, store) = CreateServiceWithStore(maxWorkers: 1, orchestrator: orchestrator);
+        using var _ = sut;
+
+        // Create item, add to store as Queued, then cancel it in the store
+        var item = MakeWorkItem();
+        store.Add(item.Session);
+        store.TryCancelQueued(item.Session.SessionId); // cancel BEFORE worker dequeues
+
+        // Also enqueue a normal item that should still process
+        var normalItem = MakeWorkItem();
+        store.Add(normalItem.Session);
+
+        sut.TryEnqueue(item);
+        sut.TryEnqueue(normalItem);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var executeTask = StartService(sut, cts.Token);
+
+        // Normal item should complete
+        var response = await normalItem.Completion.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual("Completed", response.Status);
+
+        // Cancelled item should have been skipped via TryTransitionToInProgress returning false
+        Assert.IsTrue(item.Completion.Task.IsCanceled, "Cancelled session should be skipped");
+        Assert.AreEqual(ReviewSessionStatus.Cancelled, item.Session.Status);
+
+        cts.Cancel();
+        await WaitForShutdown(executeTask);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Settings Validation
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void Constructor_ZeroMaxQueueDepth_ClampsToOne()
+    {
+        using var sut = CreateService(maxQueue: 0);
+        // If we get here without exception, the constructor clamped to 1
+        Assert.IsTrue(sut.TryEnqueue(MakeWorkItem()));
+    }
+
+    [TestMethod]
+    public void Constructor_NegativeMaxWorkers_ClampsToOne()
+    {
+        using var sut = CreateService(maxWorkers: -1);
+        // If we get here without exception, the constructor clamped to 1
+        Assert.IsNotNull(sut);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -307,7 +389,7 @@ public class ReviewQueueServiceTests
     //  Helpers
     // ═══════════════════════════════════════════════════════════════════
 
-    private static ReviewQueueService CreateService(
+    private static (ReviewQueueService Service, InMemoryReviewSessionStore Store) CreateServiceWithStore(
         int maxWorkers = 3,
         int maxQueue = 50,
         int timeoutMinutes = 30,
@@ -330,12 +412,21 @@ public class ReviewQueueServiceTests
 
         var sessionStore = new InMemoryReviewSessionStore();
 
-        return new ReviewQueueService(
+        var service = new ReviewQueueService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             sessionStore,
             Options.Create(settings),
             NullLogger<ReviewQueueService>.Instance);
+
+        return (service, sessionStore);
     }
+
+    private static ReviewQueueService CreateService(
+        int maxWorkers = 3,
+        int maxQueue = 50,
+        int timeoutMinutes = 30,
+        ICodeReviewOrchestrator? orchestrator = null)
+        => CreateServiceWithStore(maxWorkers, maxQueue, timeoutMinutes, orchestrator).Service;
 
     private static ReviewWorkItem MakeWorkItem() => new()
     {

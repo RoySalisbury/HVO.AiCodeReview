@@ -102,7 +102,7 @@ Content-Type: application/json
 | Code | When |
 |------|------|
 | `200 OK` | Review completed, skipped, or rate-limited (queue disabled). |
-| `202 Accepted` | Review queued for background processing (queue enabled). Response includes `sessionId` and `statusUrl`. |
+| `202 Accepted` | Review queued for background processing (queue enabled). Response body includes `sessionId`; the status URL is returned in the `Location` header. |
 | `400 Bad Request` | Invalid request body. |
 | `500 Internal Server Error` | Unhandled exception (returned as `status: "Error"`). |
 | `503 Service Unavailable` | Review queue is full (queue enabled). |

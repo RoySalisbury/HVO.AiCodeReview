@@ -22,8 +22,16 @@ public interface IReviewSessionStore
     /// <summary>
     /// Tries to cancel a queued (not yet started) session.
     /// Returns true if the session was found and cancelled.
+    /// Uses a thread-safe compare-and-swap on the session status.
     /// </summary>
     bool TryCancelQueued(Guid sessionId);
+
+    /// <summary>
+    /// Atomically transitions a session from Queued to InProgress.
+    /// Returns true if the transition succeeded. Returns false if the session
+    /// was not found, or is not in Queued status (e.g., already cancelled).
+    /// </summary>
+    bool TryTransitionToInProgress(Guid sessionId);
 
     /// <summary>Returns the total number of sessions in the store.</summary>
     int Count { get; }
@@ -75,12 +83,31 @@ public class InMemoryReviewSessionStore : IReviewSessionStore
         if (!_sessions.TryGetValue(sessionId, out var session))
             return false;
 
-        if (session.Status != ReviewSessionStatus.Queued)
+        lock (session)
+        {
+            if (session.Status != ReviewSessionStatus.Queued)
+                return false;
+
+            session.Status = ReviewSessionStatus.Cancelled;
+            session.CompletedAtUtc = DateTime.UtcNow;
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool TryTransitionToInProgress(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
             return false;
 
-        session.Status = ReviewSessionStatus.Cancelled;
-        session.CompletedAtUtc = DateTime.UtcNow;
-        return true;
+        lock (session)
+        {
+            if (session.Status != ReviewSessionStatus.Queued)
+                return false;
+
+            session.Status = ReviewSessionStatus.InProgress;
+            return true;
+        }
     }
 
     /// <inheritdoc />

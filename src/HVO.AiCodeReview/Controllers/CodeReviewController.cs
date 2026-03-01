@@ -309,6 +309,9 @@ public class ReviewController : ControllerBase
 
     /// <summary>
     /// Cancel a queued (not yet started) review session.
+    /// The cancelled work item remains in the Channel until a worker dequeues it,
+    /// at which point it is skipped. This means queue capacity is not immediately
+    /// reclaimed on cancel — a known trade-off for simplicity.
     /// </summary>
     [HttpDelete("{sessionId:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]

@@ -6,7 +6,7 @@ namespace AiCodeReview.Services;
 
 /// <summary>
 /// Background service that processes queued review requests using a bounded worker pool.
-/// Reviews are enqueued via <see cref="EnqueueAsync"/> and processed by up to
+/// Reviews are enqueued via <see cref="TryEnqueue"/> and processed by up to
 /// <see cref="ReviewQueueSettings.MaxConcurrentReviews"/> workers concurrently.
 /// </summary>
 public class ReviewQueueService : BackgroundService
@@ -28,8 +28,14 @@ public class ReviewQueueService : BackgroundService
         _settings = settings.Value;
         _logger = logger;
 
+        // Clamp to minimum 1 to avoid ArgumentOutOfRangeException
+        var maxQueue = Math.Max(1, _settings.MaxQueueDepth);
+        var maxWorkers = Math.Max(1, _settings.MaxConcurrentReviews);
+        _settings.MaxQueueDepth = maxQueue;
+        _settings.MaxConcurrentReviews = maxWorkers;
+
         _channel = Channel.CreateBounded<ReviewWorkItem>(
-            new BoundedChannelOptions(_settings.MaxQueueDepth)
+            new BoundedChannelOptions(maxQueue)
             {
                 FullMode = BoundedChannelFullMode.Wait,
                 SingleReader = false,
@@ -84,33 +90,50 @@ public class ReviewQueueService : BackgroundService
     {
         _logger.LogInformation("Worker {WorkerId} started.", workerId);
 
-        await foreach (var workItem in _channel.Reader.ReadAllAsync(stoppingToken))
+        try
         {
-            if (stoppingToken.IsCancellationRequested) break;
+            await foreach (var workItem in _channel.Reader.ReadAllAsync(stoppingToken))
+            {
+                if (stoppingToken.IsCancellationRequested) break;
 
-            // Skip cancelled sessions
-            if (workItem.Session.Status == ReviewSessionStatus.Cancelled)
-            {
-                _logger.LogInformation("Worker {WorkerId}: Skipping cancelled session {SessionId}.",
-                    workerId, workItem.Session.SessionId);
-                workItem.Completion.TrySetCanceled();
-                continue;
-            }
+                // Skip cancelled sessions
+                if (workItem.Session.Status == ReviewSessionStatus.Cancelled)
+                {
+                    _logger.LogInformation("Worker {WorkerId}: Skipping cancelled session {SessionId}.",
+                        workerId, workItem.Session.SessionId);
+                    workItem.Completion.TrySetCanceled();
+                    continue;
+                }
 
-            try
-            {
-                await ProcessReviewAsync(workerId, workItem, stoppingToken);
+                // Atomic state transition: Queued -> InProgress.
+                // If the session was cancelled between dequeue and here, skip it.
+                if (!_sessionStore.TryTransitionToInProgress(workItem.Session.SessionId))
+                {
+                    _logger.LogInformation("Worker {WorkerId}: Session {SessionId} could not transition to InProgress (likely cancelled). Skipping.",
+                        workerId, workItem.Session.SessionId);
+                    workItem.Completion.TrySetCanceled();
+                    continue;
+                }
+
+                try
+                {
+                    await ProcessReviewAsync(workerId, workItem, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation("Worker {WorkerId}: Shutting down.", workerId);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Worker {WorkerId}: Unhandled error processing session {SessionId}.",
+                        workerId, workItem.Session.SessionId);
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                _logger.LogInformation("Worker {WorkerId}: Shutting down.", workerId);
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Worker {WorkerId}: Unhandled error processing session {SessionId}.",
-                    workerId, workItem.Session.SessionId);
-            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal shutdown — ReadAllAsync throws when the token fires.
         }
 
         _logger.LogInformation("Worker {WorkerId} stopped.", workerId);
@@ -208,7 +231,8 @@ public class ReviewWorkItem
     /// Completed when the review finishes (success, failure, or timeout).
     /// The status endpoint can await this to return the final result.
     /// </summary>
-    public TaskCompletionSource<ReviewResponse> Completion { get; } = new();
+    public TaskCompletionSource<ReviewResponse> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
     /// The response, populated when the review completes.

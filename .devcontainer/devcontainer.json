@@ -123,12 +123,14 @@
   },
   // Port mappings
   // 5000-5001: HVO.AiCodeReview API (HTTP/HTTPS)
+  // 8080: Docker container (HVO.AiCodeReview)
   // 5432: PostgreSQL, 6379: Redis
   "forwardPorts": [
     5000,
     5001,
     5432,
-    6379
+    6379,
+    8080
   ],
   "portsAttributes": {
     "5000": {
@@ -144,6 +146,11 @@
       "elevateIfNeeded": true
     },
     "6379": {
+      "onAutoForward": "silent",
+      "elevateIfNeeded": true
+    },
+    "8080": {
+      "label": "HVO.AiCodeReview Docker",
       "onAutoForward": "silent",
       "elevateIfNeeded": true
     }

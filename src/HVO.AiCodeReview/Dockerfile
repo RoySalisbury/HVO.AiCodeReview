@@ -7,7 +7,7 @@
 #   docker run -p 8080:8080 -e AzureDevOps__PersonalAccessToken=xxx hvo-ai-code-review
 # ===========================================================================
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy project file and restore first (for layer caching)
@@ -16,7 +16,7 @@ RUN dotnet restore src/HVO.AiCodeReview/HVO.AiCodeReview.csproj
 
 # Copy everything else and publish
 COPY src/HVO.AiCodeReview/ src/HVO.AiCodeReview/
-RUN dotnet publish src/HVO.AiCodeReview/HVO.AiCodeReview.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish src/HVO.AiCodeReview/HVO.AiCodeReview.csproj -c Release -o /app/publish
 
 # ---------------------------------------------------------------------------
 # Runtime image

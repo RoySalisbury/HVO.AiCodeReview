@@ -25,7 +25,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 # Non-root user for security (explicit home directory avoids runtime issues)
-RUN adduser --disabled-password --gecos "" --home /app appuser
+RUN groupadd --system appuser && useradd --system --gid appuser --home /app --no-create-home appuser
 USER appuser
 
 COPY --from=build /app/publish .

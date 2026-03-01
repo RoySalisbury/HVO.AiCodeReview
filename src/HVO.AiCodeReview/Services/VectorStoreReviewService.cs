@@ -207,6 +207,12 @@ public class VectorStoreReviewService
 
             return reviewResult;
         }
+        catch (Exception ex)
+        {
+            opScope.Fail(ex);
+            opScope.RecordException(ex);
+            throw;
+        }
         finally
         {
             // ── Cleanup: delete assistant, vector store, files ───────────

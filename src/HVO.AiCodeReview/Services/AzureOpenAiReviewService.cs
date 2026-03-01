@@ -346,6 +346,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
                     _logger.LogError(
                         "Rate limit retries exhausted for {FilePath}: cumulative wait {Total:F0}s exceeds {Max}s cap",
                         file.FilePath, totalRetryTime.TotalSeconds, RateLimitHelper.MaxTotalRetryDuration.TotalSeconds);
+                    opScope?.Fail(cex);
+                    opScope?.RecordException(cex);
                     throw;
                 }
 
@@ -363,11 +365,15 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 _logger.LogError(cex,
                     "Rate limit retries exhausted for {FilePath} after {Attempts} attempts. Status: {Status}",
                     file.FilePath, attempt + 1, cex.Status);
+                opScope?.Fail(cex);
+                opScope?.RecordException(cex);
                 throw;
             }
             catch (ClientResultException cex)
             {
                 _logger.LogError(cex, "AI error reviewing {FilePath}. Status: {Status}", file.FilePath, cex.Status);
+                opScope?.Fail(cex);
+                opScope?.RecordException(cex);
                 throw;
             }
         }
@@ -413,6 +419,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse single-file AI response for {FilePath}", file.FilePath);
+            opScope?.Fail(ex);
+            opScope?.RecordException(ex);
             return new CodeReviewResult
             {
                 Summary = new ReviewSummary

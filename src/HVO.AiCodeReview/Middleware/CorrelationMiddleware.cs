@@ -22,9 +22,9 @@ public sealed class CorrelationMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        // Read or generate a correlation ID
-        var correlationId = context.Request.Headers[CorrelationHeader].FirstOrDefault()
-            ?? Guid.NewGuid().ToString("D");
+        // Read or generate a correlation ID, validating format
+        var rawId = context.Request.Headers[CorrelationHeader].FirstOrDefault();
+        var correlationId = IsValidCorrelationId(rawId) ? rawId! : Guid.NewGuid().ToString("D");
 
         // Begin a correlation scope for downstream telemetry operations
         using var scope = CorrelationContext.BeginScope(correlationId);
@@ -39,6 +39,24 @@ public sealed class CorrelationMiddleware
         _logger.LogDebug("Correlation ID: {CorrelationId}", correlationId);
 
         await _next(context);
+    }
+
+    /// <summary>
+    /// Validates that a correlation ID is non-empty, within a reasonable length,
+    /// and contains only safe printable ASCII characters (alphanumeric, hyphens, underscores, dots).
+    /// </summary>
+    private static bool IsValidCorrelationId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 128)
+            return false;
+
+        foreach (var c in id)
+        {
+            if (!char.IsLetterOrDigit(c) && c != '-' && c != '_' && c != '.')
+                return false;
+        }
+
+        return true;
     }
 }
 

@@ -23,6 +23,7 @@ builder.Services.AddTelemetryLoggingEnrichment(options =>
 });
 
 builder.Services.AddTelemetryStatistics();
+builder.Services.AddHealthChecks();
 builder.Services.AddTelemetryHealthCheck(new TelemetryHealthCheckOptions
 {
     DegradedErrorRateThreshold = 5.0,
@@ -66,7 +67,7 @@ builder.Services.AddHttpClient<IDevOpsService, AzureDevOpsService>(client =>
     return new TelemetryHttpMessageHandler(
         new HttpInstrumentationOptions
         {
-            RedactQueryStrings = false,
+            RedactQueryStrings = true,
             CaptureRequestHeaders = false,
             CaptureResponseHeaders = false,
         },
@@ -141,5 +142,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 app.Run();

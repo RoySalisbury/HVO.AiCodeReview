@@ -5,8 +5,8 @@ namespace AiCodeReview.Tests.Helpers;
 
 /// <summary>
 /// No-op telemetry service for unit and integration tests.
-/// All operations are no-ops and metric recordings are silently ignored.
-/// Optionally captures recorded metrics and events for assertion.
+/// Does not emit telemetry to any external sinks, but captures metrics, events,
+/// exceptions, and operations in-memory for assertions.
 /// </summary>
 public sealed class NullTelemetryService : ITelemetryService
 {
@@ -16,16 +16,28 @@ public sealed class NullTelemetryService : ITelemetryService
     private readonly List<NullOperationScope> _operations = new();
 
     /// <summary>Metrics recorded during the test.</summary>
-    public IReadOnlyList<(string Name, double Value)> RecordedMetrics => _metrics;
+    public IReadOnlyList<(string Name, double Value)> RecordedMetrics
+    {
+        get { lock (_metrics) { return _metrics.ToArray(); } }
+    }
 
     /// <summary>Events tracked during the test.</summary>
-    public IReadOnlyList<string> TrackedEvents => _events;
+    public IReadOnlyList<string> TrackedEvents
+    {
+        get { lock (_events) { return _events.ToArray(); } }
+    }
 
     /// <summary>Exceptions tracked during the test.</summary>
-    public IReadOnlyList<Exception> TrackedException => _exceptions;
+    public IReadOnlyList<Exception> TrackedException
+    {
+        get { lock (_exceptions) { return _exceptions.ToArray(); } }
+    }
 
     /// <summary>Operations started during the test.</summary>
-    public IReadOnlyList<NullOperationScope> Operations => _operations;
+    public IReadOnlyList<NullOperationScope> Operations
+    {
+        get { lock (_operations) { return _operations.ToArray(); } }
+    }
 
     public bool IsEnabled => true;
 
@@ -121,7 +133,9 @@ public sealed class NullOperationScope : IOperationScope
 /// </summary>
 public sealed class NullTelemetryStatistics : ITelemetryStatistics
 {
-    public DateTimeOffset StartTime => DateTimeOffset.UtcNow;
+    private readonly DateTimeOffset _startTime = DateTimeOffset.UtcNow;
+
+    public DateTimeOffset StartTime => _startTime;
     public long ActivitiesCreated => 0;
     public long ActivitiesCompleted => 0;
     public long ActiveActivities => 0;

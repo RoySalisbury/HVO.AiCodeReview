@@ -59,8 +59,9 @@
 **Flow:**
 
 1. A pipeline task (or manual call) sends `POST /api/review` with the PR details. CancellationToken is propagated from the HTTP request.
-2. The **Rate Limiter** checks if the PR was reviewed too recently — rejects immediately if so.
-3. The **Orchestrator** fetches PR state and metadata from Azure DevOps, then decides the action:
+2. When the **Review Queue** is enabled, the request is enqueued for background processing and the API returns `202 Accepted` immediately. When disabled, reviews run synchronously (original behavior). See [Review Queue & Worker Pool](#review-queue--worker-pool).
+3. The **Rate Limiter** checks if the PR was reviewed too recently — rejects immediately if so.
+4. The **Orchestrator** fetches PR state and metadata from Azure DevOps, then decides the action:
    - **Full Review** — first review; calls the AI in two passes, posts comments, votes.
    - **Re-Review** — new commits detected; calls the AI again, deduplicates comments, resolves fixed threads via AI verification.
    - **Vote Only** — draft-to-active transition with no code changes; submits vote only.
@@ -413,6 +414,59 @@ During Pass 2 (per-file review), the orchestrator automatically throttles API ca
 4. **RPM capacity warning** — Before Pass 2 begins, if the estimated number of API calls exceeds 80% of the model's RPM, a warning is logged to help identify potential throttling.
 
 This is driven entirely by the `requestsPerMinute` field in `model-adapters.json`. If no RPM data is configured, no throttling is applied.
+
+### Review Queue & Worker Pool
+
+When `ReviewQueue:Enabled` is `true`, the service supports parallel PR processing via a bounded queue and worker pool:
+
+```
+POST /api/review ──▶ Channel<ReviewWorkItem> ──▶ Worker 1 ──▶ Orchestrator
+                     (bounded by MaxQueueDepth)  Worker 2 ──▶ Orchestrator
+                                                  Worker 3 ──▶ Orchestrator
+                                                   ...
+```
+
+**Components:**
+
+| Component | Description |
+|-----------|-------------|
+| `ReviewQueueService` | `BackgroundService` that reads from a bounded `Channel<ReviewWorkItem>` and spawns `MaxConcurrentReviews` worker tasks. |
+| `InMemoryReviewSessionStore` | Thread-safe session store (`ConcurrentDictionary`) for tracking queued/in-progress/completed sessions. Evicts completed sessions older than 1 hour. |
+| `AiCallThrottle` | `SemaphoreSlim`-backed global throttle limiting concurrent AI inference calls (`MaxConcurrentAiCalls`) across all active reviews. Prevents 429 rate-limit cascades. |
+| `ReviewWorkItem` | Pairs a `ReviewSession` with a `ReviewRequest` and a `TaskCompletionSource<ReviewResponse>` for status polling. |
+
+**Configuration (`appsettings.json`):**
+
+```json
+{
+  "ReviewQueue": {
+    "Enabled": false,
+    "MaxConcurrentReviews": 3,
+    "MaxQueueDepth": 50,
+    "MaxConcurrentAiCalls": 8,
+    "SessionTimeoutMinutes": 30
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `Enabled` | `false` | When `false`, `POST /api/review` runs synchronously (backward compatible). |
+| `MaxConcurrentReviews` | `3` | Number of reviews that can execute concurrently (worker pool size). |
+| `MaxQueueDepth` | `50` | Maximum queued reviews. Returns `503` when full. |
+| `MaxConcurrentAiCalls` | `8` | System-wide limit on concurrent AI inference calls across all active reviews. |
+| `SessionTimeoutMinutes` | `30` | Maximum time a single review can run before being cancelled. |
+
+**Backward compatibility:** When `Enabled` is `false` (the default), the queue infrastructure is not registered in DI and the API behaves identically to prior versions — reviews execute synchronously on the request thread.
+
+**Queue API endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/review` | POST | Returns `202 Accepted` with `statusUrl` (queue enabled) or `200 OK` (queue disabled). |
+| `/api/review/status/{sessionId}` | GET | Poll session status: `Queued`, `InProgress`, `Completed`, `Failed`, `Cancelled`. |
+| `/api/review/queue` | GET | List all active (queued + in-progress) sessions with queue stats. |
+| `/api/review/{sessionId}` | DELETE | Cancel a queued session (409 if already in progress). |
 
 ### Cost Estimation
 

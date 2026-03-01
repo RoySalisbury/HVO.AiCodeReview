@@ -52,14 +52,15 @@ public static class CodeReviewServiceFactory
             PromptAssemblyPipeline? pipeline,
             ModelAdapterResolver? adapterResolver,
             IGlobalRateLimitSignal? rateLimitSignal,
-            ITelemetryService? telemetry)
+            ITelemetryService? telemetry,
+            IAiCallThrottle? aiCallThrottle = null)
         {
             if (providerCache.TryGetValue(providerKey, out var cached))
                 return cached;
 
             var service = CreateProvider(
                 providerKey, providerConfig, loggerFactory,
-                maxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry);
+                maxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry, aiCallThrottle);
 
             providerCache[providerKey] = service;
             return service;
@@ -75,6 +76,7 @@ public static class CodeReviewServiceFactory
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
             var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
             var telemetry = sp.GetService<ITelemetryService>();
+            var aiCallThrottle = sp.GetService<IAiCallThrottle>();
             var defaultService = sp.GetRequiredService<ICodeReviewService>();
             var logger = loggerFactory.CreateLogger<DepthModelResolver>();
 
@@ -110,7 +112,7 @@ public static class CodeReviewServiceFactory
 
                     var service = GetOrCreateProvider(
                         providerKey, providerConfig, loggerFactory,
-                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry);
+                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry, aiCallThrottle);
 
                     depthServices[depth] = service;
 
@@ -134,6 +136,7 @@ public static class CodeReviewServiceFactory
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
             var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
             var telemetry = sp.GetService<ITelemetryService>();
+            var aiCallThrottle = sp.GetService<IAiCallThrottle>();
             var depthResolver = sp.GetRequiredService<DepthModelResolver>();
             var logger = loggerFactory.CreateLogger<PassModelResolver>();
 
@@ -169,7 +172,7 @@ public static class CodeReviewServiceFactory
 
                     var service = GetOrCreateProvider(
                         providerKey, providerConfig, loggerFactory,
-                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry);
+                        settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry, aiCallThrottle);
 
                     passServices[pass] = service;
 
@@ -193,6 +196,7 @@ public static class CodeReviewServiceFactory
             var adapterResolver = sp.GetService<ModelAdapterResolver>();
             var rateLimitSignal = sp.GetService<IGlobalRateLimitSignal>();
             var telemetry = sp.GetService<ITelemetryService>();
+            var aiCallThrottle = sp.GetService<IAiCallThrottle>();
 
             // ── Fallback: if no AiProvider section exists, use legacy AzureOpenAI ──
             if (settings.Providers.Count == 0)
@@ -215,7 +219,8 @@ public static class CodeReviewServiceFactory
                     pipeline: pipeline,
                     modelAdapter: adapterResolver?.Resolve(legacySettings.DeploymentName),
                     rateLimitSignal: rateLimitSignal,
-                    telemetry: telemetry);
+                    telemetry: telemetry,
+                    aiCallThrottle: aiCallThrottle);
             }
 
             // Build all enabled providers
@@ -223,7 +228,7 @@ public static class CodeReviewServiceFactory
                 .Where(kv => kv.Value.Enabled)
                 .Select(kv => (
                     Name: kv.Value.DisplayName.Length > 0 ? kv.Value.DisplayName : kv.Key,
-                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry)))
+                    Service: CreateProvider(kv.Key, kv.Value, loggerFactory, settings.MaxInputLinesPerFile, reviewProfile, pipeline, adapterResolver, rateLimitSignal, telemetry, aiCallThrottle)))
                 .ToList();
 
             if (providers.Count == 0)
@@ -282,7 +287,8 @@ public static class CodeReviewServiceFactory
         ReviewProfile reviewProfile, PromptAssemblyPipeline? pipeline = null,
         ModelAdapterResolver? adapterResolver = null,
         IGlobalRateLimitSignal? rateLimitSignal = null,
-        ITelemetryService? telemetry = null)
+        ITelemetryService? telemetry = null,
+        IAiCallThrottle? aiCallThrottle = null)
     {
         var type = config.Type.ToLowerInvariant();
         var maxLines = ValidateMaxInputLines(
@@ -302,7 +308,8 @@ public static class CodeReviewServiceFactory
                 pipeline: pipeline,
                 modelAdapter: adapter,
                 rateLimitSignal: rateLimitSignal,
-                telemetry: telemetry),
+                telemetry: telemetry,
+                aiCallThrottle: aiCallThrottle),
 
             // ── Add new provider types here ──────────────────────────────
             // "github-copilot" => new GitHubCopilotReviewService(config, loggerFactory.CreateLogger<GitHubCopilotReviewService>()),

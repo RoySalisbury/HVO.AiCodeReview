@@ -59,6 +59,23 @@ builder.Services.Configure<TestCoverageSettings>(
     builder.Configuration.GetSection(TestCoverageSettings.SectionName));
 builder.Services.AddSingleton<TestCoverageGapDetector>();
 
+// Review Queue + Worker Pool
+builder.Services.Configure<ReviewQueueSettings>(
+    builder.Configuration.GetSection(ReviewQueueSettings.SectionName));
+
+var queueSettings = builder.Configuration
+    .GetSection(ReviewQueueSettings.SectionName)
+    .Get<ReviewQueueSettings>() ?? new ReviewQueueSettings();
+
+if (queueSettings.Enabled)
+{
+    builder.Services.AddSingleton<IReviewSessionStore, InMemoryReviewSessionStore>();
+    builder.Services.AddSingleton<IAiCallThrottle>(
+        _ => new AiCallThrottle(queueSettings.MaxConcurrentAiCalls));
+    builder.Services.AddSingleton<ReviewQueueService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ReviewQueueService>());
+}
+
 // ---------------------------------------------------------------------------
 // HTTP client for Azure DevOps API calls (with Polly resilience)
 // ---------------------------------------------------------------------------

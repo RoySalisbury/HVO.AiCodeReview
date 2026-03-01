@@ -136,4 +136,7 @@ public enum ReviewSessionStatus
 
     /// <summary>Review failed with an error.</summary>
     Failed,
+
+    /// <summary>Review was cancelled before it started processing.</summary>
+    Cancelled,
 }

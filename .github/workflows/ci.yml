@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, 'feature/**', 'fix/**', 'release/**' ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  TEST_FILTER: 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual&TestCategory!=LiveDevOps'
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test with coverage
+        run: |
+          dotnet test tests/HVO.AiCodeReview.Tests/HVO.AiCodeReview.Tests.csproj \
+            --no-build \
+            --configuration Release \
+            --filter "${{ env.TEST_FILTER }}" \
+            --settings tests/HVO.AiCodeReview.Tests/coverage.runsettings \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults \
+            --logger "trx;LogFileName=test-results.trx"
+
+      - name: Install ReportGenerator
+        if: always()
+        run: dotnet tool install --global dotnet-reportgenerator-globaltool
+
+      - name: Generate coverage report
+        if: always()
+        run: |
+          reportgenerator \
+            -reports:"TestResults/**/coverage.cobertura.xml" \
+            -targetdir:"coverage-report" \
+            -reporttypes:"Html;TextSummary;MarkdownSummaryGithub;Badges;Cobertura"
+
+      - name: Parse coverage for badge
+        if: always()
+        id: coverage
+        run: |
+          LINE_COV=$(grep 'Line coverage' coverage-report/Summary.txt | grep -oP '[\d.]+(?=%)' || echo "0")
+          BRANCH_COV=$(grep 'Branch coverage' coverage-report/Summary.txt | grep -oP '[\d.]+(?=%)')
+          echo "line=$LINE_COV" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH_COV" >> "$GITHUB_OUTPUT"
+          echo "### Code Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Line coverage | ${LINE_COV}% |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch coverage | ${BRANCH_COV}% |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat coverage-report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: TestResults/test-results.trx
+          reporter: dotnet-trx
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage-report/
+          retention-days: 30
+
+      - name: Upload coverage badges
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-badges
+          path: coverage-report/badge_*.svg
+          retention-days: 90
+
+      # -------------------------------------------------------------------
+      # Dynamic badge via gist (requires GIST_TOKEN secret with gist scope)
+      # -------------------------------------------------------------------
+      - name: Update coverage badge
+        if: github.ref == 'refs/heads/main' && always()
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: ${{ secrets.COVERAGE_GIST_ID }}
+          filename: coverage.json
+          label: coverage
+          message: ${{ steps.coverage.outputs.line }}%
+          valColorRange: ${{ steps.coverage.outputs.line }}
+          minColorRange: 40
+          maxColorRange: 80
+          namedLogo: dotnet

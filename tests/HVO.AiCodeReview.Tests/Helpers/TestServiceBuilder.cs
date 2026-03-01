@@ -21,10 +21,17 @@ namespace AiCodeReview.Tests.Helpers;
 /// </summary>
 public static class TestServiceBuilder
 {
-    /// <summary>Loads appsettings.Test.json.</summary>
+    /// <summary>
+    /// Loads test configuration. Uses appsettings.CI.json as a committed base
+    /// (placeholder values sufficient for fake/unit tests), then optionally
+    /// overlays appsettings.Test.json which contains real secrets for live tests.
+    /// This allows CI runners (which lack appsettings.Test.json) to run all
+    /// fake/unit tests without failure.
+    /// </summary>
     public static IConfiguration LoadConfig() => new ConfigurationBuilder()
         .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.Test.json")
+        .AddJsonFile("appsettings.CI.json", optional: false)
+        .AddJsonFile("appsettings.Test.json", optional: true)
         .Build();
 
     /// <summary>
@@ -69,6 +76,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -129,6 +138,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -193,6 +204,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

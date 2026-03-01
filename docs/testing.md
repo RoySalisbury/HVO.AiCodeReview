@@ -68,8 +68,8 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 
 | Test File | Tests | Category | Description |
 |-----------|-------|----------|-------------|
-| `ReviewLifecycleTests.cs` | 5 | Integration | Independent, parallelizable lifecycle tests: first review, skip, re-review dedup, draft→active vote-only, reset + re-review. Each test creates its own disposable repo. |
-| `ServiceIntegrationTests.cs` | 7 | Integration | History round-trips, ReviewCount, description table, tag resilience, metrics API, property read/write, description PATCH. Each test gets its own disposable repo. |
+| `ReviewLifecycleTests.cs` | 5 | LiveDevOps | Independent, parallelizable lifecycle tests: first review, skip, re-review dedup, draft→active vote-only, reset + re-review. Each test creates its own disposable repo. |
+| `ServiceIntegrationTests.cs` | 7 | LiveDevOps | History round-trips, ReviewCount, description table, tag resilience, metrics API, property read/write, description PATCH. Each test gets its own disposable repo. |
 | `UnifiedDiffTests.cs` | 9 | Unit | LCS-based unified diff computation and `@@ hunk @@` header parsing. Pure unit tests — no external dependencies. |
 | `MultiProviderTests.cs` | 18 | Unit | Factory tests (fallback, single, consensus, unknown type, disabled provider), consensus aggregation (overlap detection, threshold, voting, metrics), and settings binding. No external dependencies. |
 | `LayeredPromptTests.cs` | 38 | Unit | Prompt assembly pipeline tests: scope filtering, rule ordering, identity/custom-instruction toggles, cache behavior, hot-reload, model adapter injection, and edge cases. |
@@ -82,7 +82,7 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `FileClassificationTests.cs` | 24 | Unit | File type detection, binary exclusion, generated-file detection, language categorization. |
 | `ThreadManagementTests.cs` | 17 | Unit | Comment thread lifecycle: deduplication, status transitions, fixed-thread resolution, attribution tags. |
 | `BuildSummaryMarkdownTests.cs` | 10 | Unit | Summary thread Markdown formatting: file inventory, verdict display, observation tables. |
-| `RaceConditionTests.cs` | 3 | Unit | Concurrency and thread-safety tests for shared state and parallel review operations. |
+| `RaceConditionTests.cs` | 3 | Integration | Concurrency and thread-safety tests for shared state and parallel review operations. |
 | `ResilienceTests.cs` | 7 | Unit | Azure DevOps HTTP resilience: transient 5xx retry, 429 retry with Retry-After, 408 retry, non-transient 4xx no-retry, retry exhaustion, multiple 429s, DI wiring. |
 | `PassModelResolverTests.cs` | 10 | Unit | Per-pass model routing: pass-specific resolution, depth fallback, active-provider fallback, pass-over-depth priority, multi-pass routing, HasPassRouting, DI wiring, orchestrator integration. |
 | `SizeGuardrailsTests.cs` | 21 | Unit | PR size guardrails: file prioritization (add > edit > rename), changed-line counting from ranges and content (incl. empty/trailing-newline edge cases), threshold evaluation (warning-only, both-thresholds, disabled), focus-mode file trimming (guard against MaxFiles=0), BuildSummaryMarkdown warning banner integration, default settings validation. |
@@ -93,7 +93,12 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `LiveAiDepthModeTests.cs` | 4 | LiveAI | Real AI tests for all three review depth modes: Quick (no inline), Standard (inline + verdicts), Deep (+ cross-file analysis). Includes a depth comparison test that runs all 3 modes on the same multi-file known-bad code and compares output. Uses `PushMultipleFilesAsync` for cross-file scenarios. |
 | `AiSmokeTest.cs` | 2 | Manual | Manual-only tests that call real Azure OpenAI (basic prompt + JSON mode). Run with `--filter TestCategory=Manual`. |
 | `SimulationPR63643.cs` | 1 | Manual | Simulation test against a specific PR for debugging and validation. |
-| `ReviewFlowIntegrationTests.cs` | 3 (Ignored) | — | Legacy monolithic lifecycle test. Replaced by `ReviewLifecycleTests.cs`. Kept for reference. |
+| `ReviewFlowIntegrationTests.cs` | 3 (Ignored) | LiveDevOps | Legacy monolithic lifecycle test. Replaced by `ReviewLifecycleTests.cs`. Kept for reference. |
+| `FakeDevOpsServiceTests.cs` | — | Integration | Tests `FakeDevOpsService` and `TestServiceBuilder.BuildFullyFake()` — verifies the in-memory fake DevOps service works correctly as a test double. |
+| `SessionTrackingTests.cs` | — | Integration | Review session tracking: correlation IDs, session lifecycle, telemetry scoping. Uses `BuildFullyFake()`. |
+| `TelemetryIntegrationTests.cs` | — | Integration | Telemetry integration: `NullTelemetryService` scopes, metric recording, correlation context. Uses `BuildFullyFake()`. |
+| `TestCoverageGapDetectorTests.cs` | 47 | Unit | Test coverage gap detection: production file identification, exclusion patterns, expected test path generation, gap detection, summary building, disabled mode. |
+| `RateLimitTests.cs` | — | Unit | Rate limit utilities: `Retry-After` header parsing, response message extraction. |
 
 ## Test Infrastructure
 
@@ -109,11 +114,17 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 ```bash
 # From repo root
 
-# All automated tests (fake AI — fast, no API cost)
+# All automated tests (fake AI + fake/no DevOps — fast, no API cost)
+dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=LiveDevOps'
+
+# Include LiveDevOps tests (needs Azure DevOps PAT in appsettings.Test.json)
 dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI&TestCategory!=Benchmark'
 
 # LiveAI tests only (real Azure OpenAI — costs money, slower)
 dotnet test --filter TestCategory=LiveAI
+
+# LiveDevOps tests only (creates disposable repos, needs PAT)
+dotnet test --filter TestCategory=LiveDevOps
 
 # Benchmark tests only (real Azure OpenAI — runs all models × all depths)
 dotnet test --filter TestCategory=Benchmark

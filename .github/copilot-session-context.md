@@ -265,7 +265,7 @@ All development work follows this structured workflow. **Every step is mandatory
 - **Run all tests** before pushing — every push must be green:
   ```bash
   dotnet build --no-restore
-  dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual' --no-build
+  dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual&TestCategory!=LiveDevOps' --no-build
   ```
 - Write **new unit tests** for all new logic (helpers, services, models).
 - **Update `README.md`** if the change adds or modifies:
@@ -280,7 +280,7 @@ All development work follows this structured workflow. **Every step is mandatory
 
 1. **Verify build & tests** one final time:
    ```bash
-   dotnet build && dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual'
+   dotnet build && dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual&TestCategory!=LiveDevOps'
    ```
 2. **Ensure README is updated** — this is required for every PR, not optional.
 3. **Push the branch**:
@@ -314,7 +314,7 @@ These steps are **blocking** — do not merge until all are complete:
 
 3. **Re-run tests after any review-driven changes**:
    ```bash
-   dotnet build && dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual'
+   dotnet build && dotnet test --filter 'TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=Manual&TestCategory!=LiveDevOps'
    ```
 
 4. **Squash-merge into `main`**:

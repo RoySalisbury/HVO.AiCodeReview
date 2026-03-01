@@ -12,6 +12,7 @@ namespace AiCodeReview.Tests;
 /// enable/disable, prompt assembly pipeline, backward compatibility,
 /// and hot-reload.
 /// </summary>
+[TestCategory("Unit")]
 [TestClass]
 public class LayeredPromptTests
 {

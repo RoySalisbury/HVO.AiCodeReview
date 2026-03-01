@@ -33,6 +33,7 @@ namespace AiCodeReview.Tests;
 /// with [Ignore] for reference only.  The InspectPR_NoCleanup and CleanupTestPR
 /// manual utilities remain active.
 /// </summary>
+[TestCategory("LiveDevOps")]
 [TestClass]
 public class ReviewFlowIntegrationTests
 {
@@ -75,6 +76,16 @@ public class ReviewFlowIntegrationTests
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
+        services.AddSingleton<PassModelResolver>(sp =>
+            new PassModelResolver(
+                new Dictionary<ReviewPass, ICodeReviewService>(),
+                sp.GetRequiredService<DepthModelResolver>(),
+                sp.GetRequiredService<ILogger<PassModelResolver>>()));
+        services.AddSingleton<ICodeReviewServiceResolver>(sp =>
+            sp.GetRequiredService<PassModelResolver>());
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -300,6 +311,16 @@ public class ReviewFlowIntegrationTests
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
         services.AddSingleton<ITelemetryService, NullTelemetryService>();
+        services.Configure<SizeGuardrailsSettings>(config.GetSection(SizeGuardrailsSettings.SectionName));
+        services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
+        services.AddSingleton<TestCoverageGapDetector>();
+        services.AddSingleton<PassModelResolver>(sp =>
+            new PassModelResolver(
+                new Dictionary<ReviewPass, ICodeReviewService>(),
+                sp.GetRequiredService<DepthModelResolver>(),
+                sp.GetRequiredService<ILogger<PassModelResolver>>()));
+        services.AddSingleton<ICodeReviewServiceResolver>(sp =>
+            sp.GetRequiredService<PassModelResolver>());
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

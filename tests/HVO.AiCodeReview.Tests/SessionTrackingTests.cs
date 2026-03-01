@@ -9,6 +9,7 @@ namespace AiCodeReview.Tests;
 /// All tests use <see cref="FakeDevOpsService"/> + <see cref="FakeCodeReviewService"/>
 /// so they run locally without credentials.
 /// </summary>
+[TestCategory("Integration")]
 [TestClass]
 public class SessionTrackingTests
 {

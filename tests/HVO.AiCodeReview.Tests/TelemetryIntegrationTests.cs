@@ -12,6 +12,7 @@ namespace AiCodeReview.Tests;
 /// Verifies DI registration, correlation context, NullTelemetryService
 /// instrumentation capture, and operation scope lifecycle.
 /// </summary>
+[TestCategory("Integration")]
 [TestClass]
 public class TelemetryIntegrationTests
 {

@@ -16,6 +16,7 @@ namespace AiCodeReview.Tests;
 /// Uses a mock HTTP handler with artificial delay to widen the read-modify-write
 /// window, proving that the per-PR semaphore serializes concurrent writes.
 /// </summary>
+[TestCategory("Integration")]
 [TestClass]
 public class RaceConditionTests
 {

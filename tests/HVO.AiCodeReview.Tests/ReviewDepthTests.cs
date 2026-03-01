@@ -277,7 +277,7 @@ public class ReviewDepthTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("QuickReview")]
     [Timeout(120_000)]
     public async Task QuickMode_SkipsPass2_ReturnsPass1Only()
@@ -305,7 +305,7 @@ public class ReviewDepthTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("QuickReview")]
     [Timeout(120_000)]
     public async Task QuickMode_Pass1Fails_VerdictAndVoteAreConsistent()
@@ -346,7 +346,7 @@ public class ReviewDepthTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("StandardReview")]
     [Timeout(120_000)]
     public async Task StandardMode_IsDefault_RunsPass1And2()
@@ -378,7 +378,7 @@ public class ReviewDepthTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_RunsAllThreePasses()
@@ -406,7 +406,7 @@ public class ReviewDepthTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_VerdictOverride_AppliesWhenInconsistent()

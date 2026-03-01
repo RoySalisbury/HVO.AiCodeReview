@@ -470,7 +470,7 @@ public class DepthModeComprehensiveTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_Pass3ReturnsNull_FallsBackToStandard()
@@ -497,7 +497,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_Pass3Throws_FallsBackToStandard()
@@ -528,7 +528,7 @@ public class DepthModeComprehensiveTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_VerdictOverride_ToRejected()
@@ -569,7 +569,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_ConsistentVerdict_NoOverride()
@@ -609,7 +609,7 @@ public class DepthModeComprehensiveTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("QuickReview")]
     [Timeout(120_000)]
     public async Task QuickMode_ResponseHasNoInlineComments()
@@ -629,7 +629,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("QuickReview")]
     [Timeout(120_000)]
     public async Task QuickMode_FileReviewsAllSkipped()
@@ -650,7 +650,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("QuickReview")]
     [Timeout(120_000)]
     public async Task QuickMode_ZeroRisksPr_GetsFullApproval()
@@ -677,7 +677,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("QuickReview")]
     [Timeout(120_000)]
     public async Task QuickMode_ManyRisksPr_GetsNeedsWork()
@@ -710,7 +710,7 @@ public class DepthModeComprehensiveTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("StandardReview")]
     [Timeout(120_000)]
     public async Task StandardMode_ResponseIncludesInlineComments()
@@ -731,7 +731,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("StandardReview")]
     [Timeout(120_000)]
     public async Task StandardMode_HasNoBadge()
@@ -754,7 +754,7 @@ public class DepthModeComprehensiveTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_Summary_ContainsDeepAnalysisSection()
@@ -777,7 +777,7 @@ public class DepthModeComprehensiveTests
     }
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [TestCategory("DeepReview")]
     [Timeout(120_000)]
     public async Task DeepMode_HasDeepBadge()
@@ -853,7 +853,7 @@ public class DepthModeComprehensiveTests
     // ═══════════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    [TestCategory("Integration")]
+    [TestCategory("LiveDevOps")]
     [DataRow(ReviewDepth.Quick, "Quick")]
     [DataRow(ReviewDepth.Standard, "Standard")]
     [DataRow(ReviewDepth.Deep, "Deep")]

@@ -13,6 +13,7 @@ namespace AiCodeReview.Tests;
 /// Validates that Temperature, MaxOutputTokens*, and VerdictThresholds
 /// flow correctly from configuration through the factory to the service.
 /// </summary>
+[TestCategory("Unit")]
 [TestClass]
 public class ReviewProfileTests
 {

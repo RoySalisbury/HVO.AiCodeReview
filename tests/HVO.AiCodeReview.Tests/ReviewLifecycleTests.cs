@@ -23,6 +23,7 @@ namespace AiCodeReview.Tests;
 ///
 /// All use FakeCodeReviewService — no real AI calls.
 /// </summary>
+[TestCategory("LiveDevOps")]
 [TestClass]
 public class ReviewLifecycleTests
 {

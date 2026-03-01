@@ -1,6 +1,8 @@
 using System.Net;
 using AiCodeReview.Models;
 using AiCodeReview.Services;
+using AiCodeReview.Tests.Helpers;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
@@ -23,6 +25,17 @@ public class ResilienceTests
             Content = new StringContent("{\"count\": 0, \"value\": []}")
         };
 
+    private static Func<HttpResponseMessage> OkLabelsFactory() =>
+        () => OkLabelsResponse();
+
+    private static Func<HttpResponseMessage> StatusFactory(HttpStatusCode code, Action<HttpResponseMessage>? configure = null) =>
+        () =>
+        {
+            var r = new HttpResponseMessage(code);
+            configure?.Invoke(r);
+            return r;
+        };
+
     // ── Retry on transient 5xx ──────────────────────────────────────────
 
     [TestMethod]
@@ -31,9 +44,9 @@ public class ResilienceTests
     {
         // Arrange: fail twice with 503, then succeed
         var handler = new FakeResponseHandler(
-            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
-            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
-            OkLabelsResponse());
+            StatusFactory(HttpStatusCode.ServiceUnavailable),
+            StatusFactory(HttpStatusCode.ServiceUnavailable),
+            OkLabelsFactory());
 
         var devOps = BuildServiceWithResilience(handler);
 
@@ -52,10 +65,9 @@ public class ResilienceTests
     public async Task Retry_TooManyRequests_RetriesAndSucceeds()
     {
         // Arrange: 429 once, then succeed
-        var rateLimitResponse = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
-        rateLimitResponse.Headers.Add("Retry-After", "1");
-
-        var handler = new FakeResponseHandler(rateLimitResponse, OkLabelsResponse());
+        var handler = new FakeResponseHandler(
+            StatusFactory(HttpStatusCode.TooManyRequests, r => r.Headers.Add("Retry-After", "1")),
+            OkLabelsFactory());
 
         var devOps = BuildServiceWithResilience(handler);
 
@@ -72,8 +84,8 @@ public class ResilienceTests
     public async Task Retry_RequestTimeout_RetriesAndSucceeds()
     {
         var handler = new FakeResponseHandler(
-            new HttpResponseMessage(HttpStatusCode.RequestTimeout),
-            OkLabelsResponse());
+            StatusFactory(HttpStatusCode.RequestTimeout),
+            OkLabelsFactory());
 
         var devOps = BuildServiceWithResilience(handler);
 
@@ -90,10 +102,7 @@ public class ResilienceTests
     public async Task NoRetry_ClientError_FailsImmediately()
     {
         var handler = new FakeResponseHandler(
-            new HttpResponseMessage(HttpStatusCode.NotFound)
-            {
-                Content = new StringContent("")
-            });
+            StatusFactory(HttpStatusCode.NotFound, r => r.Content = new StringContent("")));
 
         var devOps = BuildServiceWithResilience(handler);
 
@@ -114,7 +123,7 @@ public class ResilienceTests
         // Arrange: return 503 for every attempt (more than max retries)
         var handler = new FakeResponseHandler(Enumerable
             .Range(0, 20)
-            .Select(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))
+            .Select(_ => StatusFactory(HttpStatusCode.ServiceUnavailable))
             .ToArray());
 
         var devOps = BuildServiceWithResilience(handler);
@@ -134,12 +143,10 @@ public class ResilienceTests
     [TestCategory("Unit")]
     public async Task Retry_Multiple429s_EventuallySucceeds()
     {
-        var r1 = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
-        r1.Headers.Add("Retry-After", "1");
-        var r2 = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
-        r2.Headers.Add("Retry-After", "1");
-
-        var handler = new FakeResponseHandler(r1, r2, OkLabelsResponse());
+        var handler = new FakeResponseHandler(
+            StatusFactory(HttpStatusCode.TooManyRequests, r => r.Headers.Add("Retry-After", "1")),
+            StatusFactory(HttpStatusCode.TooManyRequests, r => r.Headers.Add("Retry-After", "1")),
+            OkLabelsFactory());
 
         var devOps = BuildServiceWithResilience(handler);
         var result = await devOps.HasReviewTagAsync("TestProject", "TestRepo", 1);
@@ -156,6 +163,7 @@ public class ResilienceTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<ITelemetryService>(new NullTelemetryService());
         services.Configure<AzureDevOpsSettings>(o =>
         {
             o.Organization = "TestOrg";
@@ -201,6 +209,7 @@ public class ResilienceTests
     {
         var services = new ServiceCollection();
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
+        services.AddSingleton<ITelemetryService>(new NullTelemetryService());
         services.Configure<AzureDevOpsSettings>(o =>
         {
             o.Organization = "TestOrg";
@@ -232,30 +241,49 @@ public class ResilienceTests
 
     /// <summary>
     /// An <see cref="HttpMessageHandler"/> that returns a sequence of canned responses.
-    /// When the sequence is exhausted, repeats the last response.
+    /// Each response is created from a factory to avoid reuse issues with Polly's
+    /// resilience pipeline (which may dispose responses between retries).
+    /// When the sequence is exhausted, repeats the last response factory.
     /// Tracks the number of calls for assertion.
     /// </summary>
     private class FakeResponseHandler : HttpMessageHandler
     {
-        private readonly HttpResponseMessage[] _responses;
+        private readonly Func<HttpResponseMessage>[] _responseFactories;
         private int _callIndex;
 
         public int CallCount => _callIndex;
 
-        public FakeResponseHandler(params HttpResponseMessage[] responses)
+        public FakeResponseHandler(params Func<HttpResponseMessage>[] responseFactories)
         {
-            _responses = responses;
+            _responseFactories = responseFactories;
+        }
+
+        /// <summary>
+        /// Convenience constructor: wraps pre-built responses in factories.
+        /// Note: each factory returns the same instance — callers must ensure
+        /// responses are not reused across retries. For retry tests, prefer
+        /// the factory-based constructor.
+        /// </summary>
+        public static FakeResponseHandler FromStatusCodes(params (HttpStatusCode Code, Action<HttpResponseMessage>? Configure)[] specs)
+        {
+            var factories = specs.Select(s => new Func<HttpResponseMessage>(() =>
+            {
+                var r = new HttpResponseMessage(s.Code);
+                s.Configure?.Invoke(r);
+                return r;
+            })).ToArray();
+            return new FakeResponseHandler(factories);
         }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var index = Interlocked.Increment(ref _callIndex) - 1;
-            var response = index < _responses.Length
-                ? _responses[index]
-                : _responses[^1]; // repeat last
+            var factory = index < _responseFactories.Length
+                ? _responseFactories[index]
+                : _responseFactories[^1]; // repeat last
 
-            // Ensure the response is associated with the request
+            var response = factory();
             response.RequestMessage = request;
             return Task.FromResult(response);
         }

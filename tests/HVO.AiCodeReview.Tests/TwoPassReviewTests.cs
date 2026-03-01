@@ -11,6 +11,7 @@ namespace AiCodeReview.Tests;
 /// Validates Pass 1 (PR summary) prompt construction, result injection into
 /// Pass 2, token aggregation, fallback on Pass 1 failure, and summary markdown.
 /// </summary>
+[TestCategory("Unit")]
 [TestClass]
 public class TwoPassReviewTests
 {

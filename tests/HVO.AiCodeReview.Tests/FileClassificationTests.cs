@@ -8,6 +8,7 @@ namespace AiCodeReview.Tests;
 /// non-reviewable files (submodule refs, lock files, generated files, etc.)
 /// from AI review.
 /// </summary>
+[TestCategory("Unit")]
 [TestClass]
 public class FileClassificationTests
 {

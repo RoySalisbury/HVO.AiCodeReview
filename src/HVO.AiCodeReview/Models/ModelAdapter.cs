@@ -11,7 +11,7 @@ public class ModelAdapterConfig
     /// adapter whose <see cref="ModelAdapter.ModelPattern"/> matches the
     /// active model name is selected.
     /// </summary>
-    public List<ModelAdapter> Adapters { get; set; } = new();
+    public List<ModelAdapter> Adapters { get; set; } = [];
 }
 
 /// <summary>
@@ -101,7 +101,7 @@ public class ModelAdapter
     /// Documented model quirks for debugging / reference.
     /// These are logged but not injected into prompts.
     /// </summary>
-    public List<string> Quirks { get; set; } = new();
+    public List<string> Quirks { get; set; } = [];
 
     // ─── Cost helpers ───────────────────────────────────────────────────
 

@@ -21,7 +21,7 @@ public class WorkItemInfo
     public string AcceptanceCriteria { get; set; } = string.Empty;
 
     /// <summary>Discussion comments on the work item (may contain AC modifications or decisions).</summary>
-    public List<WorkItemComment> Comments { get; set; } = new();
+    public List<WorkItemComment> Comments { get; set; } = [];
 }
 
 /// <summary>

@@ -24,17 +24,11 @@ public interface IReviewRateLimiter
     void Record(string organization, string project, string repository, int pullRequestId);
 }
 
-public class ReviewRateLimiter : IReviewRateLimiter
+public class ReviewRateLimiter(ILogger<ReviewRateLimiter> logger) : IReviewRateLimiter
 {
     private readonly ConcurrentDictionary<string, DateTime> _lastReviewTimes = new();
-    private readonly ILogger<ReviewRateLimiter> _logger;
     private int _requestCounter;
     private const int CleanupInterval = 100; // Check for stale entries every N requests
-
-    public ReviewRateLimiter(ILogger<ReviewRateLimiter> logger)
-    {
-        _logger = logger;
-    }
 
     public (bool IsAllowed, int SecondsRemaining, DateTime? LastReviewedUtc) Check(
         string organization, string project, string repository, int pullRequestId,
@@ -54,7 +48,7 @@ public class ReviewRateLimiter : IReviewRateLimiter
             if (elapsed < interval)
             {
                 var remaining = (int)Math.Ceiling((interval - elapsed).TotalSeconds);
-                _logger.LogInformation(
+                logger.LogInformation(
                     "Rate limited: {Org}/{Project}/{Repo} PR #{PrId} — last reviewed {Elapsed:F0}s ago, " +
                     "next allowed in {Remaining}s (interval: {Interval}m)",
                     organization, project, repository, pullRequestId,
@@ -74,7 +68,7 @@ public class ReviewRateLimiter : IReviewRateLimiter
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Rate limiter cleanup failed");
+                    logger.LogWarning(ex, "Rate limiter cleanup failed");
                 }
             });
         }
@@ -86,7 +80,7 @@ public class ReviewRateLimiter : IReviewRateLimiter
     {
         var key = BuildKey(organization, project, repository, pullRequestId);
         _lastReviewTimes[key] = DateTime.UtcNow;
-        _logger.LogDebug("Rate limiter recorded review for {Key}", key);
+        logger.LogDebug("Rate limiter recorded review for {Key}", key);
     }
 
     // ── Internals ───────────────────────────────────────────────────────
@@ -109,7 +103,7 @@ public class ReviewRateLimiter : IReviewRateLimiter
 
         if (staleKeys.Count > 0)
         {
-            _logger.LogDebug("Rate limiter cleanup: evicted {Count} stale entries", staleKeys.Count);
+            logger.LogDebug("Rate limiter cleanup: evicted {Count} stale entries", staleKeys.Count);
         }
     }
 }

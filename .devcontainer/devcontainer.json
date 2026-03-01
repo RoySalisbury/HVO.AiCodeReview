@@ -122,22 +122,18 @@
     "GH_TOKEN": "${localEnv:GH_TOKEN}"
   },
   // Port mappings
-  // 5000-5001: HVO.AiCodeReview API (HTTP/HTTPS)
+  // 5094: HVO.AiCodeReview API (dotnet run)
   // 8080: Docker container (HVO.AiCodeReview)
   // 5432: PostgreSQL, 6379: Redis
   "forwardPorts": [
-    5000,
-    5001,
+    5094,
     5432,
     6379,
     8080
   ],
   "portsAttributes": {
-    "5000": {
-      "onAutoForward": "silent",
-      "elevateIfNeeded": true
-    },
-    "5001": {
+    "5094": {
+      "label": "HVO.AiCodeReview API",
       "onAutoForward": "silent",
       "elevateIfNeeded": true
     },

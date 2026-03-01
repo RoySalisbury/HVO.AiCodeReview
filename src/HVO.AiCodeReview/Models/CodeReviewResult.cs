@@ -11,13 +11,13 @@ public class CodeReviewResult
     public ReviewSummary Summary { get; set; } = new();
 
     [JsonPropertyName("fileReviews")]
-    public List<FileReview> FileReviews { get; set; } = new();
+    public List<FileReview> FileReviews { get; set; } = [];
 
     [JsonPropertyName("inlineComments")]
-    public List<InlineComment> InlineComments { get; set; } = new();
+    public List<InlineComment> InlineComments { get; set; } = [];
 
     [JsonPropertyName("observations")]
-    public List<string> Observations { get; set; } = new();
+    public List<string> Observations { get; set; } = [];
 
     [JsonPropertyName("acceptanceCriteriaAnalysis")]
     public AcceptanceCriteriaAnalysis? AcceptanceCriteriaAnalysis { get; set; }
@@ -78,7 +78,7 @@ public class ReviewSummary
     public string Description { get; set; } = string.Empty;
 
     [JsonPropertyName("fileInventory")]
-    public List<string> FileInventory { get; set; } = new();
+    public List<string> FileInventory { get; set; } = [];
 
     [JsonPropertyName("verdict")]
     public string Verdict { get; set; } = "APPROVED";
@@ -140,7 +140,7 @@ public class AcceptanceCriteriaAnalysis
 
     /// <summary>Per-item analysis of each acceptance criterion.</summary>
     [JsonPropertyName("items")]
-    public List<AcceptanceCriteriaItem> Items { get; set; } = new();
+    public List<AcceptanceCriteriaItem> Items { get; set; } = [];
 }
 
 public class AcceptanceCriteriaItem

@@ -50,7 +50,7 @@ public interface IReviewSessionStore
 public class InMemoryReviewSessionStore : IReviewSessionStore
 {
     private readonly ConcurrentDictionary<Guid, ReviewSession> _sessions = new();
-    private readonly ConcurrentDictionary<Guid, object> _sessionLocks = new();
+    private readonly ConcurrentDictionary<Guid, Lock> _sessionLocks = new();
     private int _accessCounter;
     private const int EvictionInterval = 100;
     private static readonly TimeSpan CompletedRetention = TimeSpan.FromHours(1);
@@ -59,7 +59,7 @@ public class InMemoryReviewSessionStore : IReviewSessionStore
     public void Add(ReviewSession session)
     {
         _sessions[session.SessionId] = session;
-        _sessionLocks[session.SessionId] = new object();
+        _sessionLocks[session.SessionId] = new Lock();
         MaybeEvict();
     }
 

@@ -25,7 +25,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
     private ReviewRuleCatalog? _catalog;
     private FileSystemWatcher? _watcher;
     private readonly ConcurrentDictionary<string, string> _cache = new();
-    private readonly object _reloadLock = new();
+    private readonly Lock _reloadLock = new();
     private Timer? _debounceTimer;
     private volatile bool _disposed;
 
@@ -98,7 +98,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
     {
         var catalog = _catalog;
         if (catalog == null)
-            return new List<string>();
+            return [];
 
         return catalog.Rules
             .Where(r => r.Scope == scope && r.Enabled)
@@ -114,7 +114,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
     {
         var catalog = _catalog;
         if (catalog == null)
-            return new List<string>();
+            return [];
 
         return catalog.Rules
             .Select(r => r.Category)
@@ -130,7 +130,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
     {
         var catalog = _catalog;
         if (catalog == null)
-            return new List<string>();
+            return [];
 
         return catalog.Scopes.Keys.OrderBy(s => s).ToList();
     }
@@ -221,10 +221,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
         try
         {
             var json = File.ReadAllText(_catalogPath);
-            var newCatalog = JsonSerializer.Deserialize<ReviewRuleCatalog>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var newCatalog = JsonSerializer.Deserialize<ReviewRuleCatalog>(json, JsonSerializerOptions.Web);
 
             if (newCatalog == null)
             {
@@ -236,7 +233,7 @@ public sealed class PromptAssemblyPipeline : IDisposable
 
             // Defensive null-guard: normalize null collections after deserialization
             newCatalog.Scopes ??= new Dictionary<string, PromptScope>();
-            newCatalog.Rules ??= new List<ReviewRule>();
+            newCatalog.Rules ??= [];
 
             _catalog = newCatalog;
 

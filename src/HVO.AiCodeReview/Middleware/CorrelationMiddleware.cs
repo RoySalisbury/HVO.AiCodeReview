@@ -8,17 +8,9 @@ namespace AiCodeReview.Middleware;
 /// The correlation ID is also returned in the response header so callers
 /// can trace their request end-to-end.
 /// </summary>
-public sealed class CorrelationMiddleware
+public sealed class CorrelationMiddleware(RequestDelegate next, ILogger<CorrelationMiddleware> logger)
 {
     private const string CorrelationHeader = "X-Correlation-ID";
-    private readonly RequestDelegate _next;
-    private readonly ILogger<CorrelationMiddleware> _logger;
-
-    public CorrelationMiddleware(RequestDelegate next, ILogger<CorrelationMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -36,9 +28,9 @@ public sealed class CorrelationMiddleware
             return Task.CompletedTask;
         });
 
-        _logger.LogDebug("Correlation ID: {CorrelationId}", correlationId);
+        logger.LogDebug("Correlation ID: {CorrelationId}", correlationId);
 
-        await _next(context);
+        await next(context);
     }
 
     /// <summary>

@@ -138,18 +138,15 @@ public sealed class ModelAdapterResolver
         {
             _logger.LogInformation(
                 "No model-adapters.json found — all models will use built-in defaults");
-            return new List<ModelAdapter>();
+            return [];
         }
 
         try
         {
             var json = File.ReadAllText(path);
-            var config = JsonSerializer.Deserialize<ModelAdapterConfig>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-            });
+            var config = JsonSerializer.Deserialize<ModelAdapterConfig>(json, JsonSerializerOptions.Web);
 
-            var adapters = config?.Adapters ?? new List<ModelAdapter>();
+            var adapters = config?.Adapters ?? [];
             _logger.LogInformation(
                 "Loaded {Count} model adapters from '{Path}'",
                 adapters.Count, path);
@@ -176,7 +173,7 @@ public sealed class ModelAdapterResolver
                 ex,
                 "Failed to load model adapters from '{Path}' — using built-in defaults",
                 path);
-            return new List<ModelAdapter>();
+            return [];
         }
     }
 

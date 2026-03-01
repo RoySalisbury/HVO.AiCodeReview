@@ -29,7 +29,7 @@ public class FileChange
     /// For "add" files, this covers all lines. For "delete" files, this is empty.
     /// Used to filter inline comments to only target changed code.
     /// </summary>
-    public List<(int Start, int End)> ChangedLineRanges { get; set; } = new();
+    public List<(int Start, int End)> ChangedLineRanges { get; set; } = [];
 
     /// <summary>
     /// If non-null, the file was excluded from AI review. Contains the reason category

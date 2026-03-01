@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
 
-public class AzureDevOpsService : IDevOpsService
+public partial class AzureDevOpsService : IDevOpsService
 {
     private readonly HttpClient _httpClient;
     private readonly AzureDevOpsSettings _settings;
@@ -16,14 +16,21 @@ public class AzureDevOpsService : IDevOpsService
     private readonly ILogger<AzureDevOpsService> _logger;
     private const string ApiVersion = "api-version=7.1";
 
-    // ── Pre-compiled HTML-stripping regexes (avoid re-creating per call) ─
-    private static readonly Regex BrRegex = new(@"<br\s*/?>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex LiOpenRegex = new(@"<li>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex LiCloseRegex = new(@"</li>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex PCloseRegex = new(@"</p>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex DivCloseRegex = new(@"</div>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex AllTagsRegex = new(@"<[^>]+>", RegexOptions.Compiled);
-    private static readonly Regex MultiNewlineRegex = new(@"\n{3,}", RegexOptions.Compiled);
+    // ── Source-generated HTML-stripping regexes (AOT-friendly, zero startup cost) ─
+    [GeneratedRegex(@"<br\s*/?>", RegexOptions.IgnoreCase)]
+    private static partial Regex BrRegex();
+    [GeneratedRegex(@"<li>", RegexOptions.IgnoreCase)]
+    private static partial Regex LiOpenRegex();
+    [GeneratedRegex(@"</li>", RegexOptions.IgnoreCase)]
+    private static partial Regex LiCloseRegex();
+    [GeneratedRegex(@"</p>", RegexOptions.IgnoreCase)]
+    private static partial Regex PCloseRegex();
+    [GeneratedRegex(@"</div>", RegexOptions.IgnoreCase)]
+    private static partial Regex DivCloseRegex();
+    [GeneratedRegex(@"<[^>]+>")]
+    private static partial Regex AllTagsRegex();
+    [GeneratedRegex(@"\n{3,}")]
+    private static partial Regex MultiNewlineRegex();
 
     // Lazy-resolved identity ID -- populated from config or auto-discovered from PAT
     private string? _resolvedIdentityId;
@@ -335,7 +342,7 @@ public class AzureDevOpsService : IDevOpsService
                 try
                 {
                     return JsonSerializer.Deserialize<List<ReviewHistoryEntry>>(historyJson,
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+                        JsonSerializerOptions.Web) ?? [];
                 }
                 catch (JsonException ex)
                 {
@@ -360,13 +367,7 @@ public class AzureDevOpsService : IDevOpsService
             var history = await GetReviewHistoryAsync(project, repository, pullRequestId);
             history.Add(entry);
 
-            var jsonOptions = new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = false,
-            };
-
-            var historyJson = JsonSerializer.Serialize(history, jsonOptions);
+            var historyJson = JsonSerializer.Serialize(history, JsonSerializerOptions.Web);
 
             // Azure DevOps PR properties have a ~4 KB limit per value.
             // If the serialized history exceeds the threshold, prune the oldest entries
@@ -378,7 +379,7 @@ public class AzureDevOpsService : IDevOpsService
                     "Review history for PR #{PrId} exceeds {Max} chars ({Len}) — pruning oldest entry (#{Num})",
                     pullRequestId, MaxPropertyLength, historyJson.Length, history[1].ReviewNumber);
                 history.RemoveAt(1); // keep index 0 (first review) for reference
-                historyJson = JsonSerializer.Serialize(history, jsonOptions);
+                historyJson = JsonSerializer.Serialize(history, JsonSerializerOptions.Web);
             }
 
             var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/properties?{PropsApiVersion}";
@@ -813,11 +814,7 @@ public class AzureDevOpsService : IDevOpsService
                 properties = BuildThreadProperties()
             };
 
-            var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = false,
-            });
+            var json = JsonSerializer.Serialize(threadBody, JsonSerializerOptions.Web);
 
             _logger.LogDebug("POST thread: {Url}", url);
             var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
@@ -860,11 +857,7 @@ public class AzureDevOpsService : IDevOpsService
                 properties = BuildThreadProperties()
             };
 
-            var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = false,
-            });
+            var json = JsonSerializer.Serialize(threadBody, JsonSerializerOptions.Web);
 
             _logger.LogDebug("POST inline thread: {Url} for {FilePath}:{StartLine}-{EndLine}", url, filePath, startLine, endLine);
             var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
@@ -1080,20 +1073,20 @@ public class AzureDevOpsService : IDevOpsService
             return string.Empty;
 
         // Convert common block elements to newlines
-        var text = BrRegex.Replace(html, "\n");
-        text = LiOpenRegex.Replace(text, "- ");
-        text = LiCloseRegex.Replace(text, "\n");
-        text = PCloseRegex.Replace(text, "\n");
-        text = DivCloseRegex.Replace(text, "\n");
+        var text = BrRegex().Replace(html, "\n");
+        text = LiOpenRegex().Replace(text, "- ");
+        text = LiCloseRegex().Replace(text, "\n");
+        text = PCloseRegex().Replace(text, "\n");
+        text = DivCloseRegex().Replace(text, "\n");
 
         // Strip remaining tags
-        text = AllTagsRegex.Replace(text, "");
+        text = AllTagsRegex().Replace(text, "");
 
         // Decode HTML entities
         text = System.Net.WebUtility.HtmlDecode(text);
 
         // Normalize whitespace: collapse multiple blank lines
-        text = MultiNewlineRegex.Replace(text, "\n\n");
+        text = MultiNewlineRegex().Replace(text, "\n\n");
 
         return text.Trim();
     }

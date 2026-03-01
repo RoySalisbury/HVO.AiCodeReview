@@ -21,7 +21,7 @@ public class QueueStatusResponse
     public int InProgressCount { get; set; }
 
     /// <summary>Active (queued + in-progress) sessions.</summary>
-    public IReadOnlyList<QueuedSessionInfo> Sessions { get; set; } = Array.Empty<QueuedSessionInfo>();
+    public IReadOnlyList<QueuedSessionInfo> Sessions { get; set; } = [];
 }
 
 /// <summary>

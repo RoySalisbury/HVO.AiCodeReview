@@ -18,7 +18,7 @@ public class DeepAnalysisResult
     /// These are issues only visible when considering multiple files together.
     /// </summary>
     [JsonPropertyName("crossFileIssues")]
-    public List<CrossFileIssue> CrossFileIssues { get; set; } = new();
+    public List<CrossFileIssue> CrossFileIssues { get; set; } = [];
 
     /// <summary>
     /// Assessment of whether the per-file verdicts are consistent with the overall PR quality.
@@ -36,7 +36,7 @@ public class DeepAnalysisResult
     /// Key recommendations that span multiple files.
     /// </summary>
     [JsonPropertyName("recommendations")]
-    public List<string> Recommendations { get; set; } = new();
+    public List<string> Recommendations { get; set; } = [];
 
     // ── AI Usage Metrics (populated by service, not from AI JSON) ──
 
@@ -54,7 +54,7 @@ public class CrossFileIssue
 {
     /// <summary>Files involved in this cross-file issue.</summary>
     [JsonPropertyName("files")]
-    public List<string> Files { get; set; } = new();
+    public List<string> Files { get; set; } = [];
 
     /// <summary>Severity: "Error", "Warning", or "Info".</summary>
     [JsonPropertyName("severity")]

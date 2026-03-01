@@ -47,7 +47,7 @@ public class AiProviderSettings
     /// In consensus mode, ALL configured providers are called.
     /// In single mode, only <see cref="ActiveProvider"/> is used.
     /// </summary>
-    public Dictionary<string, ProviderConfig> Providers { get; set; } = new();
+    public Dictionary<string, ProviderConfig> Providers { get; set; } = [];
 
     /// <summary>
     /// Maps <see cref="ReviewDepth"/> names to provider keys in <see cref="Providers"/>.
@@ -55,7 +55,7 @@ public class AiProviderSettings
     /// Example: <c>{ "Quick": "azure-openai-mini", "Standard": "azure-openai", "Deep": "azure-openai-o1" }</c>.
     /// When not configured (empty), all depths use <see cref="ActiveProvider"/>.
     /// </summary>
-    public Dictionary<string, string> DepthModels { get; set; } = new();
+    public Dictionary<string, string> DepthModels { get; set; } = [];
 
     /// <summary>
     /// Maps <see cref="ReviewPass"/> names to provider keys in <see cref="Providers"/>.
@@ -75,7 +75,7 @@ public class AiProviderSettings
     /// When not configured (empty), falls back to <see cref="DepthModels"/> then <see cref="ActiveProvider"/>.
     /// Takes priority over <see cref="DepthModels"/> for any pass that has a mapping.
     /// </summary>
-    public Dictionary<string, string> PassRouting { get; set; } = new();
+    public Dictionary<string, string> PassRouting { get; set; } = [];
 }
 
 /// <summary>

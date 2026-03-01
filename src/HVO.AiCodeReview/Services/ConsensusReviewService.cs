@@ -91,7 +91,7 @@ public class ConsensusReviewService : ICodeReviewService
         List<ThreadVerificationCandidate> candidates)
     {
         if (candidates.Count == 0)
-            return new List<ThreadVerificationResult>();
+            return [];
 
         // For verification, use majority vote per thread
         var allResults = await FanOutAsync(

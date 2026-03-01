@@ -139,7 +139,6 @@ builder.Services.AddScoped<ICodeReviewOrchestrator, CodeReviewOrchestrator>();
 // ASP.NET Core
 // ---------------------------------------------------------------------------
 builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo

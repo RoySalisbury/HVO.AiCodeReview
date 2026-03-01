@@ -189,15 +189,15 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// </summary>
     [ExcludeFromCodeCoverage(Justification = "Thin wrapper around Azure OpenAI SDK call; tested via LiveAI integration tests.")]
     private async Task<ClientResult<ChatCompletion>> ThrottledCompleteChatAsync(
-        IList<ChatMessage> messages, ChatCompletionOptions options)
+        IList<ChatMessage> messages, ChatCompletionOptions options, CancellationToken cancellationToken = default)
     {
         if (_aiCallThrottle == null)
-            return await _chatClient.CompleteChatAsync(messages, options);
+            return await _chatClient.CompleteChatAsync(messages, options, cancellationToken);
 
-        await _aiCallThrottle.AcquireAsync();
+        await _aiCallThrottle.AcquireAsync(cancellationToken);
         try
         {
-            return await _chatClient.CompleteChatAsync(messages, options);
+            return await _chatClient.CompleteChatAsync(messages, options, cancellationToken);
         }
         finally
         {

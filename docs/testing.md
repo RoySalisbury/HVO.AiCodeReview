@@ -101,8 +101,8 @@ dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQu
 | `TestCoverageGapDetectorTests.cs` | 47 | Unit | Test coverage gap detection: production file identification, exclusion patterns, expected test path generation, gap detection, summary building, disabled mode. |
 | `RateLimitTests.cs` | — | Unit | Rate limit utilities: `Retry-After` header parsing, response message extraction. |
 | `AiCallThrottleTests.cs` | 11 | Unit | AI call throttle: constructor clamping, acquire/release, blocking, cancellation token propagation, concurrent access limits, interface compliance. |
-| `ReviewSessionStoreTests.cs` | 13 | Unit | In-memory session store: add/get round-trip, active session filtering, queued/in-progress counts, cancel-queued lifecycle, status enum validation, interface compliance. |
-| `ReviewQueueServiceTests.cs` | 10 | Unit | Review queue service: enqueue capacity, queue-full rejection, worker processing, concurrent review execution, cancelled-session skipping, orchestrator error handling, graceful shutdown. |
+| `ReviewSessionStoreTests.cs` | — | Unit | In-memory session store: add/get round-trip, active session filtering, queued/in-progress counts, cancel-queued lifecycle, atomic state transitions, eviction, status enum validation, interface compliance. |
+| `ReviewQueueServiceTests.cs` | — | Unit | Review queue service: enqueue capacity, queue-full rejection, worker processing, concurrent review execution, cancelled-session skipping, atomic state transition guard, orchestrator error handling, progress reporting, cancellation during processing, timeout, graceful shutdown. |
 | `ReviewControllerQueueTests.cs` | 21 | Unit | Queue controller endpoints: POST queued mode (202 Accepted), POST queue-full (503), POST sync fallback, GET status (found/completed/failed/not-found/disabled), GET queue (enabled/disabled/mixed), DELETE cancel (queued/in-progress/completed/not-found/disabled), Health with/without queue stats. |
 
 ## Test Infrastructure

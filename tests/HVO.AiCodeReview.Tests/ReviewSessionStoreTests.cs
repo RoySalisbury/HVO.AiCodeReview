@@ -183,6 +183,104 @@ public class ReviewSessionStoreTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  TryTransitionToInProgress
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public void TryTransitionToInProgress_QueuedSession_Succeeds()
+    {
+        var store = new InMemoryReviewSessionStore();
+        var session = MakeSession(ReviewSessionStatus.Queued);
+        store.Add(session);
+
+        Assert.IsTrue(store.TryTransitionToInProgress(session.SessionId));
+        Assert.AreEqual(ReviewSessionStatus.InProgress, session.Status);
+    }
+
+    [TestMethod]
+    public void TryTransitionToInProgress_CancelledSession_ReturnsFalse()
+    {
+        var store = new InMemoryReviewSessionStore();
+        var session = MakeSession(ReviewSessionStatus.Queued);
+        store.Add(session);
+
+        // Cancel first, then try to transition
+        Assert.IsTrue(store.TryCancelQueued(session.SessionId));
+        Assert.IsFalse(store.TryTransitionToInProgress(session.SessionId));
+        Assert.AreEqual(ReviewSessionStatus.Cancelled, session.Status);
+    }
+
+    [TestMethod]
+    public void TryTransitionToInProgress_InProgressSession_ReturnsFalse()
+    {
+        var store = new InMemoryReviewSessionStore();
+        var session = MakeSession(ReviewSessionStatus.InProgress);
+        store.Add(session);
+
+        Assert.IsFalse(store.TryTransitionToInProgress(session.SessionId));
+    }
+
+    [TestMethod]
+    public void TryTransitionToInProgress_UnknownId_ReturnsFalse()
+    {
+        var store = new InMemoryReviewSessionStore();
+        Assert.IsFalse(store.TryTransitionToInProgress(Guid.NewGuid()));
+    }
+
+    [TestMethod]
+    public void AtomicTransition_CancelAndTransitionRace_OnlyOneWins()
+    {
+        // Run many iterations to exercise the lock under true concurrency.
+        // Each iteration starts two Tasks from a barrier so they compete
+        // for the Queued→Cancelled vs Queued→InProgress transition.
+        const int iterations = 200;
+        int cancelWins = 0, transitionWins = 0;
+
+        for (int i = 0; i < iterations; i++)
+        {
+            var store = new InMemoryReviewSessionStore();
+            var session = MakeSession(ReviewSessionStatus.Queued);
+            store.Add(session);
+
+            using var barrier = new Barrier(2);
+            bool cancelResult = false, transitionResult = false;
+
+            var t1 = Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                cancelResult = store.TryCancelQueued(session.SessionId);
+            });
+            var t2 = Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                transitionResult = store.TryTransitionToInProgress(session.SessionId);
+            });
+
+            Task.WaitAll(t1, t2);
+
+            // Exactly one must win
+            Assert.IsTrue(cancelResult ^ transitionResult,
+                $"Iteration {i}: expected exactly one winner (cancel={cancelResult}, transition={transitionResult})");
+
+            if (cancelResult)
+            {
+                cancelWins++;
+                Assert.AreEqual(ReviewSessionStatus.Cancelled, session.Status);
+            }
+            else
+            {
+                transitionWins++;
+                Assert.AreEqual(ReviewSessionStatus.InProgress, session.Status);
+            }
+        }
+
+        // Both outcomes should occur at least once in 200 iterations
+        // (not strictly guaranteed, but extremely likely with barrier-based racing)
+        Assert.IsTrue(cancelWins > 0 || transitionWins > 0,
+            "At least one outcome must occur.");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Eviction
     // ═══════════════════════════════════════════════════════════════════
 

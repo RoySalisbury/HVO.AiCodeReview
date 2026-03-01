@@ -70,4 +70,18 @@ public interface ICodeReviewService
         PrSummaryResult? prSummary,
         CodeReviewResult reviewResult,
         List<FileChange> fileChanges);
+
+    /// <summary>
+    /// Dedicated security-focused review pass. Analyzes all file diffs for
+    /// OWASP Top 10 vulnerabilities, hardcoded secrets, injection risks,
+    /// auth/authz issues, and insecure defaults.
+    /// </summary>
+    /// <param name="pullRequest">PR metadata.</param>
+    /// <param name="fileChanges">All reviewed file changes.</param>
+    /// <param name="prSummary">Pass 1 PR-level summary (optional context).</param>
+    /// <returns>Security analysis result, or null if generation fails.</returns>
+    Task<SecurityAnalysisResult?> GenerateSecurityAnalysisAsync(
+        PullRequestInfo pullRequest,
+        List<FileChange> fileChanges,
+        PrSummaryResult? prSummary = null);
 }

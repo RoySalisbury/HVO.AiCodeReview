@@ -1910,4 +1910,253 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         return sb.ToString();
     }
+
+    // ── Security Pass: Dedicated security-focused review ────────────────────
+
+    [ExcludeFromCodeCoverage(Justification = "Calls _chatClient.CompleteChatAsync (Azure OpenAI SDK).")]
+    public async Task<SecurityAnalysisResult?> GenerateSecurityAnalysisAsync(
+        PullRequestInfo pullRequest,
+        List<FileChange> fileChanges,
+        PrSummaryResult? prSummary = null)
+    {
+        var userPrompt = BuildSecurityAnalysisUserPrompt(pullRequest, fileChanges, prSummary);
+
+        _logger.LogInformation("[Security] Generating security analysis for PR #{PrId} ({FileCount} files, prompt ~{PromptLen} chars)",
+            pullRequest.PullRequestId, fileChanges.Count, userPrompt.Length);
+
+        var messages = new List<ChatMessage>
+        {
+            new SystemChatMessage(GetSecurityAnalysisSystemPrompt()),
+            new UserChatMessage(userPrompt),
+        };
+
+        var options = BuildChatOptions(_reviewProfile.MaxOutputTokensDeepAnalysis);
+
+        ClientResult<ChatCompletion> response;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Retry with Retry-After-aware backoff for rate limiting (HTTP 429)
+        var totalRetryTime = TimeSpan.Zero;
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (_rateLimitSignal != null)
+                    await _rateLimitSignal.WaitIfCoolingDownAsync();
+
+                response = await ThrottledCompleteChatAsync(messages, options);
+                break;
+            }
+            catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
+            {
+                var delay = RateLimitHelper.ComputeRetryDelay(cex);
+                totalRetryTime += delay;
+
+                if (totalRetryTime > RateLimitHelper.MaxTotalRetryDuration)
+                {
+                    _logger.LogWarning(
+                        "[Security] Rate limit retries exhausted for PR #{PrId} security analysis",
+                        pullRequest.PullRequestId);
+                    return null;
+                }
+
+                _logger.LogWarning(
+                    "[Security] Rate limited (429) during security analysis, retry {Attempt}/{Max} after {Delay}s",
+                    attempt + 1, RateLimitHelper.MaxRateLimitRetries, delay.TotalSeconds);
+
+                _rateLimitSignal?.SignalCooldown(delay);
+                await Task.Delay(delay);
+            }
+            catch (ClientResultException cex) when (cex.Status == 429)
+            {
+                _logger.LogWarning(
+                    "[Security] Rate limit retries exhausted for PR #{PrId} security analysis after {Attempts} attempts",
+                    pullRequest.PullRequestId, attempt + 1);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Security] Security analysis call failed for PR #{PrId}", pullRequest.PullRequestId);
+                return null;
+            }
+        }
+        sw.Stop();
+
+        if (totalRetryTime > TimeSpan.Zero)
+            _logger.LogInformation("[Security] Total retry wait for PR #{PrId}: {TotalRetryMs}ms", pullRequest.PullRequestId, totalRetryTime.TotalMilliseconds);
+
+        var completion = response.Value;
+        var usage = completion.Usage;
+        var json = completion.Content[0].Text;
+
+        try
+        {
+            // Strip markdown code fences if present
+            json = json.Trim();
+            if (json.StartsWith("```"))
+            {
+                var firstNewline = json.IndexOf('\n');
+                if (firstNewline > 0)
+                    json = json[(firstNewline + 1)..];
+                if (json.EndsWith("```"))
+                    json = json[..^3];
+                json = json.Trim();
+            }
+
+            var result = System.Text.Json.JsonSerializer.Deserialize<SecurityAnalysisResult>(json, System.Text.Json.JsonSerializerOptions.Web);
+            if (result == null)
+            {
+                _logger.LogWarning("[Security] Deserialized null result for PR #{PrId}", pullRequest.PullRequestId);
+                return null;
+            }
+
+            // Enforce critical severity on all findings per AC requirement
+            foreach (var finding in result.Findings)
+                finding.Severity = "Critical";
+
+            // Attach metrics
+            result.ModelName = _modelName;
+            result.PromptTokens = usage?.InputTokenCount;
+            result.CompletionTokens = usage?.OutputTokenCount;
+            result.TotalTokens = usage?.TotalTokenCount;
+            result.AiDurationMs = sw.ElapsedMilliseconds;
+
+            return result;
+        }
+        catch (JsonException jex)
+        {
+            _logger.LogWarning(jex, "[Security] Failed to parse security analysis JSON for PR #{PrId}", pullRequest.PullRequestId);
+            return null;
+        }
+    }
+
+    internal static string GetSecurityAnalysisSystemPrompt()
+    {
+        return """
+        You are an expert application security reviewer performing a DEDICATED SECURITY PASS.
+        This is separate from the general code review — your ONLY focus is security.
+
+        Analyze ALL code changes for:
+
+        1. **OWASP Top 10 (2021)**:
+           - A01: Broken Access Control
+           - A02: Cryptographic Failures
+           - A03: Injection (SQL, NoSQL, OS command, LDAP, XPath, etc.)
+           - A04: Insecure Design
+           - A05: Security Misconfiguration
+           - A06: Vulnerable and Outdated Components
+           - A07: Identification and Authentication Failures
+           - A08: Software and Data Integrity Failures
+           - A09: Security Logging and Monitoring Failures
+           - A10: Server-Side Request Forgery (SSRF)
+
+        2. **Hardcoded Secrets**: API keys, tokens, passwords, connection strings with real values.
+           - IMPORTANT: Empty/placeholder values ("", "your-key-here", "<token>") are NOT secrets.
+           - Template files (.template, .example) are NOT security issues.
+           - Only flag strings that look like ACTUAL credentials.
+
+        3. **Injection Risks**: Unsanitized user input in SQL, command execution, file paths, URLs.
+
+        4. **Auth/Authz Patterns**: Missing authorization checks, privilege escalation, insecure session management.
+
+        5. **Insecure Defaults**: Default passwords, disabled security features, overly permissive CORS, debug mode in production.
+
+        RULES:
+        - Report ONLY genuine security vulnerabilities — no false positives.
+        - Every finding MUST include a CWE reference when applicable.
+        - Every finding MUST include a concrete remediation suggestion.
+        - If no security issues are found, return an empty findings array with riskLevel "None".
+        - Do NOT repeat issues already caught by the general code review.
+
+        Respond with valid JSON matching this schema:
+        {
+          "executiveSummary": "<one-paragraph security posture assessment>",
+          "overallRiskLevel": "None|Low|Medium|High|Critical",
+          "findings": [
+            {
+              "severity": "Critical",
+              "cweId": "<CWE-NNN or null>",
+              "owaspCategory": "<A0N:2021 — Name or null>",
+              "description": "<what the vulnerability is>",
+              "filePath": "<file where it was found>",
+              "lineNumber": <approximate line number or 0>,
+              "remediation": "<how to fix it>"
+            }
+          ]
+        }
+        """;
+    }
+
+    internal static string BuildSecurityAnalysisUserPrompt(
+        PullRequestInfo pullRequest,
+        List<FileChange> fileChanges,
+        PrSummaryResult? prSummary)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine("# Security Analysis — Dedicated Security Pass");
+        sb.AppendLine();
+        sb.AppendLine($"**PR**: #{pullRequest.PullRequestId} — {pullRequest.Title}");
+        sb.AppendLine($"**Author**: {pullRequest.CreatedBy}");
+        sb.AppendLine($"**Branch**: {pullRequest.SourceBranch} → {pullRequest.TargetBranch}");
+        sb.AppendLine($"**Files Changed**: {fileChanges.Count}");
+        sb.AppendLine();
+
+        // Pass 1 context (if available) for architectural awareness
+        if (prSummary != null)
+        {
+            sb.AppendLine("## PR Summary Context");
+            if (!string.IsNullOrWhiteSpace(prSummary.ArchitecturalImpact))
+                sb.AppendLine($"**Architectural Impact**: {prSummary.ArchitecturalImpact}");
+            if (prSummary.RiskAreas.Count > 0)
+            {
+                sb.AppendLine("**Risk Areas**:");
+                foreach (var risk in prSummary.RiskAreas)
+                    sb.AppendLine($"- {risk.Area}: {risk.Reason}");
+            }
+            sb.AppendLine();
+        }
+
+        // Architecture context (if available)
+        AppendArchitectureContext(sb, pullRequest.ArchitectureContext);
+
+        // Include all file diffs for security analysis
+        sb.AppendLine("## File Changes");
+        sb.AppendLine();
+
+        foreach (var file in fileChanges)
+        {
+            sb.AppendLine($"### `{file.FilePath}` ({file.ChangeType})");
+            sb.AppendLine();
+
+            if (!string.IsNullOrWhiteSpace(file.UnifiedDiff))
+            {
+                // Truncate very large diffs to keep within token limits
+                var diff = file.UnifiedDiff;
+                if (diff.Length > 8000)
+                {
+                    diff = diff[..8000];
+                    sb.AppendLine("_(diff truncated for security analysis)_");
+                }
+                sb.AppendLine("```diff");
+                sb.AppendLine(diff);
+                sb.AppendLine("```");
+            }
+            else if (!string.IsNullOrWhiteSpace(file.ModifiedContent))
+            {
+                var content = file.ModifiedContent;
+                if (content.Length > 8000)
+                {
+                    content = content[..8000];
+                    sb.AppendLine("_(content truncated for security analysis)_");
+                }
+                sb.AppendLine("```");
+                sb.AppendLine(content);
+                sb.AppendLine("```");
+            }
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
 }

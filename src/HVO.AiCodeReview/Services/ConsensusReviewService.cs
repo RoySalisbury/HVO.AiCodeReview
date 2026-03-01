@@ -158,6 +158,19 @@ public class ConsensusReviewService : ICodeReviewService
         return await service.GenerateDeepAnalysisAsync(pullRequest, prSummary, reviewResult, fileChanges);
     }
 
+    /// <summary>
+    /// Security analysis delegates to the first provider (same rationale as PR summary and deep analysis).
+    /// </summary>
+    public async Task<SecurityAnalysisResult?> GenerateSecurityAnalysisAsync(
+        PullRequestInfo pullRequest,
+        List<FileChange> fileChanges,
+        PrSummaryResult? prSummary = null)
+    {
+        var (name, service) = _providers[0];
+        _logger.LogInformation("GenerateSecurityAnalysisAsync: delegating to first provider '{Provider}'", name);
+        return await service.GenerateSecurityAnalysisAsync(pullRequest, fileChanges, prSummary);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     //  Fan-out + merge internals
     // ═══════════════════════════════════════════════════════════════════════

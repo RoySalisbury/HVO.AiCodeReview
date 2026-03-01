@@ -378,11 +378,11 @@ public class ReviewControllerQueueTests
         string project = "TestProject",
         string repo = "TestRepo",
         int prId = 1) => new()
-    {
-        ProjectName = project,
-        RepositoryName = repo,
-        PullRequestId = prId,
-    };
+        {
+            ProjectName = project,
+            RepositoryName = repo,
+            PullRequestId = prId,
+        };
 
     /// <summary>Minimal IUrlHelper that returns a simple string for Action.</summary>
     private sealed class FakeUrlHelper : IUrlHelper
@@ -414,7 +414,8 @@ public class ReviewControllerQueueTests
             ReviewDepth reviewDepth = ReviewDepth.Standard,
             ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
             CancellationToken cancellationToken = default,
-            ReviewSession? session = null)
+            ReviewSession? session = null,
+            bool? enableSecurityPass = null)
         {
             return Task.FromResult(Response);
         }

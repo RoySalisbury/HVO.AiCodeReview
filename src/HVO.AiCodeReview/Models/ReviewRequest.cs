@@ -45,4 +45,12 @@ public class ReviewRequest
     /// Only applies when ReviewDepth is Standard or Deep.
     /// </summary>
     public ReviewStrategy ReviewStrategy { get; set; } = ReviewStrategy.FileByFile;
+
+    /// <summary>
+    /// When true, runs an additional security-focused review pass that analyzes
+    /// PRs for OWASP Top 10 vulnerabilities, hardcoded secrets, injection risks,
+    /// auth/authz issues, and insecure defaults.
+    /// When null, falls back to the global <c>AiProvider:SecurityPassEnabled</c> setting.
+    /// </summary>
+    public bool? EnableSecurityPass { get; set; }
 }

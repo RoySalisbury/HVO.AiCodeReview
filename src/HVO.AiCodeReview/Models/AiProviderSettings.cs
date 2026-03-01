@@ -69,6 +69,7 @@ public class AiProviderSettings
     ///   "PrSummary": "azure-openai-mini",
     ///   "PerFileReview": "azure-openai",
     ///   "DeepReview": "azure-openai-o1",
+    ///   "SecurityPass": "azure-openai-mini",
     ///   "ThreadVerification": "azure-openai-mini"
     /// }
     /// </code>
@@ -76,6 +77,14 @@ public class AiProviderSettings
     /// Takes priority over <see cref="DepthModels"/> for any pass that has a mapping.
     /// </summary>
     public Dictionary<string, string> PassRouting { get; set; } = [];
+
+    /// <summary>
+    /// Global default for the security-focused review pass.
+    /// When true, every review request includes a dedicated security pass unless
+    /// the per-request <see cref="ReviewRequest.EnableSecurityPass"/> overrides it.
+    /// Default: false (security pass is opt-in).
+    /// </summary>
+    public bool SecurityPassEnabled { get; set; }
 }
 
 /// <summary>

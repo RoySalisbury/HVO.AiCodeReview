@@ -91,7 +91,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         ReviewDepth reviewDepth = ReviewDepth.Standard,
         ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
         CancellationToken cancellationToken = default,
-        ReviewSession? session = null)
+        ReviewSession? session = null,
+        bool? enableSecurityPass = null)
     {
         // Create or adopt a session for this review execution
         session ??= new ReviewSession();
@@ -196,7 +197,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     var reviewResponse = await HandleReviewAsync(
                         project, repository, pullRequestId, prInfo, metadata,
                         currentIteration, action == ReviewAction.ReReview, progress,
-                        simulationOnly, reviewDepth, reviewStrategy, cancellationToken, session);
+                        simulationOnly, reviewDepth, reviewStrategy, cancellationToken, session,
+                        enableSecurityPass);
                     opScope.WithTag("review.outcome", reviewResponse.Status).Succeed();
                     return reviewResponse;
 
@@ -399,7 +401,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         ReviewDepth reviewDepth = ReviewDepth.Standard,
         ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
         CancellationToken cancellationToken = default,
-        ReviewSession? session = null)
+        ReviewSession? session = null,
+        bool? enableSecurityPass = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var totalSw = Stopwatch.StartNew();
@@ -699,6 +702,37 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Store aggregated pass model information
         reviewResult.PassModels = passModels;
 
+        // ── Security Pass (optional, runs after standard/deep passes) ───
+        SecurityAnalysisResult? securityAnalysis = null;
+        var securityEnabled = enableSecurityPass ?? _aiProviderSettings.SecurityPassEnabled;
+        if (securityEnabled)
+        {
+            try
+            {
+                ReportProgress(progress, ReviewStep.AnalyzingCode, "Running dedicated security analysis...", 55);
+                var securityService = GetServiceForPass(ReviewPass.SecurityPass, reviewDepth);
+                passModels[ReviewPass.SecurityPass.ToString()] = securityService.ModelName;
+
+                securityAnalysis = await securityService.GenerateSecurityAnalysisAsync(
+                    prInfo, fileChanges, prSummary);
+
+                if (securityAnalysis != null)
+                {
+                    _logger.LogInformation(
+                        "[Security] Security analysis complete for PR #{PrId}: {RiskLevel} risk, {FindingCount} findings",
+                        pullRequestId, securityAnalysis.OverallRiskLevel, securityAnalysis.Findings.Count);
+                }
+                else
+                {
+                    _logger.LogInformation("[Security] No security analysis generated for PR #{PrId}", pullRequestId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Security] Security analysis failed for PR #{PrId} — continuing without security findings", pullRequestId);
+            }
+        }
+
         // ── Validate & sanitize inline comments from AI ─────────────────
         var validatedComments = ValidateInlineComments(reviewResult.InlineComments, fileChanges);
 
@@ -760,7 +794,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 project, repository, pullRequestId, reviewResult,
                 isReReview, nextReviewNumber, metadata, workItems,
                 skippedFiles, prSummary, reviewDepth, deepAnalysis, progress,
-                sizeWarning, session, testCoverageGaps, deltaInfo);
+                sizeWarning, session, testCoverageGaps, deltaInfo, securityAnalysis);
 
             // ── Cast reviewer vote ──────────────────────────────────────
             var vote = reviewResult.RecommendedVote;
@@ -812,7 +846,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 _telemetry.RecordMetric("review.ai_duration_ms", reviewResult.AiDurationMs.Value);
 
             return BuildReviewResponse(reviewResult, reviewDepth, summaryMarkdown,
-                voteFailed, voteSkipped, vote, estimatedCost, session, deltaInfo);
+                voteFailed, voteSkipped, vote, estimatedCost, session, deltaInfo, securityAnalysis);
         }
 
         // ── Simulation path: build summary but don't post anything ──────
@@ -841,7 +875,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             pullRequestId, reviewResult, lineSpecificComments,
             fileChanges, skippedFiles, isReReview, nextReviewNumber, metadata,
             workItems, prSummary, reviewDepth, deepAnalysis, totalSw, progress,
-            sizeWarning, session, testCoverageGaps, deltaInfo);
+            sizeWarning, session, testCoverageGaps, deltaInfo, securityAnalysis);
     }
 
     // ── Extracted helpers from HandleReviewAsync ────────────────────────────
@@ -1135,14 +1169,16 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         string? sizeWarning = null,
         ReviewSession? session = null,
         List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null,
-        DeltaReviewInfo? deltaInfo = null)
+        DeltaReviewInfo? deltaInfo = null,
+        SecurityAnalysisResult? securityAnalysis = null)
     {
         ReportProgress(progress, ReviewStep.PostingSummary,
             "Posting review summary...", 80);
 
         var summaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo,
+            securityAnalysis);
         await _devOpsService.PostCommentThreadAsync(
             project, repository, pullRequestId, summaryMarkdown, "closed");
 
@@ -1261,7 +1297,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         CodeReviewResult reviewResult, ReviewDepth reviewDepth,
         string summaryMarkdown, bool voteFailed, bool voteSkipped,
         int vote, decimal? estimatedCost, ReviewSession? session = null,
-        DeltaReviewInfo? deltaInfo = null)
+        DeltaReviewInfo? deltaInfo = null,
+        SecurityAnalysisResult? securityAnalysis = null)
     {
         int errors = reviewResult.InlineComments.Count(c => c.LeadIn is "Bug" or "Security");
         int warnings = reviewResult.InlineComments.Count(c => c.LeadIn is "Concern" or "Performance");
@@ -1278,6 +1315,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             ErrorCount = errors,
             WarningCount = warnings,
             InfoCount = info,
+            SecurityFindingCount = securityAnalysis?.Findings.Count,
             Vote = (voteFailed || voteSkipped) ? null : vote,
             ErrorMessage = voteFailed
                 ? "Review posted but vote submission failed. Check server logs."
@@ -1304,11 +1342,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         Stopwatch totalSw, IProgress<ReviewStatusUpdate>? progress,
         string? sizeWarning = null, ReviewSession? session = null,
         List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null,
-        DeltaReviewInfo? deltaInfo = null)
+        DeltaReviewInfo? deltaInfo = null,
+        SecurityAnalysisResult? securityAnalysis = null)
     {
         var simSummaryMarkdown = BuildSummaryMarkdown(pullRequestId, reviewResult, isReReview,
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
-            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo);
+            reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo,
+            securityAnalysis);
 
         totalSw.Stop();
 
@@ -1334,6 +1374,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             ErrorCount = simErrors,
             WarningCount = simWarnings,
             InfoCount = simInfo,
+            SecurityFindingCount = securityAnalysis?.Findings.Count,
             Vote = simVote,
             Verdict = reviewResult.Summary.Verdict,
             VerdictJustification = reviewResult.Summary.VerdictJustification,
@@ -2141,7 +2182,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         ReviewDepth reviewDepth = ReviewDepth.Standard, DeepAnalysisResult? deepAnalysis = null,
         string? sizeWarning = null, Guid? sessionId = null,
         List<TestCoverageGapDetector.TestCoverageGap>? testCoverageGaps = null,
-        DeltaReviewInfo? deltaInfo = null)
+        DeltaReviewInfo? deltaInfo = null,
+        SecurityAnalysisResult? securityAnalysis = null)
     {
         var sb = new StringBuilder();
         var s = result.Summary;
@@ -2281,6 +2323,56 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 sb.AppendLine("**Recommendations**:");
                 foreach (var rec in deepAnalysis.Recommendations)
                     sb.AppendLine($"- {rec}");
+                sb.AppendLine();
+            }
+        }
+
+        // Security Analysis section (dedicated security pass)
+        if (securityAnalysis != null)
+        {
+            sb.AppendLine("### :shield: Security Analysis (Dedicated Security Pass)");
+            sb.AppendLine();
+
+            if (!string.IsNullOrWhiteSpace(securityAnalysis.ExecutiveSummary))
+            {
+                sb.AppendLine($"**Security Posture**: {securityAnalysis.ExecutiveSummary}");
+                sb.AppendLine();
+            }
+
+            var riskBadge = securityAnalysis.OverallRiskLevel switch
+            {
+                "Critical" => ":red_circle:",
+                "High" => ":orange_circle:",
+                "Medium" => ":yellow_circle:",
+                "Low" => ":green_circle:",
+                _ => ":white_circle:",
+            };
+            sb.AppendLine($"**Overall Risk Level**: {riskBadge} {securityAnalysis.OverallRiskLevel}");
+            sb.AppendLine();
+
+            if (securityAnalysis.Findings.Count > 0)
+            {
+                sb.AppendLine($"**Security Findings** ({securityAnalysis.Findings.Count}):");
+                sb.AppendLine();
+
+                foreach (var finding in securityAnalysis.Findings)
+                {
+                    var cwe = !string.IsNullOrWhiteSpace(finding.CweId) ? $" [{finding.CweId}]" : "";
+                    var owasp = !string.IsNullOrWhiteSpace(finding.OwaspCategory) ? $" ({finding.OwaspCategory})" : "";
+                    var location = !string.IsNullOrWhiteSpace(finding.FilePath)
+                        ? $" in `{finding.FilePath}`" + (finding.LineNumber > 0 ? $":{finding.LineNumber}" : "")
+                        : "";
+
+                    sb.AppendLine($"- :rotating_light: **[{finding.Severity}]**{cwe}{owasp}{location}");
+                    sb.AppendLine($"  {finding.Description}");
+                    if (!string.IsNullOrWhiteSpace(finding.Remediation))
+                        sb.AppendLine($"  _Remediation_: {finding.Remediation}");
+                    sb.AppendLine();
+                }
+            }
+            else
+            {
+                sb.AppendLine(":white_check_mark: No security vulnerabilities detected.");
                 sb.AppendLine();
             }
         }

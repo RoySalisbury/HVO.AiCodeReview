@@ -132,7 +132,8 @@ public class ReviewController : ControllerBase
             request.ReviewDepth,
             request.ReviewStrategy,
             cancellationToken,
-            session);
+            session,
+            request.EnableSecurityPass);
 
         if (response.Status == "Error")
         {

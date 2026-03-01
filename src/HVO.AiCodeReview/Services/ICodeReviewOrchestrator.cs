@@ -26,5 +26,6 @@ public interface ICodeReviewOrchestrator
         ReviewDepth reviewDepth = ReviewDepth.Standard,
         ReviewStrategy reviewStrategy = ReviewStrategy.FileByFile,
         CancellationToken cancellationToken = default,
-        ReviewSession? session = null);
+        ReviewSession? session = null,
+        bool? enableSecurityPass = null);
 }

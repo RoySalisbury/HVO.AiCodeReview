@@ -1,5 +1,17 @@
 # API Reference
 
+## Table of Contents
+
+- [POST /api/review](#post-apireview)
+  - [DeltaInfo Object](#deltainfo-object)
+- [GET /api/review/status/{sessionId}](#get-apireviewstatussessionid)
+- [GET /api/review/queue](#get-apireviewqueue)
+- [DELETE /api/review/{sessionId}](#delete-apireviewsessionid)
+- [GET /api/review/metrics](#get-apireviewmetrics)
+- [GET /api/review/health](#get-apireviewhealth)
+
+---
+
 ## POST /api/review
 
 Execute an AI code review for a pull request.

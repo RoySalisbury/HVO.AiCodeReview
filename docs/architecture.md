@@ -1,5 +1,20 @@
 # Architecture & Review Logic
 
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Review Depth Modes](#review-depth-modes)
+- [Per-Pass Model Routing](#per-pass-model-routing)
+- [Review Strategies](#review-strategies)
+- [Two-Pass Review Architecture](#two-pass-review-architecture)
+- [Review Decision Logic](#review-decision-logic)
+- [Incremental (Delta) Review](#incremental-delta-review)
+- [Review History & Tracking](#review-history--tracking)
+- [Rate Limiting](#rate-limiting)
+- [RPM-Aware Throttling & Cost Estimation](#rpm-aware-throttling--cost-estimation)
+
+---
+
 ## Architecture Overview
 
 ```

@@ -2,6 +2,24 @@
 
 All configuration is read from the standard ASP.NET Core configuration system, supporting `appsettings.json`, `appsettings.{Environment}.json`, environment variables, and command-line arguments.
 
+## Table of Contents
+
+- [Application Settings](#application-settings)
+  - [AzureDevOps Section](#azuredevops-section)
+  - [AzureOpenAI Section (Legacy)](#azureopenai-section-legacy--backward-compatible)
+- [Multi-Provider AI Configuration](#multi-provider-ai-configuration)
+  - [Provider Config](#provider-config)
+  - [Example: Consensus Mode](#example-consensus-mode-with-two-models)
+- [Depth-Specific Model Routing](#depth-specific-model-routing)
+- [Per-Pass Model Routing (PassRouting)](#per-pass-model-routing-passrouting)
+- [Environment Variables](#environment-variables)
+- [Custom Review Instructions](#custom-review-instructions)
+  - [Prompt Layers](#prompt-layers-in-order)
+  - [Rule Catalog](#rule-catalog-review-rulesjson)
+  - [Model Adapters](#model-adapters)
+  - [Assistants API / Vector Store Settings](#assistants-api--vector-store-settings)
+- [ReviewQueue Section](#reviewqueue-section)
+
 ---
 
 ## Application Settings

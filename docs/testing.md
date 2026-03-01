@@ -1,5 +1,18 @@
 # Testing
 
+## Table of Contents
+
+- [Disposable Test Repositories](#disposable-test-repositories)
+- [6-Layer Safety System](#6-layer-safety-system)
+- [PAT Requirements for Tests](#pat-requirements-for-tests)
+- [Run All Automated Tests](#run-all-automated-tests)
+- [Test Categories](#test-categories)
+- [Test Infrastructure](#test-infrastructure)
+- [Running Tests](#running-tests)
+- [Manual Test Utilities](#manual-test-utilities)
+- [Test Configuration](#test-configuration)
+- [Test Roadmap / Future Enhancements](#test-roadmap--future-enhancements)
+
 The project includes comprehensive integration tests that run against a real Azure DevOps instance using **disposable test repositories**.
 
 ## Disposable Test Repositories
@@ -61,7 +74,7 @@ The PAT used for integration tests requires the following **additional** scope b
 
 ```bash
 # From repo root
-dotnet test --filter 'TestCategory!=Manual&FullyQualifiedName!~InspectPR&FullyQualifiedName!~CleanupTestPR'
+dotnet test --filter 'TestCategory!=Manual&TestCategory!=LiveAI&TestCategory!=Benchmark&TestCategory!=LiveDevOps'
 ```
 
 ## Test Categories
@@ -199,3 +212,13 @@ Planned improvements to the testing infrastructure:
 | **Language-specific known-bad-code** | Expand `KnownBadCode` samples beyond C# to include TypeScript, Python, Java, and SQL to test the AI's cross-language review capability. | Low |
 | **Flaky test detection** | Run `LiveAI` tests N times and track which assertions are non-deterministic due to AI variability. Adjust thresholds accordingly. | Low |
 | **Pipeline integration tests** | Stand up a real Azure DevOps pipeline webhook scenario end-to-end in a disposable project. | Future |
+
+---
+
+## Related Documentation
+
+- [Getting Started](getting-started.md) — Prerequisites and quick start guide.
+- [Configuration](configuration.md) — Test configuration and environment variables.
+- [Architecture](architecture.md) — System design and review flow.
+- [Model Benchmarks](model-benchmarks.md) — Benchmark results and model selection.
+- [Contributing](../CONTRIBUTING.md) — PR workflow and coding standards.

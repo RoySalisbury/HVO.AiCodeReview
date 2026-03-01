@@ -1,5 +1,14 @@
 # Azure DevOps Pipeline Integration
 
+## Table of Contents
+
+- [Pipeline YAML](#pipeline-yaml)
+- [Pipeline Variables](#pipeline-variables)
+- [Optional: Fail Pipeline on "Needs Work"](#optional-fail-pipeline-on-needs-work)
+- [Optional: Gate with Review Status](#optional-gate-with-review-status)
+- [Scripts](#scripts)
+- [Related Documentation](#related-documentation)
+
 To automatically trigger a review on every pull request, add a step to your PR validation pipeline that calls the API.
 
 ## Pipeline YAML
@@ -103,3 +112,12 @@ The `scripts/` folder contains pipeline integration helpers:
 |------|-------------|
 | `ai-code-review.sh` | Bash script for Azure Pipelines. Calls the review API via `curl`/`jq`, sets pipeline output variables (`AI_REVIEW_STATUS`, `AI_REVIEW_RECOMMENDATION`, `AI_REVIEW_ISSUE_COUNT`), and fails the pipeline on "Rejected" or warns on "NeedsWork". |
 | `azure-pipelines-template.yml` | Azure Pipelines YAML template with two options: inline Bash (Option A) or external script file (Option B). Conditionally runs on PR builds only. |
+
+---
+
+## Related Documentation
+
+- [API Reference](api-reference.md) — Full endpoint documentation for the review API.
+- [Configuration](configuration.md) — Service configuration and environment variables.
+- [Architecture](architecture.md) — Review flow, depth modes, and decision logic.
+- [Getting Started](getting-started.md) — Prerequisites and quick start guide.

@@ -21,7 +21,6 @@ namespace AiCodeReview.Tests;
 /// Requires a valid Azure DevOps PAT in appsettings.Test.json.
 /// </summary>
 [TestCategory("LiveDevOps")]
-[TestCategory("LiveDevOps")]
 [TestClass]
 public class ServiceIntegrationTests
 {

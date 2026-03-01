@@ -99,7 +99,7 @@ public class TestCoverageGapDetector
     /// Builds a summary observation string suitable for inclusion in the
     /// review summary markdown.
     /// </summary>
-    public string? BuildGapSummary(List<TestCoverageGap> gaps)
+    public static string? BuildGapSummary(List<TestCoverageGap> gaps)
     {
         if (gaps.Count == 0)
             return null;
@@ -112,7 +112,6 @@ public class TestCoverageGapDetector
 
         foreach (var gap in gaps)
         {
-            var fileName = Path.GetFileName(gap.ProductionFile);
             sb.AppendLine($"- `{gap.ProductionFile}` ({gap.ChangeType})");
         }
 
@@ -140,10 +139,15 @@ public class TestCoverageGapDetector
                 e.Equals(ext, StringComparison.OrdinalIgnoreCase)))
             return false;
 
-        // Must not already be a test file (contains any test file pattern marker)
+        // Must not already be a test file — derive markers from configured TestFilePatterns
         var fileName = Path.GetFileNameWithoutExtension(normalizedPath);
-        var testMarkers = new[] { "Tests", "Test", "_Tests", "_Test", "Spec" };
-        if (testMarkers.Any(m => fileName.EndsWith(m, StringComparison.OrdinalIgnoreCase)))
+        var testMarkers = _settings.TestFilePatterns
+            .Select(p => p.Replace("{Name}", "").Replace(Path.GetExtension(normalizedPath), ""))
+            .Where(m => !string.IsNullOrEmpty(m))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (testMarkers.Any(m => fileName.EndsWith(m.TrimStart('.'), StringComparison.OrdinalIgnoreCase) ||
+                                 fileName.StartsWith(m.TrimEnd('.'), StringComparison.OrdinalIgnoreCase)))
             return false;
 
         // Must not be in a test directory

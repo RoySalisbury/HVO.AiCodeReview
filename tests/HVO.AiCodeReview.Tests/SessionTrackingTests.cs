@@ -10,7 +10,6 @@ namespace AiCodeReview.Tests;
 /// so they run locally without credentials.
 /// </summary>
 [TestCategory("Integration")]
-[TestCategory("Integration")]
 [TestClass]
 public class SessionTrackingTests
 {

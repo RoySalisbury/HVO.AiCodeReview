@@ -8,7 +8,6 @@ namespace AiCodeReview.Tests;
 /// reply building, and the ExistingCommentThread model extensions.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class ThreadManagementTests
 {

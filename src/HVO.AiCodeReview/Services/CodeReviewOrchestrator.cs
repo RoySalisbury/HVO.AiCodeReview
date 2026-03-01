@@ -2185,20 +2185,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Test coverage gap observations (informational — does not affect verdict)
         if (testCoverageGaps != null && testCoverageGaps.Count > 0)
         {
-            sb.AppendLine("### :test_tube: Test Coverage Gaps");
-            sb.AppendLine();
-            sb.AppendLine("The following production files were modified without corresponding test file changes:");
-            sb.AppendLine();
-
-            foreach (var gap in testCoverageGaps)
+            var gapSummary = TestCoverageGapDetector.BuildGapSummary(testCoverageGaps);
+            if (!string.IsNullOrEmpty(gapSummary))
             {
-                sb.AppendLine($"- `{gap.ProductionFile}` ({gap.ChangeType})");
+                sb.AppendLine(gapSummary);
             }
-
-            sb.AppendLine();
-            sb.AppendLine("> :information_source: This is an informational observation based on file naming conventions. " +
-                "It does not affect the review verdict. Existing tests may already cover these changes.");
-            sb.AppendLine();
         }
 
         // Code Changes Review (only CONCERN/NEEDS WORK/REJECTED or AI-failure entries)

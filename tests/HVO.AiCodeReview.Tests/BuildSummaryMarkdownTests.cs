@@ -9,7 +9,6 @@ namespace AiCodeReview.Tests;
 /// are always surfaced with file paths — even when fileReviews is empty.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class BuildSummaryMarkdownTests
 {

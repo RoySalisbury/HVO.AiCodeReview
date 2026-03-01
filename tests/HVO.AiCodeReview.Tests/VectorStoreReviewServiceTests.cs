@@ -11,7 +11,6 @@ namespace AiCodeReview.Tests;
 /// without requiring Azure OpenAI connectivity.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class VectorStoreReviewServiceTests
 {

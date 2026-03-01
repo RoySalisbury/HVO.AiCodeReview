@@ -11,7 +11,6 @@ namespace AiCodeReview.Tests;
 /// These tests run entirely in-memory — no Azure DevOps credentials required.
 /// </summary>
 [TestCategory("Integration")]
-[TestCategory("Integration")]
 [TestClass]
 public class FakeDevOpsServiceTests
 {

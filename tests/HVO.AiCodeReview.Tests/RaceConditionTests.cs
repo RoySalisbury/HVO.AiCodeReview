@@ -17,7 +17,6 @@ namespace AiCodeReview.Tests;
 /// window, proving that the per-PR semaphore serializes concurrent writes.
 /// </summary>
 [TestCategory("Integration")]
-[TestCategory("Integration")]
 [TestClass]
 public class RaceConditionTests
 {

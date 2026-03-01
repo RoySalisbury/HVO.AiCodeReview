@@ -363,7 +363,7 @@ public class TestCoverageGapDetectorTests
     public void BuildGapSummary_EmptyGaps_ReturnsNull()
     {
         var detector = CreateDetector();
-        var result = detector.BuildGapSummary(new List<TestCoverageGapDetector.TestCoverageGap>());
+        var result = TestCoverageGapDetector.BuildGapSummary(new List<TestCoverageGapDetector.TestCoverageGap>());
         Assert.IsNull(result);
     }
 
@@ -376,7 +376,7 @@ public class TestCoverageGapDetectorTests
             new("src/Services/Foo.cs", "edit", new List<string> { "tests/FooTests.cs" }),
         };
 
-        var summary = detector.BuildGapSummary(gaps)!;
+        var summary = TestCoverageGapDetector.BuildGapSummary(gaps)!;
         Assert.IsTrue(summary.Contains("Test Coverage Gaps"), "Should contain header");
     }
 
@@ -390,7 +390,7 @@ public class TestCoverageGapDetectorTests
             new("src/Services/Bar.cs", "add", new List<string> { "tests/BarTests.cs" }),
         };
 
-        var summary = detector.BuildGapSummary(gaps)!;
+        var summary = TestCoverageGapDetector.BuildGapSummary(gaps)!;
         Assert.IsTrue(summary.Contains("src/Services/Foo.cs"), "Should list Foo.cs");
         Assert.IsTrue(summary.Contains("src/Services/Bar.cs"), "Should list Bar.cs");
         Assert.IsTrue(summary.Contains("(edit)"), "Should include change type");
@@ -406,7 +406,7 @@ public class TestCoverageGapDetectorTests
             new("src/Services/Foo.cs", "edit", new List<string> { "tests/FooTests.cs" }),
         };
 
-        var summary = detector.BuildGapSummary(gaps)!;
+        var summary = TestCoverageGapDetector.BuildGapSummary(gaps)!;
         Assert.IsTrue(summary.Contains("informational observation"),
             "Should contain informational disclaimer");
     }

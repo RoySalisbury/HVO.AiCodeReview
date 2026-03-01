@@ -9,7 +9,6 @@ namespace AiCodeReview.Tests;
 /// from AI review.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class FileClassificationTests
 {

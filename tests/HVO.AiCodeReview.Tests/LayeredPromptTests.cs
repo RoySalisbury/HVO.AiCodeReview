@@ -13,7 +13,6 @@ namespace AiCodeReview.Tests;
 /// and hot-reload.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class LayeredPromptTests
 {

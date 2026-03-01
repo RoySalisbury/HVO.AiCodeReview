@@ -12,7 +12,6 @@ namespace AiCodeReview.Tests;
 /// Pass 2, token aggregation, fallback on Pass 1 failure, and summary markdown.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class TwoPassReviewTests
 {

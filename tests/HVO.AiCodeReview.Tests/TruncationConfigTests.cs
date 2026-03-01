@@ -12,7 +12,6 @@ namespace AiCodeReview.Tests;
 /// the review service's prompt builder.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class TruncationConfigTests
 {

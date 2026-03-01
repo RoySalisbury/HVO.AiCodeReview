@@ -13,7 +13,6 @@ namespace AiCodeReview.Tests;
 /// instrumentation capture, and operation scope lifecycle.
 /// </summary>
 [TestCategory("Integration")]
-[TestCategory("Integration")]
 [TestClass]
 public class TelemetryIntegrationTests
 {

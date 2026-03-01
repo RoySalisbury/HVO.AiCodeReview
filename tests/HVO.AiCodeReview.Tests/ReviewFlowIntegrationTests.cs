@@ -34,7 +34,6 @@ namespace AiCodeReview.Tests;
 /// manual utilities remain active.
 /// </summary>
 [TestCategory("LiveDevOps")]
-[TestCategory("LiveDevOps")]
 [TestClass]
 public class ReviewFlowIntegrationTests
 {

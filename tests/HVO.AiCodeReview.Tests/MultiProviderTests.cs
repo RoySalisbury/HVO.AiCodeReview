@@ -16,7 +16,6 @@ namespace AiCodeReview.Tests;
 /// no real AI calls are made.
 /// </summary>
 [TestCategory("Integration")]
-[TestCategory("Integration")]
 [TestClass]
 public class MultiProviderTests
 {

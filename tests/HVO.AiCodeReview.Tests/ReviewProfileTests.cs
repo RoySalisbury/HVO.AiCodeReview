@@ -14,7 +14,6 @@ namespace AiCodeReview.Tests;
 /// flow correctly from configuration through the factory to the service.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class ReviewProfileTests
 {

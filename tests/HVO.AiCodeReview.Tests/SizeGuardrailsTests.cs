@@ -8,7 +8,6 @@ namespace AiCodeReview.Tests;
 /// changed-line counting, and summary markdown integration.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class SizeGuardrailsTests
 {

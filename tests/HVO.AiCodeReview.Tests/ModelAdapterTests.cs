@@ -12,7 +12,6 @@ namespace AiCodeReview.Tests;
 /// prompt pipeline integration, fallback behavior, and shipped profiles.
 /// </summary>
 [TestCategory("Unit")]
-[TestCategory("Unit")]
 [TestClass]
 public class ModelAdapterTests
 {

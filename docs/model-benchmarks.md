@@ -1,5 +1,15 @@
 # Model Benchmarks & Selection
 
+## Table of Contents
+
+- [Known-Bad-Code Test Issues](#known-bad-code-test-issues)
+- [Live Benchmark Results (2026-03-01)](#live-benchmark-results-2026-03-01)
+- [Model Comparison (Specs)](#model-comparison-specs)
+- [Selected Depth → Model Mapping](#selected-depth--model-mapping)
+- [Security Pass Benchmark Results (2026-03-01)](#security-pass-benchmark-results-2026-03-01)
+- [Benchmark History](#benchmark-history)
+- [Running Benchmarks](#running-benchmarks)
+
 The project includes a benchmark test suite (`ModelBenchmarkTests.cs`) that evaluates all configured models against **10 known-bad-code issues** to measure detection quality, latency, and cost at each review depth.
 
 ## Known-Bad-Code Test Issues

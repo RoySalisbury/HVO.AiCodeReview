@@ -1,5 +1,14 @@
 # Azure DevOps Pipeline Integration
 
+## Table of Contents
+
+- [Pipeline YAML](#pipeline-yaml)
+- [Pipeline Variables](#pipeline-variables)
+- [Optional: Fail Pipeline on "Needs Work"](#optional-fail-pipeline-on-needs-work)
+- [Optional: Gate with Review Status](#optional-gate-with-review-status)
+- [Scripts](#scripts)
+- [Related Documentation](#related-documentation)
+
 To automatically trigger a review on every pull request, add a step to your PR validation pipeline that calls the API.
 
 ## Pipeline YAML

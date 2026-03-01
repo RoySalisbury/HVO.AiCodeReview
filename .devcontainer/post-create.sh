@@ -84,6 +84,11 @@ echo "Installing dotnet-ef $EF_TOOLS_VERSION..."
 dotnet tool update --global dotnet-ef --version "$EF_TOOLS_VERSION" 2>/dev/null \
 	|| dotnet tool install --global dotnet-ef --version "$EF_TOOLS_VERSION"
 
+# Install dotnet-script (C# scripting via .csx files)
+echo "Installing dotnet-script..."
+dotnet tool update --global dotnet-script 2>/dev/null \
+	|| dotnet tool install --global dotnet-script
+
 # Add vscode user to docker group
 echo "Adding vscode user to docker group..."
 if getent group docker >/dev/null 2>&1; then

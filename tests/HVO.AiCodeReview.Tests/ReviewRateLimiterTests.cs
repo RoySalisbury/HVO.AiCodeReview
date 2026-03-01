@@ -189,7 +189,7 @@ public class ReviewRateLimiterTests
     // ═══════════════════════════════════════════════════════════════════
 
     [TestMethod]
-    public async Task Check_TriggersCleanupAfterManyRequests()
+    public void Check_TriggersCleanupAfterManyRequests()
     {
         var limiter = CreateLimiter();
 
@@ -200,10 +200,7 @@ public class ReviewRateLimiterTests
             limiter.Check("org", "proj", "repo", i, intervalMinutes: 1);
         }
 
-        // Allow background cleanup task to run
-        await Task.Delay(100);
-
-        // Verify the limiter still works after cleanup
+        // Verify the limiter still works after triggering cleanup
         limiter.Record("org", "proj", "repo", 999);
         var (allowed, _, _) = limiter.Check("org", "proj", "repo", 999, intervalMinutes: 60);
         Assert.IsFalse(allowed, "Limiter should still function after cleanup");

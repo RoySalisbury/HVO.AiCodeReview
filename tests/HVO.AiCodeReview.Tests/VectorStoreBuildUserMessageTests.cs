@@ -394,11 +394,28 @@ public class VectorStoreBuildUserMessageTests
     [TestMethod]
     public void LoadCustomInstructions_RelativePath_ResolvesFromBaseDirectory()
     {
-        // custom-instructions.json exists at AppContext.BaseDirectory (copied to output)
-        var result = VectorStoreReviewService.LoadCustomInstructions("custom-instructions.json");
-        // The file exists in the test output directory, result depends on its content
-        // Just verify it doesn't throw and returns a reasonable value
-        // (null or a string — depends on whether the file has the property)
+        // Create a temporary custom-instructions file under AppContext.BaseDirectory
+        var fileName = $"custom-instructions-{Guid.NewGuid():N}.json";
+        var fullPath = Path.Combine(AppContext.BaseDirectory, fileName);
+        const string expectedInstructions = "Custom instructions from base directory.";
+        var json = $"{{\"customInstructions\": \"{expectedInstructions}\"}}";
+
+        try
+        {
+            File.WriteAllText(fullPath, json);
+
+            var result = VectorStoreReviewService.LoadCustomInstructions(fileName);
+
+            Assert.AreEqual(
+                expectedInstructions,
+                result,
+                "Should load custom instructions from a file in AppContext.BaseDirectory when given a relative path.");
+        }
+        finally
+        {
+            if (File.Exists(fullPath))
+                File.Delete(fullPath);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════

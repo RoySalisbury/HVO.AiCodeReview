@@ -211,7 +211,7 @@ public class AzureOpenAiReviewServiceTests
     {
         var service = CreateService();
         var pr = CreatePullRequest(1, "Test");
-        pr.Description = null;
+        pr.Description = null!;
         var files = new List<FileChange> { CreateFileChange("src/a.cs") };
 
         var prompt = service.BuildPrSummaryUserPrompt(pr, files);
@@ -418,7 +418,7 @@ public class AzureOpenAiReviewServiceTests
     private static PullRequestInfo CreatePullRequest(
         int id = 1, string title = "Test PR",
         string author = "tester", string source = "feature/test",
-        string target = "main", string? description = "Test description")
+        string target = "main", string description = "Test description")
     {
         return new PullRequestInfo
         {
@@ -434,7 +434,7 @@ public class AzureOpenAiReviewServiceTests
     private static FileChange CreateFileChange(
         string path = "src/Test.cs",
         string changeType = "edit",
-        string? diff = "+ // changed")
+        string diff = "+ // changed")
     {
         return new FileChange
         {

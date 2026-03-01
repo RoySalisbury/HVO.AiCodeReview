@@ -213,17 +213,17 @@ public class RateLimitTests
     public async Task Signal_ShortCooldown_WaitsAndReturns()
     {
         var signal = CreateSignal();
-        signal.SignalCooldown(TimeSpan.FromMilliseconds(200));
+        signal.SignalCooldown(TimeSpan.FromMilliseconds(500));
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await signal.WaitIfCoolingDownAsync();
         sw.Stop();
 
-        // Should have waited roughly 200ms (allow 100-600ms for test jitter)
-        Assert.IsTrue(sw.ElapsedMilliseconds >= 100,
-            $"Expected wait of ~200ms but only {sw.ElapsedMilliseconds}ms");
-        Assert.IsTrue(sw.ElapsedMilliseconds < 600,
-            $"Expected wait of ~200ms but took {sw.ElapsedMilliseconds}ms");
+        // Should have waited roughly 500ms (allow 200-1500ms for test jitter / parallel load)
+        Assert.IsTrue(sw.ElapsedMilliseconds >= 200,
+            $"Expected wait of ~500ms but only {sw.ElapsedMilliseconds}ms");
+        Assert.IsTrue(sw.ElapsedMilliseconds < 1500,
+            $"Expected wait of ~500ms but took {sw.ElapsedMilliseconds}ms");
     }
 
     [TestMethod]

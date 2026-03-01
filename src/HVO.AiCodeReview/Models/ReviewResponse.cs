@@ -103,6 +103,7 @@ public class FileReviewDto
 }
 
 /// <summary>Skipped file DTO for simulation responses.</summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
 public class SkippedFileDto
 {
     public string FilePath { get; set; } = string.Empty;

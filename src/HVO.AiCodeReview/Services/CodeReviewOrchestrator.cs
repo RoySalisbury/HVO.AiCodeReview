@@ -1833,7 +1833,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     /// Extract a window of code around the specified line range from file content.
     /// Provides context for AI to verify whether a prior review comment was addressed.
     /// </summary>
-    private static string ExtractCodeContext(string? fileContent, int startLine, int endLine, int contextLines = 10)
+    internal static string ExtractCodeContext(string? fileContent, int startLine, int endLine, int contextLines = 10)
     {
         if (string.IsNullOrEmpty(fileContent))
             return "(file content not available)";
@@ -1930,7 +1930,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     /// <summary>
     /// Build a contextual reply for an existing thread, acknowledging the conversation history.
     /// </summary>
-    private static string BuildThreadReply(InlineComment newComment, ExistingCommentThread existingThread, string attributionSuffix)
+    internal static string BuildThreadReply(InlineComment newComment, ExistingCommentThread existingThread, string attributionSuffix)
     {
         var sb = new StringBuilder();
 
@@ -2345,7 +2345,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
     }
 
-    private static string MapVerdictToRecommendation(string verdict) => verdict.ToUpperInvariant() switch
+    internal static string MapVerdictToRecommendation(string verdict) => verdict.ToUpperInvariant() switch
     {
         "APPROVED" => "Approved",
         "APPROVED WITH SUGGESTIONS" => "ApprovedWithSuggestions",
@@ -2354,7 +2354,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _ => "Approved"
     };
 
-    private static string VoteToLabel(int vote) => vote switch
+    internal static string VoteToLabel(int vote) => vote switch
     {
         10 => "Approved",
         5 => "Approved with suggestions",
@@ -2571,7 +2571,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     /// Search for a code snippet in the file's content lines and return the matching line range.
     /// Returns null if the snippet isn't found.
     /// </summary>
-    private static (int start, int end)? ResolveLineFromSnippet(string snippet, string[] lines)
+    internal static (int start, int end)? ResolveLineFromSnippet(string snippet, string[] lines)
     {
         // Normalize the snippet: trim, collapse whitespace
         var snippetTrimmed = snippet.Trim();
@@ -2618,7 +2618,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     /// <summary>
     /// Split a list of files into batches of at most <paramref name="batchSize"/> files each.
     /// </summary>
-    private static List<List<FileChange>> ChunkFiles(List<FileChange> files, int batchSize)
+    internal static List<List<FileChange>> ChunkFiles(List<FileChange> files, int batchSize)
     {
         var batches = new List<List<FileChange>>();
         for (int i = 0; i < files.Count; i += batchSize)
@@ -2634,7 +2634,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     /// The overall verdict is the most severe across all batches.
     /// AI metrics are summed.
     /// </summary>
-    private static CodeReviewResult MergeBatchResults(List<CodeReviewResult> batchResults, int totalFilesChanged)
+    internal static CodeReviewResult MergeBatchResults(List<CodeReviewResult> batchResults, int totalFilesChanged)
     {
         if (batchResults.Count == 1)
             return batchResults[0]; // No merging needed

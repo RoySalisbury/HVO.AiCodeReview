@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using AiCodeReview.Models;
 using Azure.AI.OpenAI;
@@ -13,6 +14,7 @@ namespace AiCodeReview.Services;
 /// Azure OpenAI implementation of <see cref="ICodeReviewService"/>.
 /// Sends code to an Azure OpenAI deployment (e.g. gpt-4o) for review.
 /// </summary>
+[ExcludeFromCodeCoverage(Justification = "All methods call Azure OpenAI SDK (ChatClient) which cannot be mocked without an abstraction layer.")]
 public class AzureOpenAiReviewService : ICodeReviewService
 {
     private readonly string _modelName;

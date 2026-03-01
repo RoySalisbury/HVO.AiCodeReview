@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -56,6 +57,7 @@ public class VectorStoreReviewService
     /// Execute a full Vector Store-based review of all changed files.
     /// Returns a merged <see cref="CodeReviewResult"/> from the assistant's response.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Orchestrates Azure OpenAI Assistants API calls (upload, vector store, assistant, thread, run, cleanup) which require a live API.")]
     public async Task<CodeReviewResult> ReviewAllFilesAsync(
         PullRequestInfo prInfo,
         List<FileChange> fileChanges,
@@ -320,6 +322,7 @@ public class VectorStoreReviewService
         return string.IsNullOrEmpty(ext) || !SupportedExtensions.Contains(ext);
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Calls Azure OpenAI Files API.")]
     private async Task<string> UploadFileAsync(
         HttpClient httpClient, string content, string uploadFilename,
         CancellationToken cancellationToken)
@@ -358,6 +361,7 @@ public class VectorStoreReviewService
     // Vector Store
     // ══════════════════════════════════════════════════════════════════════
 
+    [ExcludeFromCodeCoverage(Justification = "Calls Azure OpenAI Vector Stores API.")]
     private async Task<string> CreateVectorStoreAsync(
         HttpClient httpClient, string name, CancellationToken cancellationToken)
     {
@@ -375,6 +379,7 @@ public class VectorStoreReviewService
                ?? throw new InvalidOperationException("Vector store response missing 'id'.");
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Calls Azure OpenAI Vector Stores API.")]
     private async Task AddFileBatchAsync(
         HttpClient httpClient, string vectorStoreId, List<string> fileIds,
         CancellationToken cancellationToken)
@@ -389,6 +394,7 @@ public class VectorStoreReviewService
             throw new HttpRequestException($"File batch add failed ({response.StatusCode}): {body}");
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Polls Azure OpenAI Vector Stores API.")]
     private async Task PollVectorStoreAsync(
         HttpClient httpClient, string vectorStoreId, CancellationToken cancellationToken)
     {
@@ -427,6 +433,7 @@ public class VectorStoreReviewService
     // Assistant
     // ══════════════════════════════════════════════════════════════════════
 
+    [ExcludeFromCodeCoverage(Justification = "Calls Azure OpenAI Assistants API.")]
     private async Task<string> CreateAssistantAsync(
         HttpClient httpClient, string vectorStoreId, string systemPrompt,
         CancellationToken cancellationToken)
@@ -464,6 +471,7 @@ public class VectorStoreReviewService
     // Thread + Run
     // ══════════════════════════════════════════════════════════════════════
 
+    [ExcludeFromCodeCoverage(Justification = "Calls Azure OpenAI Threads API.")]
     private async Task<(string threadId, string runId)> CreateThreadAndRunAsync(
         HttpClient httpClient, string assistantId, string userMessage,
         CancellationToken cancellationToken)
@@ -498,6 +506,7 @@ public class VectorStoreReviewService
         return (threadId, runId);
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Polls Azure OpenAI Runs API.")]
     private async Task PollRunAsync(
         HttpClient httpClient, string threadId, string runId,
         CancellationToken cancellationToken)
@@ -537,6 +546,7 @@ public class VectorStoreReviewService
             $"Run {runId} did not complete within {_assistantsSettings.MaxPollAttempts * _assistantsSettings.PollIntervalMs}ms.");
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Calls Azure OpenAI Messages API.")]
     private async Task<string> GetAssistantResponseAsync(
         HttpClient httpClient, string threadId, CancellationToken cancellationToken)
     {
@@ -571,6 +581,7 @@ public class VectorStoreReviewService
     // Cleanup
     // ══════════════════════════════════════════════════════════════════════
 
+    [ExcludeFromCodeCoverage(Justification = "Calls Azure OpenAI cleanup APIs.")]
     private async Task CleanupResourcesAsync(
         string? assistantId, string? vectorStoreId, List<string> fileIds)
     {
@@ -635,6 +646,7 @@ public class VectorStoreReviewService
     /// Build the system prompt for the Vector Store assistant.
     /// Includes the filename mapping so the AI reports original filenames.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Builds prompt for Azure OpenAI Assistants API — uses instance fields not testable in isolation.")]
     private string BuildVectorSystemPrompt(
         IDictionary<string, string> fileMap,
         PullRequestInfo prInfo,
@@ -716,7 +728,7 @@ public class VectorStoreReviewService
     /// <summary>
     /// Build the user message with PR context, Pass 1 primer, and diff summary.
     /// </summary>
-    private static string BuildUserMessage(
+    internal static string BuildUserMessage(
         PullRequestInfo prInfo,
         List<FileChange> fileChanges,
         PrSummaryResult? prSummary)
@@ -950,8 +962,10 @@ public class VectorStoreReviewService
     // Helpers
     // ══════════════════════════════════════════════════════════════════════
 
+    [ExcludeFromCodeCoverage]
     private string BaseUrl => _openAiSettings.Endpoint.TrimEnd('/');
 
+    [ExcludeFromCodeCoverage(Justification = "Creates HttpClient with API key — trivial wiring.")]
     private HttpClient CreateHttpClient()
     {
         var client = _httpClientFactory.CreateClient("AzureOpenAIAssistants");
@@ -960,7 +974,7 @@ public class VectorStoreReviewService
         return client;
     }
 
-    private static string? LoadCustomInstructions(string? instructionsPath)
+    internal static string? LoadCustomInstructions(string? instructionsPath)
     {
         if (string.IsNullOrWhiteSpace(instructionsPath))
             return null;

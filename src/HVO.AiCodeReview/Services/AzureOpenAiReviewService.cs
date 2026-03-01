@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using AiCodeReview.Models;
 using Azure.AI.OpenAI;
@@ -44,6 +45,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
     // ── Legacy constructor: used by direct DI registration via IOptions ──
 
+    [ExcludeFromCodeCoverage(Justification = "Creates AzureOpenAIClient (SDK) which cannot be mocked.")]
     public AzureOpenAiReviewService(
         IOptions<AzureOpenAISettings> settings,
         ILogger<AzureOpenAiReviewService> logger,
@@ -60,6 +62,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
     // ── Factory constructor: used by CodeReviewServiceFactory from ProviderConfig ──
 
+    [ExcludeFromCodeCoverage(Justification = "Creates AzureOpenAIClient (SDK) which cannot be mocked.")]
     public AzureOpenAiReviewService(
         string endpoint,
         string apiKey,
@@ -123,6 +126,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// <c>SetNewMaxCompletionTokensPropertyEnabled</c> opt-in for the
     /// <c>max_completion_tokens</c> wire property.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Uses Azure SDK ChatCompletionOptions / SetNewMaxCompletionTokensPropertyEnabled.")]
     private ChatCompletionOptions BuildChatOptions(int maxOutputTokens)
     {
         var isReasoning = _modelAdapter?.IsReasoningModel == true;
@@ -174,6 +178,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     internal string GetThreadVerificationSystemPrompt()
         => _pipeline?.AssemblePrompt("thread-verification", modelPreamble: _modelAdapter?.Preamble) ?? ThreadVerificationSystemPrompt;
 
+    [ExcludeFromCodeCoverage(Justification = "Calls _chatClient.CompleteChatAsync (Azure OpenAI SDK).")]
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
         var systemPrompt = GetSystemPrompt();
@@ -299,6 +304,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// <summary>
     /// Review a single file in its own dedicated AI call for maximum accuracy.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Calls _chatClient.CompleteChatAsync (Azure OpenAI SDK).")]
     public async Task<CodeReviewResult> ReviewFileAsync(PullRequestInfo pullRequest, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
         using var opScope = _telemetry?.StartOperation("AI.ReviewFile");
@@ -440,6 +446,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     /// Verify whether prior AI review comments have been addressed by examining
     /// the current code at those locations. Uses a single batched AI call for efficiency.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Calls _chatClient.CompleteChatAsync (Azure OpenAI SDK).")]
     public async Task<List<ThreadVerificationResult>> VerifyThreadResolutionsAsync(
         List<ThreadVerificationCandidate> candidates)
     {
@@ -644,6 +651,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
     //  Pass 1 — PR-Level Summary (Cross-File Context)
     // ═══════════════════════════════════════════════════════════════════════
 
+    [ExcludeFromCodeCoverage(Justification = "Calls _chatClient.CompleteChatAsync (Azure OpenAI SDK).")]
     public async Task<PrSummaryResult?> GeneratePrSummaryAsync(
         PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
@@ -1606,6 +1614,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
     // ── Pass 3: Deep holistic re-evaluation ─────────────────────────────────
 
+    [ExcludeFromCodeCoverage(Justification = "Calls _chatClient.CompleteChatAsync (Azure OpenAI SDK).")]
     public async Task<DeepAnalysisResult?> GenerateDeepAnalysisAsync(
         PullRequestInfo pullRequest,
         PrSummaryResult? prSummary,

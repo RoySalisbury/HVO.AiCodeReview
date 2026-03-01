@@ -1061,7 +1061,7 @@ public class AzureDevOpsService : IDevOpsService
     /// Build the ADO thread properties dictionary using the required $type/$value format.
     /// Using explicit dictionary keys avoids brittle string replacement on serialized JSON.
     /// </summary>
-    private static Dictionary<string, Dictionary<string, string>> BuildThreadProperties()
+    internal static Dictionary<string, Dictionary<string, string>> BuildThreadProperties()
     {
         return new Dictionary<string, Dictionary<string, string>>
         {
@@ -1073,7 +1073,7 @@ public class AzureDevOpsService : IDevOpsService
         };
     }
 
-    private static int StatusToInt(string status) => status.ToLowerInvariant() switch
+    internal static int StatusToInt(string status) => status.ToLowerInvariant() switch
     {
         "active" => 1,
         "fixed" => 2,
@@ -1084,7 +1084,7 @@ public class AzureDevOpsService : IDevOpsService
         _ => 4 // default to closed
     };
 
-    private static bool IsBinaryExtension(string ext) => ext switch
+    internal static bool IsBinaryExtension(string ext) => ext switch
     {
         ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".ico" or ".svg" or
         ".webp" or ".tif" or ".tiff" or ".avif" or

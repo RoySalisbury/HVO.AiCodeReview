@@ -6,8 +6,9 @@
         <Configuration>
           <Format>cobertura</Format>
           <Include>[HVO.AiCodeReview]*</Include>
-          <Exclude>[HVO.AiCodeReview.Tests]*</Exclude>
+          <Exclude>[HVO.AiCodeReview.Tests]*,[HVO.AiCodeReview]Program</Exclude>
           <ExcludeByFile>**/obj/**,**/bin/**</ExcludeByFile>
+          <ExcludeByAttribute>ExcludeFromCodeCoverage</ExcludeByAttribute>
           <IncludeTestAssembly>false</IncludeTestAssembly>
         </Configuration>
       </DataCollector>

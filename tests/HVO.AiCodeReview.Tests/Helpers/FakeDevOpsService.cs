@@ -318,7 +318,7 @@ public class FakeDevOpsService : IDevOpsService
         return Task.FromResult(list ?? new List<WorkItemComment>());
     }
 
-    public Task<string?> ResolveServiceIdentityAsync()
+    public virtual Task<string?> ResolveServiceIdentityAsync()
         => Task.FromResult<string?>("fake-identity-id");
 
     public void Dispose() { }

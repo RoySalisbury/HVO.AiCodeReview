@@ -1,8 +1,7 @@
 # AI Code Review Service
 
 [![CI](https://github.com/RoySalisbury/HVO.AiCodeReview/actions/workflows/ci.yml/badge.svg)](https://github.com/RoySalisbury/HVO.AiCodeReview/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-509_passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-50.4%25_line_|_42.4%25_branch-yellow)
+![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/RoySalisbury/ee77620767face944a0df89232c56af1/raw/coverage.json)
 ![.NET](https://img.shields.io/badge/.NET-8.0-blue)
 ![License](https://img.shields.io/badge/license-internal-lightgrey)
 

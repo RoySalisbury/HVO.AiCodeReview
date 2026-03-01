@@ -24,6 +24,14 @@ public class PullRequestInfo
     /// Null when Pass 1 was skipped or failed.
     /// </summary>
     public PrSummaryResult? CrossFileSummary { get; set; }
+
+    /// <summary>
+    /// Architecture and convention context parsed from <c>.ai-review.yaml</c> or
+    /// <c>.ai-review.json</c> in the reviewed repository's root.
+    /// Injected by the orchestrator so prompts reference the repo's architecture.
+    /// Null when no config file exists.
+    /// </summary>
+    public ArchitectureContext? ArchitectureContext { get; set; }
 }
 
 public class PullRequestReviewer

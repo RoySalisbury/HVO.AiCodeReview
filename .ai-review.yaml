@@ -1,0 +1,33 @@
+# Architecture & convention hints for AI-powered code reviews.
+# See Issue #16 — this file is consumed by ArchitectureContextProvider
+# and injected into review prompts so the AI understands our project.
+
+architecture: layered-service-architecture
+
+techStack:
+  - .NET 10 / ASP.NET Core Web API
+  - C# 14
+  - Azure.AI.OpenAI (Assistants + Chat Completions)
+  - Azure DevOps REST API v7.1
+  - Polly (Microsoft.Extensions.Http.Resilience)
+  - HVO.Enterprise.Telemetry (OpenTelemetry wrapper)
+  - Swashbuckle (Swagger / OpenAPI)
+  - YamlDotNet
+  - MSTest v4
+
+structure:
+  api:            src/HVO.AiCodeReview/Controllers/
+  middleware:     src/HVO.AiCodeReview/Middleware/
+  models:         src/HVO.AiCodeReview/Models/
+  services:       src/HVO.AiCodeReview/Services/
+  entry-point:    src/HVO.AiCodeReview/Program.cs
+  config:         src/HVO.AiCodeReview/appsettings*.json
+  tests:          tests/HVO.AiCodeReview.Tests/
+  test-helpers:   tests/HVO.AiCodeReview.Tests/Helpers/
+  docs:           docs/
+  scripts:        scripts/
+  ci:             .github/
+
+focusPaths:
+  - src/**/*.cs
+  - tests/**/*.cs

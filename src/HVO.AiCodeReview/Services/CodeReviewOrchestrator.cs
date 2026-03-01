@@ -19,6 +19,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private readonly IReviewRateLimiter _rateLimiter;
     private readonly IGlobalRateLimitSignal _globalRateLimitSignal;
     private readonly TestCoverageGapDetector _coverageGapDetector;
+    private readonly ArchitectureContextProvider _architectureContextProvider;
     private readonly ITelemetryService _telemetry;
     private readonly ILogger<CodeReviewOrchestrator> _logger;
 
@@ -34,6 +35,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IReviewRateLimiter rateLimiter,
         IGlobalRateLimitSignal globalRateLimitSignal,
         TestCoverageGapDetector coverageGapDetector,
+        ArchitectureContextProvider architectureContextProvider,
         ITelemetryService telemetry,
         ILogger<CodeReviewOrchestrator> logger)
     {
@@ -48,6 +50,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _rateLimiter = rateLimiter;
         _globalRateLimitSignal = globalRateLimitSignal;
         _coverageGapDetector = coverageGapDetector;
+        _architectureContextProvider = architectureContextProvider;
         _telemetry = telemetry;
         _logger = logger;
     }
@@ -621,6 +624,22 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to retrieve work items for PR #{PrId} — continuing without AC context", pullRequestId);
+        }
+
+        // ── Fetch architecture context (.ai-review.yaml / .ai-review.json) ──
+        try
+        {
+            var archContext = await _architectureContextProvider.GetContextAsync(
+                project, repository, prInfo.LastMergeSourceCommit);
+            prInfo.ArchitectureContext = archContext;
+
+            if (archContext != null)
+                _logger.LogInformation("Architecture context loaded for PR #{PrId}: {Architecture}",
+                    pullRequestId, archContext.Architecture ?? "(custom)");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load architecture context for PR #{PrId} — continuing without architecture context", pullRequestId);
         }
 
         // ── Resolve per-pass AI services ─────────────────────────────

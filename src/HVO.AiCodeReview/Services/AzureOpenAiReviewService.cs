@@ -838,6 +838,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
         // Include linked work items context if available
         AppendWorkItemContext(sb, workItems);
 
+        // Include repository architecture context (if available)
+        AppendArchitectureContext(sb, pr.ArchitectureContext);
+
         sb.AppendLine($"## Files Changed ({fileChanges.Count} total)");
         sb.AppendLine();
 
@@ -1295,6 +1298,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
         // Include linked work item context (AC/DoD)
         AppendWorkItemContext(sb, workItems);
 
+        // Include repository architecture context (if available)
+        AppendArchitectureContext(sb, pr.ArchitectureContext);
+
         sb.AppendLine($"**Files Changed**: {fileChanges.Count}");
         sb.AppendLine();
 
@@ -1384,6 +1390,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
 
         // Include linked work item context (AC/DoD)
         AppendWorkItemContext(sb, workItems);
+
+        // Include repository architecture context (if available)
+        AppendArchitectureContext(sb, pr.ArchitectureContext);
 
         // Include cross-file context from Pass 1 (if available)
         if (pr.CrossFileSummary != null)
@@ -1554,6 +1563,31 @@ public class AzureOpenAiReviewService : ICodeReviewService
             }
         }
 
+        sb.AppendLine("---");
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Append repository architecture context to the user prompt.
+    /// Injects tech stack, architecture pattern, and structure hints so the AI
+    /// reviewer can validate idiomatic usage and catch architectural violations.
+    /// </summary>
+    private static void AppendArchitectureContext(System.Text.StringBuilder sb, ArchitectureContext? context)
+    {
+        if (context == null)
+            return;
+
+        var section = context.ToPromptSection();
+        if (string.IsNullOrWhiteSpace(section))
+            return;
+
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine(section);
+        sb.AppendLine();
+        sb.AppendLine("Use this architecture context to validate that the code follows the declared patterns,");
+        sb.AppendLine("uses the tech stack idiomatically, and respects the project structure conventions.");
+        sb.AppendLine();
         sb.AppendLine("---");
         sb.AppendLine();
     }

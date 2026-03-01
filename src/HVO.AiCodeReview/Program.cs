@@ -133,6 +133,9 @@ builder.Services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
 // Vector Store review service (Assistants API — called directly by orchestrator)
 builder.Services.AddScoped<VectorStoreReviewService>();
 
+// Architecture context provider (fetches .ai-review.yaml/.json from reviewed repos)
+builder.Services.AddScoped<ArchitectureContextProvider>();
+
 builder.Services.AddScoped<ICodeReviewOrchestrator, CodeReviewOrchestrator>();
 
 // ---------------------------------------------------------------------------

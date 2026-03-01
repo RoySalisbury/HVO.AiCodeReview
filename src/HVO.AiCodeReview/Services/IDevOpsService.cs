@@ -82,6 +82,17 @@ public interface IDevOpsService : IDisposable
         int baseIteration, int targetIteration);
 
     /// <summary>
+    /// Fetch raw file content from a repository by path.
+    /// Uses commit SHA when provided, otherwise falls back to branch or default branch.
+    /// Returns <c>null</c> if the file does not exist.
+    /// </summary>
+    /// <param name="project">Azure DevOps project name.</param>
+    /// <param name="repository">Repository name.</param>
+    /// <param name="path">File path within the repository (e.g., ".ai-review.yaml").</param>
+    /// <param name="commitOrBranch">Commit SHA or branch name. Null uses the default branch.</param>
+    Task<string?> GetRepositoryFileContentAsync(string project, string repository, string path, string? commitOrBranch = null);
+
+    /// <summary>
     /// Resolve the service account identity ID (from config or auto-discovery).
     /// Useful for health checks to verify Azure DevOps connectivity.
     /// </summary>

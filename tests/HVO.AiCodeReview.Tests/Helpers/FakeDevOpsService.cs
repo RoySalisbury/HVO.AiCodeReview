@@ -321,6 +321,33 @@ public class FakeDevOpsService : IDevOpsService
     public virtual Task<string?> ResolveServiceIdentityAsync()
         => Task.FromResult<string?>("fake-identity-id");
 
+    // ── Repository File Content (Architecture Context) ──────────────────
+
+    private readonly Dictionary<string, string> _repoFileContents = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Seed a file that <see cref="GetRepositoryFileContentAsync"/> should return.
+    /// Key is path-only; content is returned for any project/repository.
+    /// </summary>
+    public void SeedRepositoryFileContent(string path, string content)
+        => _repoFileContents[path] = content;
+
+    /// <summary>
+    /// Seed a file scoped to a specific project/repository.
+    /// </summary>
+    public void SeedRepositoryFileContent(string project, string repository, string path, string content)
+        => _repoFileContents[$"{project}/{repository}/{path}"] = content;
+
+    public virtual Task<string?> GetRepositoryFileContentAsync(
+        string project, string repository, string path, string? commitOrBranch = null)
+    {
+        // Try project/repo-scoped key first, then fall back to path-only
+        if (_repoFileContents.TryGetValue($"{project}/{repository}/{path}", out var scoped))
+            return Task.FromResult<string?>(scoped);
+        _repoFileContents.TryGetValue(path, out var content);
+        return Task.FromResult(content);
+    }
+
     // ── Iteration Changes (Delta Review) ────────────────────────────────
 
     private HashSet<string>? _iterationChanges;

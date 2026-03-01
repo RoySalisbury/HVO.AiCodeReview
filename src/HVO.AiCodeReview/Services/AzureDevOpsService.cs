@@ -743,6 +743,37 @@ public partial class AzureDevOpsService : IDevOpsService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<string?> GetRepositoryFileContentAsync(string project, string repository, string path, string? commitOrBranch = null)
+    {
+        // Build version query parameter: commit SHA takes precedence, then branch, then omit for default
+        string versionQuery;
+        if (!string.IsNullOrEmpty(commitOrBranch))
+        {
+            // Heuristic: 40-char hex = commit SHA, otherwise branch name
+            var isCommit = commitOrBranch.Length == 40 && commitOrBranch.All(c => char.IsAsciiHexDigit(c));
+            var versionType = isCommit ? "commit" : "branch";
+            versionQuery = $"&versionType={versionType}&version={Uri.EscapeDataString(commitOrBranch)}";
+        }
+        else
+        {
+            versionQuery = string.Empty;
+        }
+
+        var url = $"{BaseUrl(project, repository)}/items?path={Uri.EscapeDataString(path)}{versionQuery}&{ApiVersion}";
+        _logger.LogDebug("GET repository file content: {Url}", url);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/plain"));
+
+        var response = await _httpClient.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        return await response.Content.ReadAsStringAsync();
+    }
+
     private async Task<string?> GetFileContentAsync(string project, string repository, string path, string commitId)
     {
         var url = $"{BaseUrl(project, repository)}/items?path={Uri.EscapeDataString(path)}&versionType=commit&version={commitId}&{ApiVersion}";

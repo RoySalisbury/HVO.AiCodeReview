@@ -437,3 +437,9 @@ appsettings.*.local.json
 # Environment variable files (may contain secrets)
 .env.*
 !.env.template
+
+# ===================================================================
+# Test & Coverage output
+# ===================================================================
+TestResults/
+coverage-report/

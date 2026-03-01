@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using AiCodeReview.Models;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
@@ -17,6 +18,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
     private readonly SizeGuardrailsSettings _sizeGuardrails;
     private readonly IReviewRateLimiter _rateLimiter;
     private readonly IGlobalRateLimitSignal _globalRateLimitSignal;
+    private readonly ITelemetryService _telemetry;
     private readonly ILogger<CodeReviewOrchestrator> _logger;
 
     public CodeReviewOrchestrator(
@@ -30,6 +32,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         IOptions<SizeGuardrailsSettings> sizeGuardrails,
         IReviewRateLimiter rateLimiter,
         IGlobalRateLimitSignal globalRateLimitSignal,
+        ITelemetryService telemetry,
         ILogger<CodeReviewOrchestrator> logger)
     {
         _devOpsService = devOpsService;
@@ -42,6 +45,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         _sizeGuardrails = sizeGuardrails.Value;
         _rateLimiter = rateLimiter;
         _globalRateLimitSignal = globalRateLimitSignal;
+        _telemetry = telemetry;
         _logger = logger;
     }
 
@@ -104,6 +108,16 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 ["Repository"] = repository,
             });
 
+        // Telemetry operation scope for the entire review execution
+        using var opScope = _telemetry.StartOperation("OrchestrateReview");
+        opScope.WithTag("pr.id", pullRequestId)
+               .WithTag("pr.project", project)
+               .WithTag("pr.repository", repository)
+               .WithTag("review.depth", reviewDepth.ToString())
+               .WithTag("review.strategy", reviewStrategy.ToString())
+               .WithTag("session.id", session.SessionId.ToString())
+               .WithTag("review.simulation", simulationOnly);
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -123,6 +137,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     $"Rate limited — next review allowed in {secondsRemaining}s.", 100);
 
                 session.Complete("RateLimited");
+                opScope.WithTag("review.outcome", "RateLimited").Succeed();
+                _telemetry.RecordMetric("review.rate_limited", 1);
                 return new ReviewResponse
                 {
                     SessionId = session.SessionId,
@@ -171,10 +187,12 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
                 case ReviewAction.FullReview:
                 case ReviewAction.ReReview:
-                    return await HandleReviewAsync(
+                    var reviewResponse = await HandleReviewAsync(
                         project, repository, pullRequestId, prInfo, metadata,
                         currentIteration, action == ReviewAction.ReReview, progress,
                         simulationOnly, reviewDepth, reviewStrategy, cancellationToken, session);
+                    opScope.WithTag("review.outcome", reviewResponse.Status).Succeed();
+                    return reviewResponse;
 
                 default:
                     throw new InvalidOperationException($"Unexpected review action: {action}");
@@ -184,6 +202,10 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         {
             _logger.LogError(ex, "Error reviewing PR #{PrId} in {Project}/{Repo}",
                 pullRequestId, project, repository);
+
+            opScope.Fail(ex);
+            _telemetry.TrackException(ex);
+            _telemetry.RecordMetric("review.errors", 1);
 
             session.Fail(ex);
             return new ReviewResponse
@@ -674,6 +696,18 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             }
 
             session?.Complete(reviewResult.Summary.Verdict, (voteFailed || voteSkipped) ? null : vote);
+
+            // Record telemetry metrics for the completed review
+            _telemetry.RecordMetric("review.files_reviewed", fileChanges.Count);
+            _telemetry.RecordMetric("review.inline_comments", postedComments);
+            _telemetry.RecordMetric("review.duration_ms", totalSw.ElapsedMilliseconds);
+            if (reviewResult.PromptTokens.HasValue)
+                _telemetry.RecordMetric("review.prompt_tokens", reviewResult.PromptTokens.Value);
+            if (reviewResult.CompletionTokens.HasValue)
+                _telemetry.RecordMetric("review.completion_tokens", reviewResult.CompletionTokens.Value);
+            if (reviewResult.AiDurationMs.HasValue)
+                _telemetry.RecordMetric("review.ai_duration_ms", reviewResult.AiDurationMs.Value);
+
             return BuildReviewResponse(reviewResult, reviewDepth, summaryMarkdown,
                 voteFailed, voteSkipped, vote, estimatedCost, session);
         }
@@ -691,6 +725,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 reviewResult.ModelName, reviewResult.PromptTokens, reviewResult.CompletionTokens);
         }
         session?.Complete(reviewResult.Summary.Verdict, reviewResult.RecommendedVote);
+
+        // Record telemetry metrics for the simulated review
+        _telemetry.RecordMetric("review.files_reviewed", fileChanges.Count);
+        _telemetry.RecordMetric("review.duration_ms", totalSw.ElapsedMilliseconds);
+        if (reviewResult.PromptTokens.HasValue)
+            _telemetry.RecordMetric("review.prompt_tokens", reviewResult.PromptTokens.Value);
+        if (reviewResult.CompletionTokens.HasValue)
+            _telemetry.RecordMetric("review.completion_tokens", reviewResult.CompletionTokens.Value);
+
         return BuildSimulationResponse(
             pullRequestId, reviewResult, lineSpecificComments,
             fileChanges, skippedFiles, isReReview, nextReviewNumber, metadata,

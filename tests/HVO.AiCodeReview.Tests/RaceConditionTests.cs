@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using AiCodeReview.Models;
 using AiCodeReview.Services;
+using AiCodeReview.Tests.Helpers;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -136,7 +138,7 @@ public class RaceConditionTests
             .Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Debug))
             .CreateLogger<AzureDevOpsService>();
 
-        return new AzureDevOpsService(httpClient, settings, logger);
+        return new AzureDevOpsService(httpClient, settings, new NullTelemetryService(), logger);
     }
 
     // ═══════════════════════════════════════════════════════════════════

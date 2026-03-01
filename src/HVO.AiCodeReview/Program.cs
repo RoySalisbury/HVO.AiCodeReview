@@ -1,8 +1,37 @@
+using AiCodeReview.Middleware;
 using AiCodeReview.Models;
 using AiCodeReview.Services;
+using HVO.Enterprise.Telemetry;
+using HVO.Enterprise.Telemetry.Http;
+using HVO.Enterprise.Telemetry.Logging;
+using HVO.Enterprise.Telemetry.HealthChecks;
 using Microsoft.Extensions.Http.Resilience;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ---------------------------------------------------------------------------
+// Telemetry (HVO.Enterprise.Telemetry)
+// ---------------------------------------------------------------------------
+builder.Services.AddTelemetry(builder.Configuration.GetSection("Telemetry"));
+
+builder.Services.AddTelemetryLoggingEnrichment(options =>
+{
+    options.EnableEnrichment = true;
+    options.IncludeCorrelationId = true;
+    options.IncludeTraceId = true;
+    options.IncludeSpanId = true;
+});
+
+builder.Services.AddTelemetryStatistics();
+builder.Services.AddHealthChecks();
+builder.Services.AddTelemetryHealthCheck(new TelemetryHealthCheckOptions
+{
+    DegradedErrorRateThreshold = 5.0,
+    UnhealthyErrorRateThreshold = 20.0,
+    MaxExpectedQueueDepth = 10_000,
+    DegradedQueueDepthPercent = 75.0,
+    UnhealthyQueueDepthPercent = 95.0,
+});
 
 // ---------------------------------------------------------------------------
 // Configuration binding
@@ -31,6 +60,18 @@ builder.Services.Configure<SizeGuardrailsSettings>(
 builder.Services.AddHttpClient<IDevOpsService, AzureDevOpsService>(client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
+})
+.AddHttpMessageHandler(sp =>
+{
+    var logger = sp.GetService<ILogger<TelemetryHttpMessageHandler>>();
+    return new TelemetryHttpMessageHandler(
+        new HttpInstrumentationOptions
+        {
+            RedactQueryStrings = true,
+            CaptureRequestHeaders = false,
+            CaptureResponseHeaders = false,
+        },
+        logger);
 })
 .AddStandardResilienceHandler(options =>
 {
@@ -92,6 +133,8 @@ var app = builder.Build();
 // ---------------------------------------------------------------------------
 // Middleware pipeline
 // ---------------------------------------------------------------------------
+app.UseCorrelation();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -99,5 +142,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 app.Run();

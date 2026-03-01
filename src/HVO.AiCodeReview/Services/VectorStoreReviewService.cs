@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using AiCodeReview.Models;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
@@ -23,6 +24,7 @@ public class VectorStoreReviewService
     private readonly AssistantsSettings _assistantsSettings;
     private readonly ILogger<VectorStoreReviewService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ITelemetryService _telemetry;
     private readonly string? _customInstructions;
 
     // Extensions natively supported by Azure OpenAI Files API (verified Feb 2026).
@@ -39,11 +41,13 @@ public class VectorStoreReviewService
         IOptions<AzureOpenAISettings> openAiSettings,
         IOptions<AssistantsSettings> assistantsSettings,
         IHttpClientFactory httpClientFactory,
+        ITelemetryService telemetry,
         ILogger<VectorStoreReviewService> logger)
     {
         _openAiSettings = openAiSettings.Value;
         _assistantsSettings = assistantsSettings.Value;
         _httpClientFactory = httpClientFactory;
+        _telemetry = telemetry;
         _logger = logger;
         _customInstructions = LoadCustomInstructions(_openAiSettings.CustomInstructionsPath);
     }
@@ -59,6 +63,11 @@ public class VectorStoreReviewService
         List<WorkItemInfo>? workItems,
         CancellationToken cancellationToken = default)
     {
+        using var opScope = _telemetry.StartOperation("VectorStore.ReviewAllFiles")
+            .WithTag("pr.id", prInfo.PullRequestId)
+            .WithTag("file.count", fileChanges.Count)
+            .WithTag("ai.model", _openAiSettings.DeploymentName);
+
         var sw = Stopwatch.StartNew();
         var uploadedFileIds = new List<string>();
         string? vectorStoreId = null;
@@ -189,7 +198,20 @@ public class VectorStoreReviewService
             reviewResult.ModelName = _openAiSettings.DeploymentName;
             reviewResult.AiDurationMs = sw.ElapsedMilliseconds;
 
+            _telemetry.RecordMetric("vectorstore.files_uploaded", uploadedFileIds.Count);
+            _telemetry.RecordMetric("vectorstore.duration_ms", sw.ElapsedMilliseconds);
+            _telemetry.RecordMetric("vectorstore.response_length", responseText.Length);
+            opScope.WithTag("vectorstore.files_uploaded", uploadedFileIds.Count)
+                   .WithTag("vectorstore.duration_ms", sw.ElapsedMilliseconds)
+                   .Succeed();
+
             return reviewResult;
+        }
+        catch (Exception ex)
+        {
+            opScope.Fail(ex);
+            opScope.RecordException(ex);
+            throw;
         }
         finally
         {

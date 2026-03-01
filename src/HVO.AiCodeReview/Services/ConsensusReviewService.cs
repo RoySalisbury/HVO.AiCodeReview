@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AiCodeReview.Models;
+using HVO.Enterprise.Telemetry.Abstractions;
 
 namespace AiCodeReview.Services;
 
@@ -21,6 +22,7 @@ public class ConsensusReviewService : ICodeReviewService
     private readonly IReadOnlyList<(string Name, ICodeReviewService Service)> _providers;
     private readonly int _threshold;
     private readonly ILogger<ConsensusReviewService> _logger;
+    private readonly ITelemetryService? _telemetry;
 
     /// <inheritdoc />
     public string ModelName => string.Join("+", _providers.Select(p => p.Service.ModelName));
@@ -34,7 +36,8 @@ public class ConsensusReviewService : ICodeReviewService
     public ConsensusReviewService(
         IReadOnlyList<(string Name, ICodeReviewService Service)> providers,
         int threshold,
-        ILogger<ConsensusReviewService> logger)
+        ILogger<ConsensusReviewService> logger,
+        ITelemetryService? telemetry = null)
     {
         if (providers.Count == 0)
             throw new InvalidOperationException(
@@ -43,6 +46,7 @@ public class ConsensusReviewService : ICodeReviewService
         _providers = providers;
         _threshold = Math.Max(1, Math.Min(threshold, providers.Count));
         _logger = logger;
+        _telemetry = telemetry;
 
         _logger.LogInformation(
             "ConsensusReviewService initialised with {Count} providers (threshold={Threshold}): {Names}",
@@ -53,19 +57,34 @@ public class ConsensusReviewService : ICodeReviewService
     public async Task<CodeReviewResult> ReviewAsync(
         PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
+        using var opScope = _telemetry?.StartOperation("Consensus.Review")
+            ?.WithTag("pr.id", pullRequest.PullRequestId)
+            ?.WithTag("provider.count", _providers.Count)
+            ?.WithTag("consensus.threshold", _threshold);
+
         var results = await FanOutAsync(
             (name, svc) => svc.ReviewAsync(pullRequest, fileChanges, workItems));
 
-        return MergeResults(results);
+        var merged = MergeResults(results);
+        _telemetry?.RecordMetric("consensus.providers_succeeded", results.Count);
+        opScope?.Succeed();
+        return merged;
     }
 
     public async Task<CodeReviewResult> ReviewFileAsync(
         PullRequestInfo pullRequest, FileChange file, int totalFilesInPr, List<WorkItemInfo>? workItems = null)
     {
+        using var opScope = _telemetry?.StartOperation("Consensus.ReviewFile")
+            ?.WithTag("pr.id", pullRequest.PullRequestId)
+            ?.WithTag("file.path", file.FilePath)
+            ?.WithTag("provider.count", _providers.Count);
+
         var results = await FanOutAsync(
             (name, svc) => svc.ReviewFileAsync(pullRequest, file, totalFilesInPr, workItems));
 
-        return MergeResults(results);
+        var merged = MergeResults(results);
+        opScope?.Succeed();
+        return merged;
     }
 
     public async Task<List<ThreadVerificationResult>> VerifyThreadResolutionsAsync(

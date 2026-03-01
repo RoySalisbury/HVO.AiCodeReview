@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AiCodeReview.Models;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Services;
@@ -11,6 +12,7 @@ public class AzureDevOpsService : IDevOpsService
 {
     private readonly HttpClient _httpClient;
     private readonly AzureDevOpsSettings _settings;
+    private readonly ITelemetryService _telemetry;
     private readonly ILogger<AzureDevOpsService> _logger;
     private const string ApiVersion = "api-version=7.1";
 
@@ -35,10 +37,12 @@ public class AzureDevOpsService : IDevOpsService
     public AzureDevOpsService(
         HttpClient httpClient,
         IOptions<AzureDevOpsSettings> settings,
+        ITelemetryService telemetry,
         ILogger<AzureDevOpsService> logger)
     {
         _httpClient = httpClient;
         _settings = settings.Value;
+        _telemetry = telemetry;
         _logger = logger;
 
         // Set up base authentication for all requests
@@ -104,6 +108,11 @@ public class AzureDevOpsService : IDevOpsService
 
     public async Task<PullRequestInfo> GetPullRequestAsync(string project, string repository, int pullRequestId)
     {
+        using var scope = _telemetry.StartOperation("DevOps.GetPullRequest");
+        scope.WithTag("pr.id", pullRequestId).WithTag("pr.project", project);
+
+        try
+        {
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}?{ApiVersion}";
         _logger.LogDebug("GET {Url}", url);
 
@@ -139,7 +148,15 @@ public class AzureDevOpsService : IDevOpsService
             }
         }
 
+        scope.Succeed();
         return prInfo;
+        }
+        catch (Exception ex)
+        {
+            scope.Fail(ex);
+            scope.RecordException(ex);
+            throw;
+        }
     }
 
     public async Task<bool> HasReviewTagAsync(string project, string repository, int pullRequestId)
@@ -567,6 +584,11 @@ public class AzureDevOpsService : IDevOpsService
     public async Task<List<FileChange>> GetPullRequestChangesAsync(
         string project, string repository, int pullRequestId, PullRequestInfo prInfo)
     {
+        using var scope = _telemetry.StartOperation("DevOps.GetPullRequestChanges");
+        scope.WithTag("pr.id", pullRequestId).WithTag("pr.project", project);
+
+        try
+        {
         // Get the list of changed items between source and target commits
         var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/iterations?{ApiVersion}";
         _logger.LogDebug("GET iterations: {Url}", url);
@@ -654,7 +676,15 @@ public class AzureDevOpsService : IDevOpsService
             fileChanges.Add(fileChange);
         }
 
+        scope.Succeed();
         return fileChanges;
+        }
+        catch (Exception ex)
+        {
+            scope.Fail(ex);
+            scope.RecordException(ex);
+            throw;
+        }
     }
 
     private async Task<string?> GetFileContentAsync(string project, string repository, string path, string commitId)
@@ -711,27 +741,40 @@ public class AzureDevOpsService : IDevOpsService
         string project, string repository, int pullRequestId,
         string content, string status = "closed")
     {
-        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/threads?{ApiVersion}";
+        using var scope = _telemetry.StartOperation("DevOps.PostComment");
+        scope.WithTag("pr.id", pullRequestId).WithTag("comment.status", status);
 
-        var threadBody = new
+        try
         {
-            comments = new[]
+            var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/threads?{ApiVersion}";
+
+            var threadBody = new
             {
-                new { parentCommentId = 0, content, commentType = 1 }
-            },
-            status = StatusToInt(status),
-            properties = BuildThreadProperties()
-        };
+                comments = new[]
+                {
+                    new { parentCommentId = 0, content, commentType = 1 }
+                },
+                status = StatusToInt(status),
+                properties = BuildThreadProperties()
+            };
 
-        var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
+            var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = false,
+            });
+
+            _logger.LogDebug("POST thread: {Url}", url);
+            var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
+            response.EnsureSuccessStatusCode();
+            scope.Succeed();
+        }
+        catch (Exception ex)
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false,
-        });
-
-        _logger.LogDebug("POST thread: {Url}", url);
-        var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
-        response.EnsureSuccessStatusCode();
+            scope.Fail(ex);
+            scope.RecordException(ex);
+            throw;
+        }
     }
 
     public async Task PostInlineCommentThreadAsync(
@@ -739,52 +782,79 @@ public class AzureDevOpsService : IDevOpsService
         string filePath, int startLine, int endLine,
         string content, string status = "closed")
     {
-        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/threads?{ApiVersion}";
+        using var scope = _telemetry.StartOperation("DevOps.PostInlineComment");
+        scope.WithTag("pr.id", pullRequestId).WithTag("comment.file", filePath);
 
-        var threadBody = new
+        try
         {
-            comments = new[]
-            {
-                new { parentCommentId = 0, content, commentType = 1 }
-            },
-            status = StatusToInt(status),
-            threadContext = new
-            {
-                filePath,
-                rightFileStart = new { line = startLine, offset = 1 },
-                rightFileEnd = new { line = endLine, offset = int.MaxValue },
-            },
-            properties = BuildThreadProperties()
-        };
+            var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/threads?{ApiVersion}";
 
-        var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
+            var threadBody = new
+            {
+                comments = new[]
+                {
+                    new { parentCommentId = 0, content, commentType = 1 }
+                },
+                status = StatusToInt(status),
+                threadContext = new
+                {
+                    filePath,
+                    rightFileStart = new { line = startLine, offset = 1 },
+                    rightFileEnd = new { line = endLine, offset = int.MaxValue },
+                },
+                properties = BuildThreadProperties()
+            };
+
+            var json = JsonSerializer.Serialize(threadBody, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = false,
+            });
+
+            _logger.LogDebug("POST inline thread: {Url} for {FilePath}:{StartLine}-{EndLine}", url, filePath, startLine, endLine);
+            var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
+            response.EnsureSuccessStatusCode();
+            scope.Succeed();
+        }
+        catch (Exception ex)
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false,
-        });
-
-        _logger.LogDebug("POST inline thread: {Url} for {FilePath}:{StartLine}-{EndLine}", url, filePath, startLine, endLine);
-        var response = await _httpClient.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
-        response.EnsureSuccessStatusCode();
+            scope.Fail(ex);
+            scope.RecordException(ex);
+            throw;
+        }
     }
 
     public async Task AddReviewerAsync(string project, string repository, int pullRequestId, int vote)
     {
-        var identityId = await GetIdentityIdAsync();
-        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/reviewers/{identityId}?{ApiVersion}";
+        using var scope = _telemetry.StartOperation("DevOps.AddReviewer");
+        scope.WithTag("pr.id", pullRequestId).WithTag("review.vote", vote);
 
-        var reviewerBody = new { id = identityId, vote, isRequired = false };
-        var json = JsonSerializer.Serialize(reviewerBody);
-
-        _logger.LogInformation("PUT reviewer id={Id} vote={Vote}: {Url}", identityId, vote, url);
-        var response = await _httpClient.PutAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var errorBody = await response.Content.ReadAsStringAsync();
-            _logger.LogError("AddReviewer failed: {StatusCode} {ReasonPhrase} — {Body}",
-                (int)response.StatusCode, response.ReasonPhrase, errorBody);
-            response.EnsureSuccessStatusCode(); // still throw for the caller to handle
+            var identityId = await GetIdentityIdAsync();
+            var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/reviewers/{identityId}?{ApiVersion}";
+
+            var reviewerBody = new { id = identityId, vote, isRequired = false };
+            var json = JsonSerializer.Serialize(reviewerBody);
+
+            _logger.LogInformation("PUT reviewer id={Id} vote={Vote}: {Url}", identityId, vote, url);
+            var response = await _httpClient.PutAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                _logger.LogError("AddReviewer failed: {StatusCode} {ReasonPhrase} — {Body}",
+                    (int)response.StatusCode, response.ReasonPhrase, errorBody);
+                response.EnsureSuccessStatusCode(); // still throw for the caller to handle
+            }
+
+            scope.Succeed();
+        }
+        catch (Exception ex)
+        {
+            scope.Fail(ex);
+            scope.RecordException(ex);
+            throw;
         }
     }
 

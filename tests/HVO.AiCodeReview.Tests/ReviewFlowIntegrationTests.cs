@@ -3,6 +3,7 @@ using System.Text.Json;
 using AiCodeReview.Models;
 using AiCodeReview.Services;
 using AiCodeReview.Tests.Helpers;
+using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -73,6 +74,7 @@ public class ReviewFlowIntegrationTests
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
+        services.AddSingleton<ITelemetryService, NullTelemetryService>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 
@@ -297,6 +299,7 @@ public class ReviewFlowIntegrationTests
             new ModelAdapterResolver(sp.GetRequiredService<ILoggerFactory>().CreateLogger<ModelAdapterResolver>()));
         services.AddSingleton<IReviewRateLimiter, ReviewRateLimiter>();
         services.AddSingleton<IGlobalRateLimitSignal, GlobalRateLimitSignal>();
+        services.AddSingleton<ITelemetryService, NullTelemetryService>();
         services.AddScoped<VectorStoreReviewService>();
         services.AddTransient<CodeReviewOrchestrator>();
 

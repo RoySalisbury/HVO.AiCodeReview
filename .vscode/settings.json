@@ -1,4 +1,7 @@
 {
+    "files.exclude": {
+        "**/BuildHost-*": true
+    },
     "chat.tools.terminal.autoApprove": {
         "git push": true
     }

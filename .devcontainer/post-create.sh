@@ -21,73 +21,10 @@ dotnet --list-sdks || true
 echo "Installed runtimes:"
 dotnet --list-runtimes || true
 
-echo "Checking Azure CLI installation..."
-if command -v az >/dev/null 2>&1; then
-	az version || true
-else
-	echo "Warning: Azure CLI (az) not found on PATH"
-fi
-
-echo "Checking additional toolbelt commands..."
-if command_exists node; then node --version || true; else echo "Warning: node not found"; fi
-if command_exists npm; then npm --version || true; else echo "Warning: npm not found"; fi
-if command_exists python3; then python3 --version || true; else echo "Warning: python3 not found"; fi
-if command_exists java; then java -version || true; else echo "Warning: java not found"; fi
-if command_exists go; then go version || true; else echo "Warning: go not found"; fi
-if command_exists terraform; then terraform version || true; else echo "Warning: terraform not found"; fi
-if command_exists kubectl; then kubectl version --client=true --output=yaml 2>/dev/null | sed -n '1,25p' || true; else echo "Warning: kubectl not found"; fi
-if command_exists helm; then helm version || true; else echo "Warning: helm not found"; fi
-
-# Provision a workspace-local Python virtual environment with common tooling deps
-echo "Setting up Python virtual environment and common parsing libraries..."
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_DIR="${REPO_ROOT}/.venv"
-PY_REQS_FILE="${REPO_ROOT}/.devcontainer/python-requirements.txt"
-
-if command_exists python3; then
-	if [ ! -d "${VENV_DIR}" ]; then
-		echo "Creating venv at ${VENV_DIR}"
-		python3 -m venv "${VENV_DIR}" || {
-			echo "Warning: python3 -m venv failed. Attempting to install python3-venv..."
-			sudo apt-get update -y
-			sudo apt-get install -y python3-venv || true
-			python3 -m venv "${VENV_DIR}" || true
-		}
-	else
-		echo "Venv already exists at ${VENV_DIR}"
-	fi
-
-	VENV_PY="${VENV_DIR}/bin/python"
-	if [ -x "${VENV_PY}" ]; then
-		"${VENV_PY}" -m pip install --upgrade pip setuptools wheel || true
-		if [ -f "${PY_REQS_FILE}" ]; then
-			echo "Installing Python requirements from ${PY_REQS_FILE}"
-			"${VENV_PY}" -m pip install -r "${PY_REQS_FILE}" || true
-		else
-			echo "Warning: ${PY_REQS_FILE} not found; skipping Python package install"
-		fi
-	else
-		echo "Warning: venv python not found at ${VENV_PY}; skipping Python package install"
-	fi
-else
-	echo "Warning: python3 not found; skipping venv setup"
-fi
-
 # Ensure handy CLI tools are available (minimal set)
 echo "Installing development CLI utilities..."
 sudo apt-get update -y
 sudo apt-get install -y jq ripgrep || echo "Warning: CLI utility installation failed, continuing..."
-
-# Install EF Core CLI matching the repo packages
-EF_TOOLS_VERSION="10.0.*"
-echo "Installing dotnet-ef $EF_TOOLS_VERSION..."
-dotnet tool update --global dotnet-ef --version "$EF_TOOLS_VERSION" 2>/dev/null \
-	|| dotnet tool install --global dotnet-ef --version "$EF_TOOLS_VERSION"
-
-# Install dotnet-script (C# scripting via .csx files)
-echo "Installing dotnet-script..."
-dotnet tool update --global dotnet-script 2>/dev/null \
-	|| dotnet tool install --global dotnet-script
 
 # Add vscode user to docker group
 echo "Adding vscode user to docker group..."

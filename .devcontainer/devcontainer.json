@@ -4,20 +4,14 @@
     "dockerfile": "Dockerfile"
   },
   "hostRequirements": {
-    "cpus": 4,
-    "memory": "16gb",
-    "storage": "128gb"
+    "cpus": 2,
+    "memory": "4gb",
+    "storage": "16gb"
   },
   "features": {
     "ghcr.io/devcontainers/features/git:1": {
       "ppa": true,
       "version": "latest"
-    },
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
-    },
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.12"
     },
     "ghcr.io/devcontainers/features/github-cli:1": {
       "installDirectlyFromGitHubRelease": true,
@@ -33,13 +27,7 @@
       "upgradePackages": false
     },
     "ghcr.io/devcontainers/features/dotnet:2": {
-      "version": "10.0",
-      "additionalVersions": "8.0, 9.0"
-    },
-    "ghcr.io/devcontainers/features/azure-cli:1": {
-      "version": "latest",
-      "installBicep": true,
-      "bicepVersion": "latest"
+      "version": "10.0"
     },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "version": "latest",
@@ -57,7 +45,6 @@
         "GitHub.copilot",
         "GitHub.copilot-chat",
         "github.vscode-github-actions",
-        "ms-vscode.vscode-js-profile-flame",
         "openai.chatgpt"
       ],
       "settings": {
@@ -73,31 +60,15 @@
         },
         "terminal.integrated.defaultProfile.linux": "zsh",
         "terminal.integrated.profiles.linux": {
-          "zsh": {
-            "path": "/bin/zsh"
-          },
-          "bash": {
-            "path": "/bin/bash"
-          }
-        },
-        "terminal.integrated.shellIntegration.enabled": true,
-        "terminal.integrated.shellIntegration.decorationsEnabled": "both",
-        "terminal.integrated.stickyScroll.enabled": true,
-        "terminal.integrated.suggest.enabled": true,
-        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-        "python.terminal.activateEnvInCurrentTerminal": true,
-        "python.terminal.activateEnvironment": true
+          "zsh": { "path": "/bin/zsh" },
+          "bash": { "path": "/bin/bash" }
+        }
       }
     }
   },
-  // Environment variables for the dev container.
-  // The Postgres/Redis passwords below are throwaway dev-only values for the
-  // local dependency containers (bound to 127.0.0.1, never published).
-  // Docker may warn "SecretsUsedInArgOrEnv" — that lint rule targets production
-  // images pushed to registries; this devcontainer image is purely local.
-  // Real secrets (PATs, API keys) belong in User Secrets or
-  // .devcontainer/devcontainer.local.env (gitignored).
-  // See docs/security/secrets-guide.md for comprehensive secret management.
+  // Environment variables for dev container (non-sensitive only)
+  // Secrets should be provided via User Secrets or .devcontainer/devcontainer.local.env (gitignored)
+  // See docs/security/secrets-guide.md for comprehensive secret management
   "containerEnv": {
     "ASPNETCORE_ENVIRONMENT": "Development",
     "DOTNET_ENVIRONMENT": "Development",
@@ -116,24 +87,27 @@
     "LOGGING_LOGLEVEL_DEFAULT": "Information",
     "LOGGING_LOGLEVEL_MICROSOFT_ASPNETCORE": "Warning"
   },
-  "remoteEnv": {
-    // Forward GitHub token from host so gh CLI works without re-auth
-    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
-    "GH_TOKEN": "${localEnv:GH_TOKEN}"
-  },
-  // Port mappings
-  // 5094: HVO.AiCodeReview API (dotnet run)
-  // 8080: Docker container (HVO.AiCodeReview)
+  "remoteEnv": {},
+  // Port mappings with allInterfaces for Docker-from-Docker accessibility
+  // 5000-5001: Main HVO.SkyMonitor app (HTTP/HTTPS)
+  // 5010-5011: Camera Agent (HTTP/HTTPS)
   // 5432: PostgreSQL, 6379: Redis
+  // 9000-9001: MinIO (API/Console)
+  // 7096: Logic Host HTTPS (dotnet run)
+  // 5174: SkyMonitor container mode (HTTP)
+  // 5130: Camera agent container mode
   "forwardPorts": [
-    5094,
+    5000,
+    5001,
     5432,
-    6379,
-    8080
+    6379
   ],
   "portsAttributes": {
-    "5094": {
-      "label": "HVO.AiCodeReview API",
+    "5000": {
+      "onAutoForward": "silent",
+      "elevateIfNeeded": true
+    },
+    "5001": {
       "onAutoForward": "silent",
       "elevateIfNeeded": true
     },
@@ -142,11 +116,6 @@
       "elevateIfNeeded": true
     },
     "6379": {
-      "onAutoForward": "silent",
-      "elevateIfNeeded": true
-    },
-    "8080": {
-      "label": "HVO.AiCodeReview Docker",
       "onAutoForward": "silent",
       "elevateIfNeeded": true
     }

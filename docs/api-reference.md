@@ -101,9 +101,25 @@ Content-Type: application/json
 
 | Code | When |
 |------|------|
-| `200 OK` | Review completed, skipped, or rate-limited. |
+| `200 OK` | Review completed, skipped, or rate-limited (queue disabled). |
+| `202 Accepted` | Review queued for background processing (queue enabled). Response includes `sessionId` and `statusUrl`. |
 | `400 Bad Request` | Invalid request body. |
 | `500 Internal Server Error` | Unhandled exception (returned as `status: "Error"`). |
+| `503 Service Unavailable` | Review queue is full (queue enabled). |
+
+**Response — Queued (queue enabled):**
+
+When the review queue is enabled (`ReviewQueue:Enabled = true`), the API returns `202 Accepted` immediately:
+
+```json
+{
+  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "Queued",
+  "summary": "Review has been queued for processing."
+}
+```
+
+The `Location` header contains the status polling URL: `/api/review/status/{sessionId}`.
 
 **Response Field Reference:**
 
@@ -141,6 +157,114 @@ When a re-review detects that only a subset of files changed since the last revi
 | `changedFilePaths` | string[] | Paths of files reviewed in this pass. |
 | `carriedForwardFilePaths` | string[] | Paths of files carried forward from the prior review. |
 | `estimatedTokenSavings` | int | Approximate tokens saved by not re-reviewing unchanged files. |
+
+---
+
+## GET /api/review/status/{sessionId}
+
+Poll the status of a queued or completed review session. Only available when the review queue is enabled.
+
+**Request:**
+
+```http
+GET /api/review/status/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+**Response — Queued/InProgress:**
+
+```json
+{
+  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "InProgress"
+}
+```
+
+**Response — Completed:**
+
+```json
+{
+  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "Completed",
+  "recommendation": "ApprovedWithSuggestions",
+  "vote": 5
+}
+```
+
+| Code | When |
+|------|------|
+| `200 OK` | Session found (any status). |
+| `404 Not Found` | Session ID not found, or queue is not enabled. |
+
+---
+
+## GET /api/review/queue
+
+List all active (queued and in-progress) review sessions with queue statistics.
+
+**Request:**
+
+```http
+GET /api/review/queue
+```
+
+**Response:**
+
+```json
+{
+  "enabled": true,
+  "maxConcurrentReviews": 3,
+  "maxQueueDepth": 50,
+  "queuedCount": 2,
+  "inProgressCount": 1,
+  "sessions": [
+    {
+      "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "pullRequestId": 12345,
+      "project": "OneVision",
+      "repository": "MyRepo",
+      "status": "InProgress",
+      "requestedAtUtc": "2026-02-14T00:50:18.123Z"
+    },
+    {
+      "sessionId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "pullRequestId": 12346,
+      "project": "OneVision",
+      "repository": "OtherRepo",
+      "status": "Queued",
+      "requestedAtUtc": "2026-02-14T00:51:00.000Z"
+    }
+  ]
+}
+```
+
+When the queue is disabled, returns `{ "enabled": false, "sessions": [] }`.
+
+---
+
+## DELETE /api/review/{sessionId}
+
+Cancel a queued review session. Only sessions with status `Queued` can be cancelled — sessions that are already `InProgress` return `409 Conflict`.
+
+**Request:**
+
+```http
+DELETE /api/review/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+**Response — Success:**
+
+```json
+{
+  "status": "Cancelled",
+  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+| Code | When |
+|------|------|
+| `200 OK` | Session cancelled successfully. |
+| `404 Not Found` | Session ID not found, or queue is not enabled. |
+| `409 Conflict` | Session is already `InProgress`, `Completed`, or `Failed`. |
 
 ---
 
@@ -237,6 +361,22 @@ GET /api/review/health
   "status": "healthy",
   "timestamp": "2026-02-14T00:55:00.000Z",
   "azureDevOps": "connected"
+}
+```
+
+**Response (healthy, queue enabled):**
+
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-02-14T00:55:00.000Z",
+  "azureDevOps": "connected",
+  "queue": {
+    "enabled": true,
+    "queued": 2,
+    "inProgress": 1,
+    "total": 5
+  }
 }
 ```
 

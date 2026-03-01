@@ -6,6 +6,7 @@ using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Tests;
 
@@ -30,7 +31,8 @@ public class ReviewControllerTests
             _orchestrator,
             _devOps,
             new NullTelemetryService(),
-            NullLogger<ReviewController>.Instance);
+            NullLogger<ReviewController>.Instance,
+            Options.Create(new ReviewQueueSettings()));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -235,7 +237,8 @@ public class ReviewControllerTests
             _orchestrator,
             failingDevOps,
             new NullTelemetryService(),
-            NullLogger<ReviewController>.Instance);
+            NullLogger<ReviewController>.Instance,
+            Options.Create(new ReviewQueueSettings()));
 
         var result = await controller.Health(CancellationToken.None);
 
@@ -255,7 +258,8 @@ public class ReviewControllerTests
             _orchestrator,
             nullIdentityDevOps,
             new NullTelemetryService(),
-            NullLogger<ReviewController>.Instance);
+            NullLogger<ReviewController>.Instance,
+            Options.Create(new ReviewQueueSettings()));
 
         var result = await controller.Health(CancellationToken.None);
 

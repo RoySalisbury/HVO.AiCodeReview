@@ -43,6 +43,9 @@ public class AzureOpenAiReviewService : ICodeReviewService
     // Telemetry service for operation scopes and metrics
     private readonly ITelemetryService? _telemetry;
 
+    // Global AI call throttle — limits concurrent inference calls across all reviews
+    private readonly IAiCallThrottle? _aiCallThrottle;
+
     // ── Legacy constructor: used by direct DI registration via IOptions ──
 
     [ExcludeFromCodeCoverage(Justification = "Creates AzureOpenAIClient (SDK) which cannot be mocked.")]
@@ -74,7 +77,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
         PromptAssemblyPipeline? pipeline = null,
         ModelAdapter? modelAdapter = null,
         IGlobalRateLimitSignal? rateLimitSignal = null,
-        ITelemetryService? telemetry = null)
+        ITelemetryService? telemetry = null,
+        IAiCallThrottle? aiCallThrottle = null)
     {
         _modelName = modelName;
         _logger = logger;
@@ -82,6 +86,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
         _modelAdapter = modelAdapter;
         _rateLimitSignal = rateLimitSignal;
         _telemetry = telemetry;
+        _aiCallThrottle = aiCallThrottle;
 
         // Apply model adapter overrides (temperature, tokens, truncation)
         var baseProfile = reviewProfile ?? new ReviewProfile();
@@ -178,6 +183,28 @@ public class AzureOpenAiReviewService : ICodeReviewService
     internal string GetThreadVerificationSystemPrompt()
         => _pipeline?.AssemblePrompt("thread-verification", modelPreamble: _modelAdapter?.Preamble) ?? ThreadVerificationSystemPrompt;
 
+    /// <summary>
+    /// Wraps <see cref="ChatClient.CompleteChatAsync"/> with the global AI call throttle
+    /// (when registered). Acquires a permit before calling, releases after — even on failure.
+    /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Thin wrapper around Azure OpenAI SDK call; tested via LiveAI integration tests.")]
+    private async Task<ClientResult<ChatCompletion>> ThrottledCompleteChatAsync(
+        IList<ChatMessage> messages, ChatCompletionOptions options)
+    {
+        if (_aiCallThrottle == null)
+            return await _chatClient.CompleteChatAsync(messages, options);
+
+        await _aiCallThrottle.AcquireAsync();
+        try
+        {
+            return await _chatClient.CompleteChatAsync(messages, options);
+        }
+        finally
+        {
+            _aiCallThrottle.Release();
+        }
+    }
+
     [ExcludeFromCodeCoverage(Justification = "Calls _chatClient.CompleteChatAsync (Azure OpenAI SDK).")]
     public async Task<CodeReviewResult> ReviewAsync(PullRequestInfo pullRequest, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)
     {
@@ -207,7 +234,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 if (_rateLimitSignal != null)
                     await _rateLimitSignal.WaitIfCoolingDownAsync();
 
-                response = await _chatClient.CompleteChatAsync(messages, options);
+                response = await ThrottledCompleteChatAsync(messages, options);
                 break;
             }
             catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
@@ -339,7 +366,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 if (_rateLimitSignal != null)
                     await _rateLimitSignal.WaitIfCoolingDownAsync();
 
-                response = await _chatClient.CompleteChatAsync(messages, options);
+                response = await ThrottledCompleteChatAsync(messages, options);
                 break; // Success
             }
             catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
@@ -477,7 +504,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 if (_rateLimitSignal != null)
                     await _rateLimitSignal.WaitIfCoolingDownAsync();
 
-                response = await _chatClient.CompleteChatAsync(messages, options);
+                response = await ThrottledCompleteChatAsync(messages, options);
                 break;
             }
             catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
@@ -683,7 +710,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 if (_rateLimitSignal != null)
                     await _rateLimitSignal.WaitIfCoolingDownAsync();
 
-                response = await _chatClient.CompleteChatAsync(messages, options);
+                response = await ThrottledCompleteChatAsync(messages, options);
                 break;
             }
             catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)
@@ -1646,7 +1673,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 if (_rateLimitSignal != null)
                     await _rateLimitSignal.WaitIfCoolingDownAsync();
 
-                response = await _chatClient.CompleteChatAsync(messages, options);
+                response = await ThrottledCompleteChatAsync(messages, options);
                 break;
             }
             catch (ClientResultException cex) when (cex.Status == 429 && attempt < RateLimitHelper.MaxRateLimitRetries)

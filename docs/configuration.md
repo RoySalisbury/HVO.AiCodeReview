@@ -488,3 +488,31 @@ For simpler setups, you can still use `custom-instructions.json` directly:
 ```
 
 If no `review-rules.json` catalog exists, the pipeline falls back to hardcoded prompts. If the file doesn't exist or the path is empty, no custom instructions are injected — the AI still performs a thorough review using its base instructions.
+
+---
+
+### ReviewQueue Section
+
+Controls the review queue and worker pool for parallel PR processing. When disabled (default), reviews execute synchronously on the request thread — identical to prior versions.
+
+```json
+{
+  "ReviewQueue": {
+    "Enabled": false,
+    "MaxConcurrentReviews": 3,
+    "MaxQueueDepth": 50,
+    "MaxConcurrentAiCalls": 8,
+    "SessionTimeoutMinutes": 30
+  }
+}
+```
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `Enabled` | bool | `false` | Enables the review queue. When `true`, `POST /api/review` returns `202 Accepted` and processes reviews in the background. |
+| `MaxConcurrentReviews` | int | `3` | Number of reviews that can execute concurrently (worker pool size). |
+| `MaxQueueDepth` | int | `50` | Maximum number of reviews that can be queued. Returns `503` when full. |
+| `MaxConcurrentAiCalls` | int | `8` | System-wide limit on concurrent Azure OpenAI inference calls across all active reviews. Prevents 429 rate-limit cascades. |
+| `SessionTimeoutMinutes` | int | `30` | Maximum time a single review session can run before being automatically cancelled. |
+
+See [Review Queue & Worker Pool](architecture.md#review-queue--worker-pool) for architecture details and [API Reference](api-reference.md#get-apireviewqueue) for queue management endpoints.

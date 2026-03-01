@@ -2,6 +2,7 @@ using AiCodeReview.Models;
 using AiCodeReview.Services;
 using HVO.Enterprise.Telemetry.Abstractions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace AiCodeReview.Controllers;
 
@@ -13,17 +14,26 @@ public class ReviewController : ControllerBase
     private readonly IDevOpsService _devOpsService;
     private readonly ILogger<ReviewController> _logger;
     private readonly ITelemetryService _telemetry;
+    private readonly ReviewQueueService? _queueService;
+    private readonly IReviewSessionStore? _sessionStore;
+    private readonly ReviewQueueSettings _queueSettings;
 
     public ReviewController(
         ICodeReviewOrchestrator orchestrator,
         IDevOpsService devOpsService,
         ITelemetryService telemetry,
-        ILogger<ReviewController> logger)
+        ILogger<ReviewController> logger,
+        IOptions<ReviewQueueSettings> queueSettings,
+        ReviewQueueService? queueService = null,
+        IReviewSessionStore? sessionStore = null)
     {
         _orchestrator = orchestrator;
         _devOpsService = devOpsService;
         _telemetry = telemetry;
         _logger = logger;
+        _queueSettings = queueSettings.Value;
+        _queueService = queueService;
+        _sessionStore = sessionStore;
     }
 
     /// <summary>
@@ -35,8 +45,10 @@ public class ReviewController : ControllerBase
     /// <returns>Review result with status, recommendation, and summary.</returns>
     [HttpPost]
     [ProducesResponseType(typeof(ReviewResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ReviewResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> PostReview([FromBody] ReviewRequest request, CancellationToken cancellationToken)
     {
         using var opScope = _telemetry.StartOperation("API.PostReview")
@@ -63,6 +75,45 @@ public class ReviewController : ControllerBase
             request.ProjectName, request.RepositoryName, request.PullRequestId,
             request.SimulationOnly ? " [SIMULATION]" : "",
             request.ReviewDepth, request.ReviewStrategy, session.SessionId);
+
+        // ── Queued mode: enqueue and return 202 Accepted ────────────────
+        if (_queueSettings.Enabled && _queueService != null && _sessionStore != null)
+        {
+            _sessionStore.Add(session);
+
+            var workItem = new ReviewWorkItem
+            {
+                Session = session,
+                Request = request,
+            };
+
+            if (!_queueService.TryEnqueue(workItem))
+            {
+                session.Fail(new InvalidOperationException("Queue is full"));
+                opScope.WithTag("review.outcome", "QueueFull").Fail(new InvalidOperationException("Queue full"));
+                return StatusCode(503, new ReviewResponse
+                {
+                    SessionId = session.SessionId,
+                    Status = "QueueFull",
+                    ErrorMessage = $"Review queue is full ({_queueSettings.MaxQueueDepth} max). Try again later.",
+                });
+            }
+
+            opScope.WithTag("review.outcome", "Queued").Succeed();
+            _telemetry.RecordMetric("api.reviews_queued", 1);
+
+            var statusUrl = Url.Action(nameof(GetStatus), new { sessionId = session.SessionId })
+                            ?? $"/api/review/status/{session.SessionId}";
+
+            return Accepted(statusUrl, new ReviewResponse
+            {
+                SessionId = session.SessionId,
+                Status = "Queued",
+                Summary = "Review has been queued for processing.",
+            });
+        }
+
+        // ── Synchronous mode: execute immediately ───────────────────────
 
         // V1: Use a logging-only progress handler. In V2, this would be an SSE stream writer.
         var progress = new Progress<ReviewStatusUpdate>(update =>
@@ -168,7 +219,119 @@ public class ReviewController : ControllerBase
             result["azureDevOps"] = "unreachable";
         }
 
+        if (_queueSettings.Enabled && _sessionStore != null)
+        {
+            result["queue"] = new
+            {
+                enabled = true,
+                queued = _sessionStore.QueuedCount,
+                inProgress = _sessionStore.InProgressCount,
+                total = _sessionStore.Count,
+            };
+        }
+
         var statusCode = result["status"] is "healthy" ? 200 : 503;
         return StatusCode(statusCode, result);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Queue Endpoints (only functional when queue is enabled)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Get the status of a queued/in-progress/completed review session.
+    /// </summary>
+    [HttpGet("status/{sessionId:guid}")]
+    [ProducesResponseType(typeof(ReviewResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult GetStatus(Guid sessionId)
+    {
+        if (_sessionStore == null)
+            return NotFound(new { error = "Queue is not enabled." });
+
+        var session = _sessionStore.Get(sessionId);
+        if (session == null)
+            return NotFound(new { error = $"Session {sessionId} not found." });
+
+        var response = new ReviewResponse
+        {
+            SessionId = session.SessionId,
+            Status = session.Status.ToString(),
+        };
+
+        // If the session is completed/failed, include details
+        if (session.Status is ReviewSessionStatus.Completed or ReviewSessionStatus.Failed)
+        {
+            response.ErrorMessage = session.ErrorMessage;
+            response.Recommendation = session.Verdict;
+            response.Vote = session.Vote;
+        }
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// List all queued and in-progress review sessions.
+    /// </summary>
+    [HttpGet("queue")]
+    [ProducesResponseType(typeof(QueueStatusResponse), StatusCodes.Status200OK)]
+    public IActionResult GetQueue()
+    {
+        if (_sessionStore == null)
+        {
+            return Ok(new QueueStatusResponse
+            {
+                Enabled = false,
+                Sessions = Array.Empty<QueuedSessionInfo>(),
+            });
+        }
+
+        var active = _sessionStore.GetActive();
+
+        return Ok(new QueueStatusResponse
+        {
+            Enabled = _queueSettings.Enabled,
+            MaxConcurrentReviews = _queueSettings.MaxConcurrentReviews,
+            MaxQueueDepth = _queueSettings.MaxQueueDepth,
+            QueuedCount = _sessionStore.QueuedCount,
+            InProgressCount = _sessionStore.InProgressCount,
+            Sessions = active.Select(s => new QueuedSessionInfo
+            {
+                SessionId = s.SessionId,
+                PullRequestId = s.PullRequestId,
+                Project = s.Project,
+                Repository = s.Repository,
+                Status = s.Status.ToString(),
+                RequestedAtUtc = s.RequestedAtUtc,
+            }).ToArray(),
+        });
+    }
+
+    /// <summary>
+    /// Cancel a queued (not yet started) review session.
+    /// </summary>
+    [HttpDelete("{sessionId:guid}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public IActionResult CancelReview(Guid sessionId)
+    {
+        if (_sessionStore == null)
+            return NotFound(new { error = "Queue is not enabled." });
+
+        var session = _sessionStore.Get(sessionId);
+        if (session == null)
+            return NotFound(new { error = $"Session {sessionId} not found." });
+
+        if (session.Status != ReviewSessionStatus.Queued)
+            return Conflict(new { error = $"Session is {session.Status} and cannot be cancelled. Only Queued sessions can be cancelled." });
+
+        if (_sessionStore.TryCancelQueued(sessionId))
+        {
+            _logger.LogInformation("Cancelled queued session {SessionId}.", sessionId);
+            return Ok(new { status = "Cancelled", sessionId });
+        }
+
+        return Conflict(new { error = "Session could not be cancelled (race condition — may have started processing)." });
     }
 }

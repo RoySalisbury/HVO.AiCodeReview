@@ -120,43 +120,43 @@ public partial class AzureDevOpsService : IDevOpsService
 
         try
         {
-        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}?{ApiVersion}";
-        _logger.LogDebug("GET {Url}", url);
+            var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}?{ApiVersion}";
+            _logger.LogDebug("GET {Url}", url);
 
-        var response = await _httpClient.GetAsync(url);
-        response.EnsureSuccessStatusCode();
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
 
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        var prInfo = new PullRequestInfo
-        {
-            PullRequestId = json.GetProperty("pullRequestId").GetInt32(),
-            Title = json.GetProperty("title").GetString() ?? string.Empty,
-            Description = json.TryGetProperty("description", out var desc) ? desc.GetString() ?? string.Empty : string.Empty,
-            SourceBranch = json.GetProperty("sourceRefName").GetString() ?? string.Empty,
-            TargetBranch = json.GetProperty("targetRefName").GetString() ?? string.Empty,
-            CreatedBy = json.GetProperty("createdBy").GetProperty("displayName").GetString() ?? string.Empty,
-            CreatedDate = json.GetProperty("creationDate").GetDateTime(),
-            Status = json.GetProperty("status").GetString() ?? string.Empty,
-            IsDraft = json.TryGetProperty("isDraft", out var draft) && draft.GetBoolean(),
-            LastMergeSourceCommit = json.TryGetProperty("lastMergeSourceCommit", out var src) ? src.GetProperty("commitId").GetString() ?? string.Empty : string.Empty,
-            LastMergeTargetCommit = json.TryGetProperty("lastMergeTargetCommit", out var tgt) ? tgt.GetProperty("commitId").GetString() ?? string.Empty : string.Empty,
-        };
-
-        if (json.TryGetProperty("reviewers", out var reviewers))
-        {
-            foreach (var r in reviewers.EnumerateArray())
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var prInfo = new PullRequestInfo
             {
-                prInfo.Reviewers.Add(new PullRequestReviewer
-                {
-                    Id = r.GetProperty("id").GetString() ?? string.Empty,
-                    DisplayName = r.GetProperty("displayName").GetString() ?? string.Empty,
-                    Vote = r.GetProperty("vote").GetInt32(),
-                });
-            }
-        }
+                PullRequestId = json.GetProperty("pullRequestId").GetInt32(),
+                Title = json.GetProperty("title").GetString() ?? string.Empty,
+                Description = json.TryGetProperty("description", out var desc) ? desc.GetString() ?? string.Empty : string.Empty,
+                SourceBranch = json.GetProperty("sourceRefName").GetString() ?? string.Empty,
+                TargetBranch = json.GetProperty("targetRefName").GetString() ?? string.Empty,
+                CreatedBy = json.GetProperty("createdBy").GetProperty("displayName").GetString() ?? string.Empty,
+                CreatedDate = json.GetProperty("creationDate").GetDateTime(),
+                Status = json.GetProperty("status").GetString() ?? string.Empty,
+                IsDraft = json.TryGetProperty("isDraft", out var draft) && draft.GetBoolean(),
+                LastMergeSourceCommit = json.TryGetProperty("lastMergeSourceCommit", out var src) ? src.GetProperty("commitId").GetString() ?? string.Empty : string.Empty,
+                LastMergeTargetCommit = json.TryGetProperty("lastMergeTargetCommit", out var tgt) ? tgt.GetProperty("commitId").GetString() ?? string.Empty : string.Empty,
+            };
 
-        scope.Succeed();
-        return prInfo;
+            if (json.TryGetProperty("reviewers", out var reviewers))
+            {
+                foreach (var r in reviewers.EnumerateArray())
+                {
+                    prInfo.Reviewers.Add(new PullRequestReviewer
+                    {
+                        Id = r.GetProperty("id").GetString() ?? string.Empty,
+                        DisplayName = r.GetProperty("displayName").GetString() ?? string.Empty,
+                        Vote = r.GetProperty("vote").GetInt32(),
+                    });
+                }
+            }
+
+            scope.Succeed();
+            return prInfo;
         }
         catch (Exception ex)
         {
@@ -645,95 +645,95 @@ public partial class AzureDevOpsService : IDevOpsService
 
         try
         {
-        // Get the list of changed items between source and target commits
-        var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/iterations?{ApiVersion}";
-        _logger.LogDebug("GET iterations: {Url}", url);
+            // Get the list of changed items between source and target commits
+            var url = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/iterations?{ApiVersion}";
+            _logger.LogDebug("GET iterations: {Url}", url);
 
-        var iterResponse = await _httpClient.GetAsync(url);
-        iterResponse.EnsureSuccessStatusCode();
-        var iterJson = await iterResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var iterations = iterJson.GetProperty("value");
-        int lastIteration = iterations.GetArrayLength();
+            var iterResponse = await _httpClient.GetAsync(url);
+            iterResponse.EnsureSuccessStatusCode();
+            var iterJson = await iterResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var iterations = iterJson.GetProperty("value");
+            int lastIteration = iterations.GetArrayLength();
 
-        // Get changes for the last iteration
-        var changesUrl = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/iterations/{lastIteration}/changes?{ApiVersion}";
-        _logger.LogDebug("GET changes: {Url}", changesUrl);
+            // Get changes for the last iteration
+            var changesUrl = $"{BaseUrl(project, repository)}/pullrequests/{pullRequestId}/iterations/{lastIteration}/changes?{ApiVersion}";
+            _logger.LogDebug("GET changes: {Url}", changesUrl);
 
-        var changesResponse = await _httpClient.GetAsync(changesUrl);
-        changesResponse.EnsureSuccessStatusCode();
-        var changesJson = await changesResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var changesResponse = await _httpClient.GetAsync(changesUrl);
+            changesResponse.EnsureSuccessStatusCode();
+            var changesJson = await changesResponse.Content.ReadFromJsonAsync<JsonElement>();
 
-        var fileChanges = new List<FileChange>();
-        var changeEntries = changesJson.GetProperty("changeEntries");
+            var fileChanges = new List<FileChange>();
+            var changeEntries = changesJson.GetProperty("changeEntries");
 
-        foreach (var entry in changeEntries.EnumerateArray())
-        {
-            var item = entry.GetProperty("item");
-
-            // Skip folders
-            if (item.TryGetProperty("isFolder", out var isFolder) && isFolder.GetBoolean())
-                continue;
-
-            var path = item.GetProperty("path").GetString() ?? string.Empty;
-            var changeType = entry.GetProperty("changeType").GetString() ?? "edit";
-
-            // Skip binary/image files by extension
-            var ext = Path.GetExtension(path).ToLowerInvariant();
-            if (IsBinaryExtension(ext))
+            foreach (var entry in changeEntries.EnumerateArray())
             {
-                _logger.LogDebug("Skipping binary file: {Path}", path);
-                continue;
-            }
+                var item = entry.GetProperty("item");
 
-            var fileChange = new FileChange
-            {
-                FilePath = path,
-                ChangeType = changeType.ToLowerInvariant(),
-            };
+                // Skip folders
+                if (item.TryGetProperty("isFolder", out var isFolder) && isFolder.GetBoolean())
+                    continue;
 
-            // Fetch file contents at source and target commits
-            try
-            {
-                if (changeType.ToLowerInvariant() != "add" && !string.IsNullOrEmpty(prInfo.LastMergeTargetCommit))
+                var path = item.GetProperty("path").GetString() ?? string.Empty;
+                var changeType = entry.GetProperty("changeType").GetString() ?? "edit";
+
+                // Skip binary/image files by extension
+                var ext = Path.GetExtension(path).ToLowerInvariant();
+                if (IsBinaryExtension(ext))
                 {
-                    fileChange.OriginalContent = await GetFileContentAsync(
-                        project, repository, path, prInfo.LastMergeTargetCommit);
+                    _logger.LogDebug("Skipping binary file: {Path}", path);
+                    continue;
                 }
 
-                if (changeType.ToLowerInvariant() != "delete" && !string.IsNullOrEmpty(prInfo.LastMergeSourceCommit))
+                var fileChange = new FileChange
                 {
-                    fileChange.ModifiedContent = await GetFileContentAsync(
-                        project, repository, path, prInfo.LastMergeSourceCommit);
+                    FilePath = path,
+                    ChangeType = changeType.ToLowerInvariant(),
+                };
+
+                // Fetch file contents at source and target commits
+                try
+                {
+                    if (changeType.ToLowerInvariant() != "add" && !string.IsNullOrEmpty(prInfo.LastMergeTargetCommit))
+                    {
+                        fileChange.OriginalContent = await GetFileContentAsync(
+                            project, repository, path, prInfo.LastMergeTargetCommit);
+                    }
+
+                    if (changeType.ToLowerInvariant() != "delete" && !string.IsNullOrEmpty(prInfo.LastMergeSourceCommit))
+                    {
+                        fileChange.ModifiedContent = await GetFileContentAsync(
+                            project, repository, path, prInfo.LastMergeSourceCommit);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to fetch content for {Path}, skipping", path);
-                continue;
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to fetch content for {Path}, skipping", path);
+                    continue;
+                }
+
+                // Compute unified diff for edits (when we have both versions)
+                if (fileChange.ChangeType == "edit" &&
+                    !string.IsNullOrEmpty(fileChange.OriginalContent) &&
+                    !string.IsNullOrEmpty(fileChange.ModifiedContent))
+                {
+                    fileChange.UnifiedDiff = ComputeUnifiedDiff(
+                        fileChange.OriginalContent, fileChange.ModifiedContent, path);
+                    fileChange.ChangedLineRanges = ParseChangedLineRanges(fileChange.UnifiedDiff);
+                }
+                else if (fileChange.ChangeType == "add" && !string.IsNullOrEmpty(fileChange.ModifiedContent))
+                {
+                    // New file: every line is "changed"
+                    var lineCount = fileChange.ModifiedContent.Split('\n').Length;
+                    fileChange.ChangedLineRanges = new List<(int, int)> { (1, lineCount) };
+                }
+                // For deletes, ChangedLineRanges stays empty (nothing to comment on in modified file)
+
+                fileChanges.Add(fileChange);
             }
 
-            // Compute unified diff for edits (when we have both versions)
-            if (fileChange.ChangeType == "edit" &&
-                !string.IsNullOrEmpty(fileChange.OriginalContent) &&
-                !string.IsNullOrEmpty(fileChange.ModifiedContent))
-            {
-                fileChange.UnifiedDiff = ComputeUnifiedDiff(
-                    fileChange.OriginalContent, fileChange.ModifiedContent, path);
-                fileChange.ChangedLineRanges = ParseChangedLineRanges(fileChange.UnifiedDiff);
-            }
-            else if (fileChange.ChangeType == "add" && !string.IsNullOrEmpty(fileChange.ModifiedContent))
-            {
-                // New file: every line is "changed"
-                var lineCount = fileChange.ModifiedContent.Split('\n').Length;
-                fileChange.ChangedLineRanges = new List<(int, int)> { (1, lineCount) };
-            }
-            // For deletes, ChangedLineRanges stays empty (nothing to comment on in modified file)
-
-            fileChanges.Add(fileChange);
-        }
-
-        scope.Succeed();
-        return fileChanges;
+            scope.Succeed();
+            return fileChanges;
         }
         catch (Exception ex)
         {
@@ -760,7 +760,8 @@ public partial class AzureDevOpsService : IDevOpsService
             versionQuery = string.Empty;
         }
 
-        var url = $"{BaseUrl(project, repository)}/items?path={Uri.EscapeDataString(path)}{versionQuery}&{ApiVersion}";
+        var normalizedPath = path.StartsWith("/") ? path : "/" + path;
+        var url = $"{BaseUrl(project, repository)}/items?path={Uri.EscapeDataString(normalizedPath)}{versionQuery}&{ApiVersion}";
         _logger.LogDebug("GET repository file content: {Url}", url);
 
         var request = new HttpRequestMessage(HttpMethod.Get, url);

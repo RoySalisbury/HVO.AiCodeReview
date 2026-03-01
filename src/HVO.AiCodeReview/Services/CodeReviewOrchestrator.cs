@@ -639,7 +639,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load architecture context for PR #{PrId} — continuing without", pullRequestId);
+            _logger.LogWarning(ex, "Failed to load architecture context for PR #{PrId} — continuing without architecture context", pullRequestId);
         }
 
         // ── Resolve per-pass AI services ─────────────────────────────

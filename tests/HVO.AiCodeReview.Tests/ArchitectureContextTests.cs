@@ -269,7 +269,7 @@ public class ArchitectureContextTests
         var first = await provider.GetContextAsync("proj", "repo", null);
         Assert.IsNotNull(first);
 
-        // Remove the seed — should still return cached result
+        // Overwrite the seed — should still return cached result
         fake.SeedRepositoryFileContent(".ai-review.yaml", "architecture: changed");
         var second = await provider.GetContextAsync("proj", "repo", null);
 

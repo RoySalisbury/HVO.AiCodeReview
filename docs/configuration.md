@@ -54,26 +54,26 @@ All configuration is read from the standard ASP.NET Core configuration system, s
 
 ### AzureDevOps Section
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `Organization` | string | `""` | **(Required)** Azure DevOps organization name. |
-| `PersonalAccessToken` | string | `""` | **(Required)** PAT with the scopes listed in [Prerequisites](../README.md#prerequisites). |
-| `ServiceAccountIdentityId` | string | `""` | GUID of the PAT owner. If empty, auto-discovered at first use via the connection data API. |
-| `ReviewTagName` | string | `"ai-code-review"` | Label applied to PRs after review. Purely decorative. |
-| `AddReviewerVote` | bool | `true` | Whether to add the service as a reviewer with a vote on non-draft PRs. |
-| `MinReviewIntervalMinutes` | int | `5` | Cooldown between reviews on the same PR. Set to `0` to disable rate limiting. |
+| Setting | Type | Default | Required | Description |
+|---------|------|---------|----------|-------------|
+| `Organization` | `string` | `""` | Yes | Azure DevOps organization name. |
+| `PersonalAccessToken` | `string` | `""` | Yes | PAT with the scopes listed in [Getting Started](getting-started.md#azure-devops-pat-scopes). |
+| `ServiceAccountIdentityId` | `string` | `""` | No | GUID of the PAT owner. If empty, auto-discovered at first use via the connection data API. |
+| `ReviewTagName` | `string` | `"ai-code-review"` | No | Label applied to PRs after review. Purely decorative. |
+| `AddReviewerVote` | `bool` | `true` | No | Whether to add the service as a reviewer with a vote on non-draft PRs. |
+| `MinReviewIntervalMinutes` | `int` | `5` | No | Cooldown between reviews on the same PR. Set to `0` to disable rate limiting. |
 
 ### AzureOpenAI Section (Legacy — Backward Compatible)
 
 > **Note:** The `AzureOpenAI` section still works as a fallback. If no `AiProvider:Providers` are configured,
 > the service reads from this section. For new setups, prefer the `AiProvider` section below.
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `Endpoint` | string | `""` | **(Required)** Azure OpenAI endpoint URL (e.g., `https://your-resource.openai.azure.com/`). |
-| `ApiKey` | string | `""` | **(Required)** Azure OpenAI API key. |
-| `DeploymentName` | string | `""` | **(Required)** The model deployment name (e.g., `gpt-4o`, `gpt-4`, `gpt-5`). Any chat-completion model that supports structured JSON output will work. |
-| `CustomInstructionsPath` | string | `"custom-instructions.json"` | Path to optional custom review instructions file. Relative to app directory. |
+| Setting | Type | Default | Required | Description |
+|---------|------|---------|----------|-------------|
+| `Endpoint` | `string` | `""` | Yes | Azure OpenAI endpoint URL (e.g., `https://your-resource.openai.azure.com/`). |
+| `ApiKey` | `string` | `""` | Yes | Azure OpenAI API key. |
+| `DeploymentName` | `string` | `""` | Yes | The model deployment name (e.g., `gpt-4o`, `gpt-4`, `gpt-5`). Any chat-completion model that supports structured JSON output will work. |
+| `CustomInstructionsPath` | `string` | `"custom-instructions.json"` | No | Path to optional custom review instructions file. Relative to app directory. |
 
 ---
 
@@ -110,30 +110,30 @@ that meet the agreement threshold are retained.
 }
 ```
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `MaxParallelReviews` | int | `5` | Maximum concurrent per-file AI review calls. |
-| `MaxInputLinesPerFile` | int | `5000` | Maximum number of source lines sent to AI per file. Files exceeding this are truncated. |
-| `Mode` | string | `"single"` | `"single"` = use `ActiveProvider` only. `"consensus"` = fan out to ALL enabled providers and merge. |
-| `ActiveProvider` | string | `"azure-openai"` | Which provider key to use when Mode = single. |
-| `ConsensusThreshold` | int | `2` | In consensus mode, minimum providers that must flag a comment for it to be kept. |
-| `DepthModels` | object | `{}` | Maps review depth → provider key. See [Depth-Specific Model Routing](#depth-specific-model-routing). |
-| `PassRouting` | object | `{}` | Maps review pass → provider key. See [Per-Pass Model Routing](#per-pass-model-routing-passrouting). |
-| `SecurityPassEnabled` | bool | `false` | Global default for the dedicated security review pass. When `true`, every review includes a security pass unless overridden per-request. |
+| Setting | Type | Default | Required | Description |
+|---------|------|---------|----------|-------------|
+| `MaxParallelReviews` | `int` | `5` | No | Maximum concurrent per-file AI review calls. |
+| `MaxInputLinesPerFile` | `int` | `5000` | No | Maximum number of source lines sent to AI per file. Files exceeding this are truncated. |
+| `Mode` | `string` | `"single"` | No | `"single"` = use `ActiveProvider` only. `"consensus"` = fan out to ALL enabled providers and merge. |
+| `ActiveProvider` | `string` | `"azure-openai"` | No | Which provider key to use when Mode = single. |
+| `ConsensusThreshold` | `int` | `2` | No | In consensus mode, minimum providers that must flag a comment for it to be kept. |
+| `DepthModels` | `object` | `{}` | No | Maps review depth → provider key. See [Depth-Specific Model Routing](#depth-specific-model-routing). |
+| `PassRouting` | `object` | `{}` | No | Maps review pass → provider key. See [Per-Pass Model Routing](#per-pass-model-routing-passrouting). |
+| `SecurityPassEnabled` | `bool` | `false` | No | Global default for the dedicated security review pass. When `true`, every review includes a security pass unless overridden per-request. |
 
 ### Provider Config
 
 Each entry under `Providers` has:
 
-| Field | Description |
-|-------|-------------|
-| `Type` | Provider type: `azure-openai`. More planned: `github-copilot`, `openai`, `local`. |
-| `DisplayName` | Human-readable label for logs and comment attribution. |
-| `Endpoint` | API endpoint URL. |
-| `ApiKey` | API key or token. |
-| `Model` | Model / deployment name. |
-| `CustomInstructionsPath` | Optional path to custom review instructions JSON. |
-| `Enabled` | Set `false` to temporarily disable without removing config. |
+| Setting | Type | Default | Required | Description |
+|---------|------|---------|----------|-------------|
+| `Type` | `string` | — | Yes | Provider type: `azure-openai`. More planned: `github-copilot`, `openai`, `local`. |
+| `DisplayName` | `string` | `""` | No | Human-readable label for logs and comment attribution. |
+| `Endpoint` | `string` | `""` | Yes | API endpoint URL. |
+| `ApiKey` | `string` | `""` | Yes | API key or token. |
+| `Model` | `string` | `""` | Yes | Model / deployment name. |
+| `CustomInstructionsPath` | `string` | `""` | No | Optional path to custom review instructions JSON. |
+| `Enabled` | `bool` | `true` | No | Set `false` to temporarily disable without removing config. |
 
 ### Example: Consensus Mode with Two Models
 
@@ -453,26 +453,26 @@ Adapters are evaluated in order; the first adapter whose `modelPattern` regex ma
 
 **Adapter Fields:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Human-readable adapter name (for logging). |
-| `modelPattern` | string | Regex matched against the deployment/model name. First match wins. |
-| `promptStyle` | string | `"imperative"` or `"conversational"`. Currently informational. |
-| `preamble` | string | Model-specific prompt instructions injected between Identity and Custom Instructions. |
-| `isReasoningModel` | bool | True for o-series models. Disables Temperature and JSON response format. |
-| `temperature` | float? | Override sampling temperature. Ignored for reasoning models. |
-| `maxOutputTokensBatch` | int? | Override max output tokens for batch reviews. |
-| `maxOutputTokensSingleFile` | int? | Override max output tokens for single-file reviews. |
-| `maxOutputTokensVerification` | int? | Override max output tokens for thread verification. |
-| `maxOutputTokensPrSummary` | int? | Override max output tokens for Pass 1 summary. |
-| `maxInputLinesPerFile` | int? | Override per-file input line truncation limit. |
-| `contextWindowSize` | int? | Model's total context window (input + output tokens). |
-| `maxOutputTokensModel` | int? | Model-level hard limit on output tokens. |
-| `inputCostPer1MTokens` | decimal? | USD cost per 1M input tokens (for cost estimation). |
-| `outputCostPer1MTokens` | decimal? | USD cost per 1M output tokens (for cost estimation). |
-| `requestsPerMinute` | int? | RPM rate limit (drives [RPM-aware throttling](architecture.md#rpm-aware-throttling)). |
-| `tokensPerMinute` | int? | TPM rate limit (informational). |
-| `quirks` | string[] | Documented model quirks (logged, not injected into prompts). |
+| Setting | Type | Default | Required | Description |
+|---------|------|---------|----------|-------------|
+| `name` | `string` | — | Yes | Human-readable adapter name (for logging). |
+| `modelPattern` | `string` | — | Yes | Regex matched against the deployment/model name. First match wins. |
+| `promptStyle` | `string` | `"imperative"` | No | `"imperative"` or `"conversational"`. Currently informational. |
+| `preamble` | `string` | `""` | No | Model-specific prompt instructions injected between Identity and Custom Instructions. |
+| `isReasoningModel` | `bool` | `false` | No | True for o-series models. Disables Temperature and JSON response format. |
+| `temperature` | `float?` | `null` | No | Override sampling temperature. Ignored for reasoning models. |
+| `maxOutputTokensBatch` | `int?` | `null` | No | Override max output tokens for batch reviews. |
+| `maxOutputTokensSingleFile` | `int?` | `null` | No | Override max output tokens for single-file reviews. |
+| `maxOutputTokensVerification` | `int?` | `null` | No | Override max output tokens for thread verification. |
+| `maxOutputTokensPrSummary` | `int?` | `null` | No | Override max output tokens for Pass 1 summary. |
+| `maxInputLinesPerFile` | `int?` | `null` | No | Override per-file input line truncation limit. |
+| `contextWindowSize` | `int?` | `null` | No | Model's total context window (input + output tokens). |
+| `maxOutputTokensModel` | `int?` | `null` | No | Model-level hard limit on output tokens. |
+| `inputCostPer1MTokens` | `decimal?` | `null` | No | USD cost per 1M input tokens (for cost estimation). |
+| `outputCostPer1MTokens` | `decimal?` | `null` | No | USD cost per 1M output tokens (for cost estimation). |
+| `requestsPerMinute` | `int?` | `null` | No | RPM rate limit (drives [RPM-aware throttling](architecture.md#rpm-aware-throttling)). |
+| `tokensPerMinute` | `int?` | `null` | No | TPM rate limit (informational). |
+| `quirks` | `string[]` | `[]` | No | Documented model quirks (logged, not injected into prompts). |
 
 ### Assistants API / Vector Store Settings
 
@@ -492,11 +492,13 @@ When using the **Vector** or **Auto** review strategy, the service interacts wit
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `AutoThreshold` | int | `5` | When `reviewStrategy` is `Auto`, PRs with more than this many changed files use Vector Store; otherwise FileByFile. |
-| `PollIntervalMs` | int | `1000` | Milliseconds between polling attempts when waiting for Vector Store indexing or Assistant run completion. |
-| `MaxPollAttempts` | int | `120` | Maximum polling attempts before timing out. With default interval, this gives a 2-minute timeout. |
-| `ApiVersion` | string | `"2024-05-01-preview"` | Azure OpenAI Assistants API version. |
-| `MaxParallelUploads` | int | `10` | Maximum concurrent file uploads to the Vector Store. |
+| Setting | Type | Default | Required | Description |
+|---------|------|---------|----------|-------------|
+| `AutoThreshold` | `int` | `5` | No | When `reviewStrategy` is `Auto`, PRs with more than this many changed files use Vector Store; otherwise FileByFile. |
+| `PollIntervalMs` | `int` | `1000` | No | Milliseconds between polling attempts when waiting for Vector Store indexing or Assistant run completion. |
+| `MaxPollAttempts` | `int` | `120` | No | Maximum polling attempts before timing out. With default interval, this gives a 2-minute timeout. |
+| `ApiVersion` | `string` | `"2024-05-01-preview"` | No | Azure OpenAI Assistants API version. |
+| `MaxParallelUploads` | `int` | `10` | No | Maximum concurrent file uploads to the Vector Store. |
 
 ### Legacy Custom Instructions
 
@@ -528,12 +530,12 @@ Controls the review queue and worker pool for parallel PR processing. When disab
 }
 ```
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `Enabled` | bool | `false` | Enables the review queue. When `true`, `POST /api/review` returns `202 Accepted` and processes reviews in the background. |
-| `MaxConcurrentReviews` | int | `3` | Number of reviews that can execute concurrently (worker pool size). |
-| `MaxQueueDepth` | int | `50` | Maximum number of reviews that can be queued. Returns `503` when full. |
-| `MaxConcurrentAiCalls` | int | `8` | System-wide limit on concurrent Azure OpenAI inference calls across all active reviews. Prevents 429 rate-limit cascades. |
-| `SessionTimeoutMinutes` | int | `30` | Maximum time a single review session can run before being automatically cancelled. |
+| Setting | Type | Default | Required | Description |
+|---------|------|---------|----------|-------------|
+| `Enabled` | `bool` | `false` | No | Enables the review queue. When `true`, `POST /api/review` returns `202 Accepted` and processes reviews in the background. |
+| `MaxConcurrentReviews` | `int` | `3` | No | Number of reviews that can execute concurrently (worker pool size). |
+| `MaxQueueDepth` | `int` | `50` | No | Maximum number of reviews that can be queued. Returns `503` when full. |
+| `MaxConcurrentAiCalls` | `int` | `8` | No | System-wide limit on concurrent Azure OpenAI inference calls across all active reviews. Prevents 429 rate-limit cascades. |
+| `SessionTimeoutMinutes` | `int` | `30` | No | Maximum time a single review session can run before being automatically cancelled. |
 
 See [Review Queue & Worker Pool](architecture.md#review-queue--worker-pool) for architecture details and [API Reference](api-reference.md#get-apireviewqueue) for queue management endpoints.

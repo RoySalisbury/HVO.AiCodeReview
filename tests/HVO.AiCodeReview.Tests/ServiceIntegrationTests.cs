@@ -65,6 +65,7 @@ public class ServiceIntegrationTests
         services.Configure<TestCoverageSettings>(config.GetSection(TestCoverageSettings.SectionName));
         services.AddSingleton<TestCoverageGapDetector>();
         services.AddScoped<VectorStoreReviewService>();
+        services.AddScoped<ArchitectureContextProvider>();
         services.AddTransient<CodeReviewOrchestrator>();
 
         var sp = services.BuildServiceProvider();

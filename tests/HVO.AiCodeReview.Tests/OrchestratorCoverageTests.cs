@@ -407,6 +407,89 @@ public class OrchestratorCoverageTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Action label: Full Review vs Re-Review (force/simulation)
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public async Task ForceReview_NoPriorMetadata_RecordsFullReview()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        SeedStandardPr(fakeDevOps);
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(
+            Project, Repo, PrId, forceReview: true);
+
+        Assert.AreEqual("Reviewed", result.Status);
+
+        var history = await fakeDevOps.GetReviewHistoryAsync(Project, Repo, PrId);
+        Assert.AreEqual(1, history.Count, "Exactly one history entry expected.");
+        Assert.AreEqual("Full Review", history[0].Action,
+            "First review with forceReview should record 'Full Review', not 'Re-Review'.");
+    }
+
+    [TestMethod]
+    public async Task Simulation_NoPriorMetadata_SummaryShowsFullReview()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        SeedStandardPr(fakeDevOps);
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(
+            Project, Repo, PrId, simulationOnly: true);
+
+        Assert.AreEqual("Simulated", result.Status);
+        Assert.IsNotNull(result.Summary, "Simulation should produce a summary.");
+        Assert.IsFalse(result.Summary.Contains("Re-Review"),
+            "First simulation with no prior metadata should not show 'Re-Review' in summary.");
+    }
+
+    [TestMethod]
+    public async Task ForceReview_WithPriorMetadata_RecordsReReview()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        SeedStandardPr(fakeDevOps);
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        // Seed prior review metadata
+        await fakeDevOps.SetReviewMetadataAsync(Project, Repo, PrId, new ReviewMetadata
+        {
+            ReviewCount = 1,
+            ReviewedAtUtc = DateTime.UtcNow.AddMinutes(-30),
+            LastReviewedSourceCommit = "old-commit-sha",
+            LastReviewedIteration = 1,
+            VoteSubmitted = true,
+        });
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(
+            Project, Repo, PrId, forceReview: true);
+
+        Assert.AreEqual("Reviewed", result.Status);
+
+        var history = await fakeDevOps.GetReviewHistoryAsync(Project, Repo, PrId);
+        Assert.IsTrue(history.Count >= 1, "At least one history entry expected.");
+        Assert.AreEqual("Re-Review", history[^1].Action,
+            "Review with prior metadata and forceReview should record 'Re-Review'.");
+    }
+
+    [TestMethod]
+    public async Task NormalFirstReview_NoPriorMetadata_RecordsFullReview()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        SeedStandardPr(fakeDevOps);
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId);
+
+        Assert.AreEqual("Reviewed", result.Status);
+
+        var history = await fakeDevOps.GetReviewHistoryAsync(Project, Repo, PrId);
+        Assert.AreEqual(1, history.Count, "Exactly one history entry expected.");
+        Assert.AreEqual("Full Review", history[0].Action,
+            "First review without forceReview should record 'Full Review'.");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════════════════════
 

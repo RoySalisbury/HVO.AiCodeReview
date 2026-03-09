@@ -173,7 +173,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
 
             // ── Step 2: Decide what action to take ──────────────────────────
             var action = (forceReview || simulationOnly)
-                ? ReviewAction.ReReview
+                ? (metadata.HasPreviousReview ? ReviewAction.ReReview : ReviewAction.FullReview)
                 : DetermineAction(prInfo, metadata, currentIteration);
 
             if (forceReview)

@@ -490,6 +490,276 @@ public class OrchestratorCoverageTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Re-review thread resolution (diff-based, no reply required)
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public async Task ReReview_ThreadOnChangedFile_NoLineOverlap_StillVerifiedAndResolved()
+    {
+        // Thread on line 50, but ChangedLineRanges only covers lines 10-15.
+        // The AI should still verify the thread and resolve it.
+        var fakeDevOps = new FakeDevOpsService();
+        var fileContent = string.Join("\n", Enumerable.Range(1, 60).Select(i => $"line {i}"));
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Test PR",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "new-sha-after-fix",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new()
+            {
+                FilePath = "/src/Service.cs",
+                ChangeType = "edit",
+                UnifiedDiff = "@@ -10,3 +10,5 @@\n- old\n+ new\n+ added",
+                ModifiedContent = fileContent,
+                ChangedLineRanges = [(10, 15)],
+            }
+        });
+
+        // Seed an active AI thread on line 50 — NOT in the changed line range
+        fakeDevOps.SeedExistingThreads(Project, Repo, PrId, new List<ExistingCommentThread>
+        {
+            new()
+            {
+                ThreadId = 100,
+                FilePath = "/src/Service.cs",
+                StartLine = 50,
+                EndLine = 50,
+                Content = "**Bug.** Potential null reference",
+                Status = 1, // Active
+                IsAiGenerated = true,
+                LeadIn = "Bug",
+                Replies = [],
+            }
+        });
+
+        // Seed prior metadata so this triggers a re-review
+        await fakeDevOps.SetReviewMetadataAsync(Project, Repo, PrId, new ReviewMetadata
+        {
+            ReviewCount = 1,
+            ReviewedAtUtc = DateTime.UtcNow.AddMinutes(-30),
+            LastReviewedSourceCommit = "old-sha",
+            LastReviewedIteration = 1,
+            VoteSubmitted = true,
+        });
+
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId, forceReview: true);
+
+        Assert.AreEqual("Reviewed", result.Status);
+
+        // The thread should have been verified and resolved (FakeCodeReviewService marks all as fixed)
+        var threads = await fakeDevOps.GetExistingReviewThreadsAsync(Project, Repo, PrId);
+        var thread = threads.First(t => t.ThreadId == 100);
+        Assert.AreEqual(2, thread.Status, "Thread should be resolved as Fixed even without line overlap in ChangedLineRanges");
+    }
+
+    [TestMethod]
+    public async Task ReReview_ThreadOnChangedFile_EmptyChangedLineRanges_StillVerified()
+    {
+        // File has no ChangedLineRanges (e.g. empty diff hunks) but is in the diff.
+        // The AI should still verify threads on it.
+        var fakeDevOps = new FakeDevOpsService();
+        var fileContent = string.Join("\n", Enumerable.Range(1, 20).Select(i => $"line {i}"));
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Test PR",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "new-sha-v2",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new()
+            {
+                FilePath = "/src/Handler.cs",
+                ChangeType = "edit",
+                UnifiedDiff = "@@ -1,1 +1,1 @@\n- old\n+ new",
+                ModifiedContent = fileContent,
+                ChangedLineRanges = [], // Empty!
+            }
+        });
+
+        fakeDevOps.SeedExistingThreads(Project, Repo, PrId, new List<ExistingCommentThread>
+        {
+            new()
+            {
+                ThreadId = 200,
+                FilePath = "/src/Handler.cs",
+                StartLine = 5,
+                EndLine = 5,
+                Content = "**Bug.** Missing validation",
+                Status = 1,
+                IsAiGenerated = true,
+                LeadIn = "Bug",
+                Replies = [],
+            }
+        });
+
+        await fakeDevOps.SetReviewMetadataAsync(Project, Repo, PrId, new ReviewMetadata
+        {
+            ReviewCount = 1,
+            ReviewedAtUtc = DateTime.UtcNow.AddMinutes(-30),
+            LastReviewedSourceCommit = "old-sha-v2",
+            LastReviewedIteration = 1,
+            VoteSubmitted = true,
+        });
+
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId, forceReview: true);
+
+        Assert.AreEqual("Reviewed", result.Status);
+
+        var threads = await fakeDevOps.GetExistingReviewThreadsAsync(Project, Repo, PrId);
+        var thread = threads.First(t => t.ThreadId == 200);
+        Assert.AreEqual(2, thread.Status, "Thread should be resolved even with empty ChangedLineRanges");
+    }
+
+    [TestMethod]
+    public async Task ReReview_ThreadNotFixed_RemainsActive()
+    {
+        // AI verification says the thread is NOT fixed — it should remain active.
+        var fakeDevOps = new FakeDevOpsService();
+        var fakeAi = new FakeCodeReviewService();
+
+        // Override verification to mark threads as NOT fixed
+        fakeAi.VerificationResultFactory = candidates => candidates.Select(c => new ThreadVerificationResult
+        {
+            ThreadId = c.ThreadId,
+            IsFixed = false,
+            Reasoning = "Issue still present in code.",
+        }).ToList();
+
+        var fileContent = string.Join("\n", Enumerable.Range(1, 30).Select(i => $"line {i}"));
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Test PR",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "new-sha-v3",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new()
+            {
+                FilePath = "/src/Util.cs",
+                ChangeType = "edit",
+                UnifiedDiff = "@@ -1,1 +1,1 @@\n- old\n+ new",
+                ModifiedContent = fileContent,
+                ChangedLineRanges = [(1, 5)],
+            }
+        });
+
+        fakeDevOps.SeedExistingThreads(Project, Repo, PrId, new List<ExistingCommentThread>
+        {
+            new()
+            {
+                ThreadId = 300,
+                FilePath = "/src/Util.cs",
+                StartLine = 20,
+                EndLine = 20,
+                Content = "**Bug.** SQL injection risk",
+                Status = 1,
+                IsAiGenerated = true,
+                LeadIn = "Bug",
+                Replies = [],
+            }
+        });
+
+        await fakeDevOps.SetReviewMetadataAsync(Project, Repo, PrId, new ReviewMetadata
+        {
+            ReviewCount = 1,
+            ReviewedAtUtc = DateTime.UtcNow.AddMinutes(-30),
+            LastReviewedSourceCommit = "old-sha-v3",
+            LastReviewedIteration = 1,
+            VoteSubmitted = true,
+        });
+
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeAi: fakeAi, fakeDevOps: fakeDevOps);
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId, forceReview: true);
+
+        Assert.AreEqual("Reviewed", result.Status);
+
+        var threads = await fakeDevOps.GetExistingReviewThreadsAsync(Project, Repo, PrId);
+        var thread = threads.First(t => t.ThreadId == 300);
+        Assert.AreEqual(1, thread.Status, "Thread should remain Active when AI verification says NOT fixed");
+    }
+
+    [TestMethod]
+    public async Task ReReview_ThreadOnFileNotInDiff_AutoResolved()
+    {
+        // Thread on a file that is NOT in the current file changes — auto-resolved.
+        var fakeDevOps = new FakeDevOpsService();
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Test PR",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "new-sha-v4",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new()
+            {
+                FilePath = "/src/Other.cs",
+                ChangeType = "edit",
+                UnifiedDiff = "@@ -1,1 +1,1 @@\n- old\n+ new",
+                ModifiedContent = "public class Other { }",
+            }
+        });
+
+        // Thread is on a DIFFERENT file than what's in the diff
+        fakeDevOps.SeedExistingThreads(Project, Repo, PrId, new List<ExistingCommentThread>
+        {
+            new()
+            {
+                ThreadId = 400,
+                FilePath = "/src/Removed.cs",
+                StartLine = 10,
+                EndLine = 10,
+                Content = "**Bug.** Unused variable",
+                Status = 1,
+                IsAiGenerated = true,
+                LeadIn = "Bug",
+                Replies = [],
+            }
+        });
+
+        await fakeDevOps.SetReviewMetadataAsync(Project, Repo, PrId, new ReviewMetadata
+        {
+            ReviewCount = 1,
+            ReviewedAtUtc = DateTime.UtcNow.AddMinutes(-30),
+            LastReviewedSourceCommit = "old-sha-v4",
+            LastReviewedIteration = 1,
+            VoteSubmitted = true,
+        });
+
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId, forceReview: true);
+
+        Assert.AreEqual("Reviewed", result.Status);
+
+        var threads = await fakeDevOps.GetExistingReviewThreadsAsync(Project, Repo, PrId);
+        var thread = threads.First(t => t.ThreadId == 400);
+        Assert.AreEqual(2, thread.Status, "Thread on file no longer in diff should be auto-resolved as Fixed");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════════════════════
 

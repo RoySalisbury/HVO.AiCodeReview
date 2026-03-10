@@ -992,35 +992,31 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     }
                     else
                     {
-                        // File is still changed — check if the specific lines are in a modified range
+                        // File is still in the diff — send ALL active threads for AI verification,
+                        // regardless of whether the exact commented lines overlap a diff hunk.
+                        // The developer may have fixed the issue in nearby code, or the hunk
+                        // boundaries may have shifted. The AI will inspect the current code
+                        // context and determine whether the original issue was actually addressed.
                         var fc = fileChanges.FirstOrDefault(f =>
                             string.Equals(f.FilePath, thread.FilePath, StringComparison.OrdinalIgnoreCase));
-                        if (fc != null && fc.ChangedLineRanges.Count > 0)
+                        if (fc != null)
                         {
-                            bool linesWereModified = fc.ChangedLineRanges.Any(r =>
-                                thread.StartLine >= r.Start && thread.StartLine <= r.End);
-
-                            if (linesWereModified)
+                            var currentCode = ExtractCodeContext(fc.ModifiedContent, thread.StartLine, thread.EndLine, contextLines: 10);
+                            verificationCandidates.Add(new ThreadVerificationCandidate
                             {
-                                // Lines were modified — build a code context window for AI verification
-                                var currentCode = ExtractCodeContext(fc.ModifiedContent, thread.StartLine, thread.EndLine, contextLines: 10);
-                                verificationCandidates.Add(new ThreadVerificationCandidate
-                                {
-                                    ThreadId = thread.ThreadId,
-                                    FilePath = thread.FilePath ?? "",
-                                    StartLine = thread.StartLine,
-                                    EndLine = thread.EndLine,
-                                    OriginalComment = thread.Content,
-                                    CurrentCode = currentCode,
-                                    AuthorReplies = thread.Replies,
-                                });
-                            }
-                            // else: lines unchanged — leave thread active, nothing to verify
+                                ThreadId = thread.ThreadId,
+                                FilePath = thread.FilePath ?? "",
+                                StartLine = thread.StartLine,
+                                EndLine = thread.EndLine,
+                                OriginalComment = thread.Content,
+                                CurrentCode = currentCode,
+                                AuthorReplies = thread.Replies,
+                            });
                         }
                     }
                 }
 
-                // AI-verify candidates whose lines were modified
+                // AI-verify all active threads on changed files
                 if (verificationCandidates.Count > 0)
                 {
                     ReportProgress(progress, ReviewStep.PostingInlineComments,

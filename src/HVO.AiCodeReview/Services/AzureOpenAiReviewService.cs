@@ -1453,10 +1453,27 @@ public class AzureOpenAiReviewService : ICodeReviewService
             sb.AppendLine();
             if (!string.IsNullOrEmpty(file.ModifiedContent))
             {
-                sb.AppendLine("**Current file (modified) — EVERY line starts with its LINE NUMBER (e.g., \"  12 | code\"). Use these for startLine/endLine:**");
-                sb.AppendLine("```");
-                sb.AppendLine(AddLineNumbers(TruncateContent(file.ModifiedContent)));
-                sb.AppendLine("```");
+                var anchorLines = _reviewProfile.DiffAnchoredContextLines;
+                if (anchorLines > 0 && file.ChangedLineRanges.Count > 0)
+                {
+                    var fullLineCount = file.ModifiedContent.Split('\n').Length;
+                    var anchoredContent = ExtractDiffAnchoredContent(TruncateContent(file.ModifiedContent), file.ChangedLineRanges, anchorLines);
+                    var anchoredLineCount = anchoredContent.Split('\n').Length;
+                    _logger.LogDebug("[DiffAnchored] {File}: {AnchoredLines}/{FullLines} lines ({Pct}% of file), {Ranges} changed ranges, ±{Context} context",
+                        file.FilePath, anchoredLineCount, fullLineCount, fullLineCount > 0 ? anchoredLineCount * 100 / fullLineCount : 100,
+                        file.ChangedLineRanges.Count, anchorLines);
+                    sb.AppendLine("**Changed regions with context — EVERY line starts with its actual FILE LINE NUMBER (e.g., \"  12 | code\"). Use these for startLine/endLine. Only the modified regions and surrounding context are shown:**");
+                    sb.AppendLine("```");
+                    sb.AppendLine(anchoredContent);
+                    sb.AppendLine("```");
+                }
+                else
+                {
+                    sb.AppendLine("**Current file (modified) — EVERY line starts with its LINE NUMBER (e.g., \"  12 | code\"). Use these for startLine/endLine:**");
+                    sb.AppendLine("```");
+                    sb.AppendLine(AddLineNumbers(TruncateContent(file.ModifiedContent)));
+                    sb.AppendLine("```");
+                }
             }
         }
 
@@ -1479,6 +1496,70 @@ public class AzureOpenAiReviewService : ICodeReviewService
             numbered.AppendLine(lines[i].TrimEnd('\r'));
         }
         return numbered.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Extract only the regions around changed code hunks, preserving real file line numbers.
+    /// Each region includes <paramref name="contextLines"/> before and after the changed range.
+    /// Adjacent/overlapping regions are merged into a single block.
+    /// </summary>
+    internal static string ExtractDiffAnchoredContent(string content, List<(int Start, int End)> changedRanges, int contextLines)
+    {
+        if (changedRanges.Count == 0 || string.IsNullOrEmpty(content))
+            return AddLineNumbers(content); // Fallback: full file with line numbers
+
+        var lines = content.Split('\n');
+        var totalLines = lines.Length;
+
+        // Expand each changed range by contextLines and clamp to file bounds
+        var expanded = changedRanges
+            .Select(r => (
+                Start: Math.Max(1, r.Start - contextLines),
+                End: Math.Min(totalLines, r.End + contextLines)))
+            .OrderBy(r => r.Start)
+            .ToList();
+
+        // Merge overlapping/adjacent regions
+        var merged = new List<(int Start, int End)>();
+        var current = expanded[0];
+        for (int i = 1; i < expanded.Count; i++)
+        {
+            if (expanded[i].Start <= current.End + 1)
+            {
+                current = (current.Start, Math.Max(current.End, expanded[i].End));
+            }
+            else
+            {
+                merged.Add(current);
+                current = expanded[i];
+            }
+        }
+        merged.Add(current);
+
+        // Build output with real line numbers
+        var sb = new System.Text.StringBuilder();
+        var width = totalLines.ToString().Length;
+
+        for (int r = 0; r < merged.Count; r++)
+        {
+            if (r > 0)
+                sb.AppendLine($"{"".PadLeft(width)} | ... ({merged[r].Start - merged[r - 1].End - 1} lines omitted) ...");
+
+            for (int i = merged[r].Start; i <= merged[r].End && i <= totalLines; i++)
+            {
+                sb.Append(i.ToString().PadLeft(width));
+                sb.Append(" | ");
+                sb.AppendLine(lines[i - 1].TrimEnd('\r')); // 1-based to 0-based index
+            }
+        }
+
+        // Indicate if content extends beyond the last region
+        if (merged[^1].End < totalLines)
+        {
+            sb.AppendLine($"{"".PadLeft(width)} | ... ({totalLines - merged[^1].End} lines omitted) ...");
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
     /// <summary>

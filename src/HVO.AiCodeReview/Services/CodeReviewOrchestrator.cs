@@ -167,9 +167,9 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             var currentIteration = await _devOpsService.GetIterationCountAsync(project, repository, pullRequestId);
 
             _logger.LogInformation(
-                "PR #{PrId}: '{Title}' by {Author} | Draft={IsDraft} | SourceCommit={Commit} | Iteration={Iter}",
+                "PR #{PrId}: '{Title}' by {Author} | Draft={IsDraft} | Status={Status} | SourceCommit={Commit} | Iteration={Iter}",
                 prInfo.PullRequestId, prInfo.Title, prInfo.CreatedBy,
-                prInfo.IsDraft, prInfo.LastMergeSourceCommit, currentIteration);
+                prInfo.IsDraft, prInfo.Status, prInfo.LastMergeSourceCommit, currentIteration);
 
             // ── Step 2: Decide what action to take ──────────────────────────
             var action = (forceReview || simulationOnly)
@@ -291,7 +291,14 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         };
 
         // Store in PR properties (canonical source of truth)
-        await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, skipEntry);
+        try
+        {
+            await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, skipEntry);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to append review history for PR #{PrId}.", pullRequestId);
+        }
 
         // Also append to PR description (visual convenience)
         await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, skipEntry);
@@ -340,36 +347,43 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Update metadata to reflect vote was submitted
         if (!voteFailed)
         {
-            metadata.VoteSubmitted = true;
-            metadata.WasDraft = false;
-
-            // Derive review number from history (resilient to metadata resets)
-            var existingHistory = await _devOpsService.GetReviewHistoryAsync(project, repository, pullRequestId);
-            var nextReviewNumber = existingHistory.Count + 1;
-
-            metadata.ReviewCount = nextReviewNumber;
-            metadata.ReviewedAtUtc = DateTime.UtcNow;
-            await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, metadata);
-
-            // Append to PR description history
-            var voteHistory = new ReviewHistoryEntry
+            try
             {
-                SessionId = session.SessionId,
-                ReviewNumber = nextReviewNumber,
-                ReviewedAtUtc = metadata.ReviewedAtUtc,
-                Action = "Vote Only",
-                Verdict = "Approved w/ Suggestions (vote)",
-                Vote = vote,
-                SourceCommit = prInfo.LastMergeSourceCommit,
-                Iteration = await _devOpsService.GetIterationCountAsync(project, repository, pullRequestId),
-                IsDraft = false,
-                InlineComments = 0,
-                FilesChanged = 0,
-            };
-            // Store in PR properties (canonical source of truth)
-            await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, voteHistory);
-            // Also append to PR description (visual convenience)
-            await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, voteHistory);
+                metadata.VoteSubmitted = true;
+                metadata.WasDraft = false;
+
+                // Derive review number from history (resilient to metadata resets)
+                var existingHistory = await _devOpsService.GetReviewHistoryAsync(project, repository, pullRequestId);
+                var nextReviewNumber = existingHistory.Count + 1;
+
+                metadata.ReviewCount = nextReviewNumber;
+                metadata.ReviewedAtUtc = DateTime.UtcNow;
+                await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, metadata);
+
+                // Append to PR description history
+                var voteHistory = new ReviewHistoryEntry
+                {
+                    SessionId = session.SessionId,
+                    ReviewNumber = nextReviewNumber,
+                    ReviewedAtUtc = metadata.ReviewedAtUtc,
+                    Action = "Vote Only",
+                    Verdict = "Approved w/ Suggestions (vote)",
+                    Vote = vote,
+                    SourceCommit = prInfo.LastMergeSourceCommit,
+                    Iteration = await _devOpsService.GetIterationCountAsync(project, repository, pullRequestId),
+                    IsDraft = false,
+                    InlineComments = 0,
+                    FilesChanged = 0,
+                };
+                // Store in PR properties (canonical source of truth)
+                await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, voteHistory);
+                // Also append to PR description (visual convenience)
+                await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, voteHistory);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Non-fatal: failed to record vote metadata for PR #{PrId}.", pullRequestId);
+            }
         }
 
         // Record in rate limiter
@@ -562,9 +576,16 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                       string.Join("\n", skippedFiles.Select(f => $"> - `{f.FilePath}` — {f.SkipReason}"))
                     : "";
 
-                await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
-                    "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR." + skipDetail,
-                    "closed");
+                try
+                {
+                    await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
+                        "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR." + skipDetail,
+                        "closed");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Non-fatal: failed to post 'no files' comment for PR #{PrId}.", pullRequestId);
+                }
 
                 var noFilesHistory = new ReviewHistoryEntry
                 {
@@ -992,35 +1013,31 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                     }
                     else
                     {
-                        // File is still changed — check if the specific lines are in a modified range
+                        // File is still in the diff — send ALL active threads for AI verification,
+                        // regardless of whether the exact commented lines overlap a diff hunk.
+                        // The developer may have fixed the issue in nearby code, or the hunk
+                        // boundaries may have shifted. The AI will inspect the current code
+                        // context and determine whether the original issue was actually addressed.
                         var fc = fileChanges.FirstOrDefault(f =>
                             string.Equals(f.FilePath, thread.FilePath, StringComparison.OrdinalIgnoreCase));
-                        if (fc != null && fc.ChangedLineRanges.Count > 0)
+                        if (fc != null)
                         {
-                            bool linesWereModified = fc.ChangedLineRanges.Any(r =>
-                                thread.StartLine >= r.Start && thread.StartLine <= r.End);
-
-                            if (linesWereModified)
+                            var currentCode = ExtractCodeContext(fc.ModifiedContent, thread.StartLine, thread.EndLine, contextLines: 10);
+                            verificationCandidates.Add(new ThreadVerificationCandidate
                             {
-                                // Lines were modified — build a code context window for AI verification
-                                var currentCode = ExtractCodeContext(fc.ModifiedContent, thread.StartLine, thread.EndLine, contextLines: 10);
-                                verificationCandidates.Add(new ThreadVerificationCandidate
-                                {
-                                    ThreadId = thread.ThreadId,
-                                    FilePath = thread.FilePath ?? "",
-                                    StartLine = thread.StartLine,
-                                    EndLine = thread.EndLine,
-                                    OriginalComment = thread.Content,
-                                    CurrentCode = currentCode,
-                                    AuthorReplies = thread.Replies,
-                                });
-                            }
-                            // else: lines unchanged — leave thread active, nothing to verify
+                                ThreadId = thread.ThreadId,
+                                FilePath = thread.FilePath ?? "",
+                                StartLine = thread.StartLine,
+                                EndLine = thread.EndLine,
+                                OriginalComment = thread.Content,
+                                CurrentCode = currentCode,
+                                AuthorReplies = thread.Replies,
+                            });
                         }
                     }
                 }
 
-                // AI-verify candidates whose lines were modified
+                // AI-verify all active threads on changed files
                 if (verificationCandidates.Count > 0)
                 {
                     ReportProgress(progress, ReviewStep.PostingInlineComments,
@@ -1184,8 +1201,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
             reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo,
             securityAnalysis);
-        await _devOpsService.PostCommentThreadAsync(
-            project, repository, pullRequestId, summaryMarkdown, "closed");
+        try
+        {
+            await _devOpsService.PostCommentThreadAsync(
+                project, repository, pullRequestId, summaryMarkdown, "closed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to post summary comment for PR #{PrId}.", pullRequestId);
+        }
 
         return summaryMarkdown;
     }
@@ -1875,12 +1899,26 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             VoteSubmitted = voteSubmitted,
             ReviewCount = newCount,
         };
-        await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, newMetadata);
+        try
+        {
+            await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, newMetadata);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to set review metadata for PR #{PrId}.", pullRequestId);
+        }
 
         // Ensure tag is present (decorative — for PR list filtering; not used for decisions)
-        if (!await _devOpsService.HasReviewTagAsync(project, repository, pullRequestId))
+        try
         {
-            await _devOpsService.AddReviewTagAsync(project, repository, pullRequestId);
+            if (!await _devOpsService.HasReviewTagAsync(project, repository, pullRequestId))
+            {
+                await _devOpsService.AddReviewTagAsync(project, repository, pullRequestId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to add review tag for PR #{PrId}.", pullRequestId);
         }
 
         // Append review history to PR description
@@ -1890,7 +1928,14 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             historyEntry.ReviewedAtUtc = newMetadata.ReviewedAtUtc;
 
             // Store in PR properties (canonical source of truth)
-            await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, historyEntry);
+            try
+            {
+                await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, historyEntry);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Non-fatal: failed to append review history for PR #{PrId}.", pullRequestId);
+            }
 
             // Also append to PR description (visual convenience)
             await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, historyEntry);
@@ -2581,7 +2626,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 };
                 // Escape pipes in text for table formatting
                 var criterion = item.Criterion.Replace("|", "\\|");
-                var evidence = item.Evidence.Replace("|", "\\|");
+                var rawEvidence = item.Evidence.Replace("|", "\\|");
+                var evidence = rawEvidence.Length > 300 ? rawEvidence[..297] + "..." : rawEvidence;
                 sb.AppendLine($"| {icon} {item.Status} | {criterion} | {evidence} |");
             }
             sb.AppendLine();
@@ -3010,8 +3056,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 .Select(g =>
                 {
                     var items = g.ToList();
-                    // Combine evidence from all files
-                    var allEvidence = items.Select(a => a.Evidence).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct();
+                    // Combine evidence from all files — keep only distinct, short entries (max 3)
+                    var allEvidence = items
+                        .Select(a => a.Evidence)
+                        .Where(e => !string.IsNullOrWhiteSpace(e))
+                        .Select(e => e.Length > 200 ? e[..197] + "..." : e)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(3);
 
                     string mergedStatus;
                     if (items.Count == 1)

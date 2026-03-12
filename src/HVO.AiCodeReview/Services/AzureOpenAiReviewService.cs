@@ -1124,7 +1124,8 @@ public class AzureOpenAiReviewService : ICodeReviewService
                a) State whether the PR code changes address it ("Addressed"), partially address
                   it ("Partially Addressed"), don't address it ("Not Addressed"), or if you
                   can't tell from the code alone ("Cannot Determine").
-               b) Cite specific files/code as evidence.
+               b) Evidence MUST be ONE brief sentence (max 30 words). Cite 1-2 key files;
+                  do NOT list every file. Example: "Binding redirects updated in Web.config."
                c) "Cannot Determine" is for criteria that require runtime verification, external
                   system checks, or manual testing (e.g., "event visible in dashboard").
                d) If NO linked work items or AC are provided, omit the acceptanceCriteriaAnalysis
@@ -1278,6 +1279,7 @@ public class AzureOpenAiReviewService : ICodeReviewService
                 "acceptanceCriteriaAnalysis" ONLY with AC items relevant to THIS specific file.
                 Skip AC items that don't relate to this file's purpose. If NO AC items are relevant
                 to this file, omit the field entirely. If NO work items were provided, omit it.
+                Evidence MUST be ONE brief sentence (max 30 words) — do NOT repeat the criterion text.
             """;
 
     private string BuildUserPrompt(PullRequestInfo pr, List<FileChange> fileChanges, List<WorkItemInfo>? workItems = null)

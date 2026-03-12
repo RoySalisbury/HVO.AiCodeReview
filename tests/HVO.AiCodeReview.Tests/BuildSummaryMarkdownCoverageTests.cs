@@ -438,6 +438,31 @@ public class BuildSummaryMarkdownCoverageTests
         Assert.IsFalse(md.Contains("Acceptance Criteria"), "Should omit AC section entirely");
     }
 
+    [TestMethod]
+    public void AcAnalysis_LongEvidence_TruncatedInMarkdown()
+    {
+        var result = MakeResult("APPROVED");
+        var longEvidence = new string('A', 500);
+        result.AcceptanceCriteriaAnalysis = new AcceptanceCriteriaAnalysis
+        {
+            Summary = "AC coverage review.",
+            Items = new List<AcceptanceCriteriaItem>
+            {
+                new() { Criterion = "Long evidence", Status = "Addressed", Evidence = longEvidence },
+            }
+        };
+        var workItems = new List<WorkItemInfo>
+        {
+            new() { Id = 1, WorkItemType = "Story", Title = "T", AcceptanceCriteria = "AC" }
+        };
+
+        var md = CodeReviewOrchestrator.BuildSummaryMarkdown(42, result, workItems: workItems);
+
+        // Evidence in the rendered markdown should be truncated
+        Assert.IsFalse(md.Contains(longEvidence), "Full 500-char evidence should not appear in markdown");
+        Assert.IsTrue(md.Contains("..."), "Truncated evidence should end with ellipsis");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Review number label
     // ═══════════════════════════════════════════════════════════════════

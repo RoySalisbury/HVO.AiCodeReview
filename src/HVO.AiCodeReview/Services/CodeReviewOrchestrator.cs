@@ -2577,7 +2577,8 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 };
                 // Escape pipes in text for table formatting
                 var criterion = item.Criterion.Replace("|", "\\|");
-                var evidence = item.Evidence.Replace("|", "\\|");
+                var rawEvidence = item.Evidence.Replace("|", "\\|");
+                var evidence = rawEvidence.Length > 300 ? rawEvidence[..297] + "..." : rawEvidence;
                 sb.AppendLine($"| {icon} {item.Status} | {criterion} | {evidence} |");
             }
             sb.AppendLine();
@@ -3006,8 +3007,13 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 .Select(g =>
                 {
                     var items = g.ToList();
-                    // Combine evidence from all files
-                    var allEvidence = items.Select(a => a.Evidence).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct();
+                    // Combine evidence from all files — keep only distinct, short entries (max 3)
+                    var allEvidence = items
+                        .Select(a => a.Evidence)
+                        .Where(e => !string.IsNullOrWhiteSpace(e))
+                        .Select(e => e.Length > 200 ? e[..197] + "..." : e)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(3);
 
                     string mergedStatus;
                     if (items.Count == 1)

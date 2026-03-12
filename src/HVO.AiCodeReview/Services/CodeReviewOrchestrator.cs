@@ -1002,6 +1002,12 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                         if (fc != null)
                         {
                             var currentCode = ExtractCodeContext(fc.ModifiedContent, thread.StartLine, thread.EndLine, contextLines: 10);
+                            if (string.IsNullOrWhiteSpace(currentCode))
+                            {
+                                // Ensure the verifier receives deterministic input even when the
+                                // requested lines no longer exist in the modified file content.
+                                currentCode = $"(Lines {thread.StartLine}-{thread.EndLine} no longer exist in the current file)";
+                            }
                             verificationCandidates.Add(new ThreadVerificationCandidate
                             {
                                 ThreadId = thread.ThreadId,

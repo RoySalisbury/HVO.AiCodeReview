@@ -1006,7 +1006,7 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                             {
                                 // Ensure the verifier receives deterministic input even when the
                                 // requested lines no longer exist in the modified file content.
-                                currentCode = "(requested lines out of range)";
+                                currentCode = $"(Lines {thread.StartLine}-{thread.EndLine} no longer exist in the current file)";
                             }
                             verificationCandidates.Add(new ThreadVerificationCandidate
                             {

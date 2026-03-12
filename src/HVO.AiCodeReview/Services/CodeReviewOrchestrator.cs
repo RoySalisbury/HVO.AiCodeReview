@@ -171,15 +171,6 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                 prInfo.PullRequestId, prInfo.Title, prInfo.CreatedBy,
                 prInfo.IsDraft, prInfo.Status, prInfo.LastMergeSourceCommit, currentIteration);
 
-            // ── Completed / abandoned PRs: run review but skip all ADO writes ──
-            if (!simulationOnly && prInfo.Status is "completed" or "abandoned")
-            {
-                _logger.LogInformation(
-                    "PR #{PrId} status is '{Status}' — promoting to simulation mode (no ADO updates will be posted).",
-                    pullRequestId, prInfo.Status);
-                simulationOnly = true;
-            }
-
             // ── Step 2: Decide what action to take ──────────────────────────
             var action = (forceReview || simulationOnly)
                 ? (metadata.HasPreviousReview ? ReviewAction.ReReview : ReviewAction.FullReview)
@@ -300,7 +291,14 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         };
 
         // Store in PR properties (canonical source of truth)
-        await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, skipEntry);
+        try
+        {
+            await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, skipEntry);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to append review history for PR #{PrId}.", pullRequestId);
+        }
 
         // Also append to PR description (visual convenience)
         await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, skipEntry);
@@ -349,36 +347,43 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
         // Update metadata to reflect vote was submitted
         if (!voteFailed)
         {
-            metadata.VoteSubmitted = true;
-            metadata.WasDraft = false;
-
-            // Derive review number from history (resilient to metadata resets)
-            var existingHistory = await _devOpsService.GetReviewHistoryAsync(project, repository, pullRequestId);
-            var nextReviewNumber = existingHistory.Count + 1;
-
-            metadata.ReviewCount = nextReviewNumber;
-            metadata.ReviewedAtUtc = DateTime.UtcNow;
-            await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, metadata);
-
-            // Append to PR description history
-            var voteHistory = new ReviewHistoryEntry
+            try
             {
-                SessionId = session.SessionId,
-                ReviewNumber = nextReviewNumber,
-                ReviewedAtUtc = metadata.ReviewedAtUtc,
-                Action = "Vote Only",
-                Verdict = "Approved w/ Suggestions (vote)",
-                Vote = vote,
-                SourceCommit = prInfo.LastMergeSourceCommit,
-                Iteration = await _devOpsService.GetIterationCountAsync(project, repository, pullRequestId),
-                IsDraft = false,
-                InlineComments = 0,
-                FilesChanged = 0,
-            };
-            // Store in PR properties (canonical source of truth)
-            await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, voteHistory);
-            // Also append to PR description (visual convenience)
-            await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, voteHistory);
+                metadata.VoteSubmitted = true;
+                metadata.WasDraft = false;
+
+                // Derive review number from history (resilient to metadata resets)
+                var existingHistory = await _devOpsService.GetReviewHistoryAsync(project, repository, pullRequestId);
+                var nextReviewNumber = existingHistory.Count + 1;
+
+                metadata.ReviewCount = nextReviewNumber;
+                metadata.ReviewedAtUtc = DateTime.UtcNow;
+                await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, metadata);
+
+                // Append to PR description history
+                var voteHistory = new ReviewHistoryEntry
+                {
+                    SessionId = session.SessionId,
+                    ReviewNumber = nextReviewNumber,
+                    ReviewedAtUtc = metadata.ReviewedAtUtc,
+                    Action = "Vote Only",
+                    Verdict = "Approved w/ Suggestions (vote)",
+                    Vote = vote,
+                    SourceCommit = prInfo.LastMergeSourceCommit,
+                    Iteration = await _devOpsService.GetIterationCountAsync(project, repository, pullRequestId),
+                    IsDraft = false,
+                    InlineComments = 0,
+                    FilesChanged = 0,
+                };
+                // Store in PR properties (canonical source of truth)
+                await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, voteHistory);
+                // Also append to PR description (visual convenience)
+                await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, voteHistory);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Non-fatal: failed to record vote metadata for PR #{PrId}.", pullRequestId);
+            }
         }
 
         // Record in rate limiter
@@ -571,9 +576,16 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
                       string.Join("\n", skippedFiles.Select(f => $"> - `{f.FilePath}` — {f.SkipReason}"))
                     : "";
 
-                await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
-                    "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR." + skipDetail,
-                    "closed");
+                try
+                {
+                    await _devOpsService.PostCommentThreadAsync(project, repository, pullRequestId,
+                        "## Code Review -- PR " + pullRequestId + "\n\nNo reviewable file changes found in this PR." + skipDetail,
+                        "closed");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Non-fatal: failed to post 'no files' comment for PR #{PrId}.", pullRequestId);
+                }
 
                 var noFilesHistory = new ReviewHistoryEntry
                 {
@@ -1189,8 +1201,15 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             nextReviewNumber, isReReview ? metadata : null, workItems, skippedFiles, prSummary,
             reviewDepth, deepAnalysis, sizeWarning, session?.SessionId, testCoverageGaps, deltaInfo,
             securityAnalysis);
-        await _devOpsService.PostCommentThreadAsync(
-            project, repository, pullRequestId, summaryMarkdown, "closed");
+        try
+        {
+            await _devOpsService.PostCommentThreadAsync(
+                project, repository, pullRequestId, summaryMarkdown, "closed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to post summary comment for PR #{PrId}.", pullRequestId);
+        }
 
         return summaryMarkdown;
     }
@@ -1880,12 +1899,26 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             VoteSubmitted = voteSubmitted,
             ReviewCount = newCount,
         };
-        await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, newMetadata);
+        try
+        {
+            await _devOpsService.SetReviewMetadataAsync(project, repository, pullRequestId, newMetadata);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to set review metadata for PR #{PrId}.", pullRequestId);
+        }
 
         // Ensure tag is present (decorative — for PR list filtering; not used for decisions)
-        if (!await _devOpsService.HasReviewTagAsync(project, repository, pullRequestId))
+        try
         {
-            await _devOpsService.AddReviewTagAsync(project, repository, pullRequestId);
+            if (!await _devOpsService.HasReviewTagAsync(project, repository, pullRequestId))
+            {
+                await _devOpsService.AddReviewTagAsync(project, repository, pullRequestId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Non-fatal: failed to add review tag for PR #{PrId}.", pullRequestId);
         }
 
         // Append review history to PR description
@@ -1895,7 +1928,14 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             historyEntry.ReviewedAtUtc = newMetadata.ReviewedAtUtc;
 
             // Store in PR properties (canonical source of truth)
-            await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, historyEntry);
+            try
+            {
+                await _devOpsService.AppendReviewHistoryAsync(project, repository, pullRequestId, historyEntry);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Non-fatal: failed to append review history for PR #{PrId}.", pullRequestId);
+            }
 
             // Also append to PR description (visual convenience)
             await AppendReviewHistoryToDescriptionAsync(project, repository, pullRequestId, prInfo, historyEntry);

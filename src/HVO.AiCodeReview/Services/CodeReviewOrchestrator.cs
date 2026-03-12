@@ -167,9 +167,18 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             var currentIteration = await _devOpsService.GetIterationCountAsync(project, repository, pullRequestId);
 
             _logger.LogInformation(
-                "PR #{PrId}: '{Title}' by {Author} | Draft={IsDraft} | SourceCommit={Commit} | Iteration={Iter}",
+                "PR #{PrId}: '{Title}' by {Author} | Draft={IsDraft} | Status={Status} | SourceCommit={Commit} | Iteration={Iter}",
                 prInfo.PullRequestId, prInfo.Title, prInfo.CreatedBy,
-                prInfo.IsDraft, prInfo.LastMergeSourceCommit, currentIteration);
+                prInfo.IsDraft, prInfo.Status, prInfo.LastMergeSourceCommit, currentIteration);
+
+            // ── Completed / abandoned PRs: run review but skip all ADO writes ──
+            if (!simulationOnly && prInfo.Status is "completed" or "abandoned")
+            {
+                _logger.LogInformation(
+                    "PR #{PrId} status is '{Status}' — promoting to simulation mode (no ADO updates will be posted).",
+                    pullRequestId, prInfo.Status);
+                simulationOnly = true;
+            }
 
             // ── Step 2: Decide what action to take ──────────────────────────
             var action = (forceReview || simulationOnly)

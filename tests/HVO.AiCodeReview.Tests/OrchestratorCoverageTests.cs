@@ -760,6 +760,119 @@ public class OrchestratorCoverageTests
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Completed / abandoned PR handling
+    // ═══════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    public async Task CompletedPr_PromotesToSimulation_NoAdoWrites()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Completed PR",
+            Status = "completed",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "abc123",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new() { FilePath = "src/Test.cs", ChangeType = "edit", UnifiedDiff = "- old\n+ new", ModifiedContent = "public class Test { }" }
+        });
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId);
+
+        Assert.AreEqual("Simulated", result.Status, "Completed PR should be promoted to simulation");
+        Assert.AreEqual(0, fakeDevOps.PostedComments(Project, Repo, PrId).Count, "Should not post comments to completed PR");
+        Assert.IsNull(fakeDevOps.LastVote(Project, Repo, PrId), "Should not vote on completed PR");
+    }
+
+    [TestMethod]
+    public async Task AbandonedPr_PromotesToSimulation_NoAdoWrites()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Abandoned PR",
+            Status = "abandoned",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "abc123",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new() { FilePath = "src/Test.cs", ChangeType = "edit", UnifiedDiff = "- old\n+ new", ModifiedContent = "public class Test { }" }
+        });
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId);
+
+        Assert.AreEqual("Simulated", result.Status, "Abandoned PR should be promoted to simulation");
+        Assert.AreEqual(0, fakeDevOps.PostedComments(Project, Repo, PrId).Count, "Should not post comments to abandoned PR");
+        Assert.IsNull(fakeDevOps.LastVote(Project, Repo, PrId), "Should not vote on abandoned PR");
+    }
+
+    [TestMethod]
+    public async Task CompletedPr_StillReturnsReviewResults()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Completed PR",
+            Status = "completed",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "abc123",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new() { FilePath = "src/Test.cs", ChangeType = "edit", UnifiedDiff = "- old\n+ new", ModifiedContent = "public class Test { }" }
+        });
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId);
+
+        Assert.IsNotNull(result.Summary, "Should still produce a summary for completed PR");
+        Assert.IsNotNull(result.Recommendation, "Should still produce a recommendation for completed PR");
+    }
+
+    [TestMethod]
+    public async Task ActivePr_NotPromotedToSimulation()
+    {
+        var fakeDevOps = new FakeDevOpsService();
+        var pr = new PullRequestInfo
+        {
+            PullRequestId = PrId,
+            Title = "Active PR",
+            Status = "active",
+            SourceBranch = "refs/heads/feature",
+            TargetBranch = "refs/heads/main",
+            LastMergeSourceCommit = "abc123",
+            CreatedBy = "tester",
+        };
+        fakeDevOps.SeedPullRequest(Project, Repo, pr);
+        fakeDevOps.SeedFileChanges(Project, Repo, PrId, new List<FileChange>
+        {
+            new() { FilePath = "src/Test.cs", ChangeType = "edit", UnifiedDiff = "- old\n+ new", ModifiedContent = "public class Test { }" }
+        });
+        await using var ctx = TestServiceBuilder.BuildFullyFake(fakeDevOps: fakeDevOps);
+
+        var result = await ctx.Orchestrator.ExecuteReviewAsync(Project, Repo, PrId);
+
+        Assert.AreEqual("Reviewed", result.Status, "Active PR should be reviewed normally, not simulated");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════════════════════
 

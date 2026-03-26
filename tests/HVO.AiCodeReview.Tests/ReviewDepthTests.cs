@@ -10,6 +10,7 @@ namespace AiCodeReview.Tests;
 /// and the Quick/Deep specific code paths.
 /// </summary>
 [TestClass]
+[Ignore("Disabled: using fakes only — re-enable when live DevOps repo creation is needed")]
 public class ReviewDepthTests
 {
     // ═══════════════════════════════════════════════════════════════════════

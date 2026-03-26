@@ -58,6 +58,15 @@ public class OrchestratorInternalTests
         Assert.IsTrue(result.Contains("c"));
     }
 
+    [TestMethod]
+    public void ExtractCodeContext_LinesBeyondFileEnd_ReturnsFallback()
+    {
+        var content = "a\nb\nc";
+        var result = CodeReviewOrchestrator.ExtractCodeContext(content, 50, 55);
+        StringAssert.Contains(result, "beyond file end");
+        StringAssert.Contains(result, "3 lines");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  BuildThreadReply
     // ═══════════════════════════════════════════════════════════════════
@@ -358,6 +367,53 @@ public class OrchestratorInternalTests
         // Conflicting statuses should downgrade to "Partially Addressed"
         var loginCriterion = merged.AcceptanceCriteriaAnalysis.Items.First(i => i.Criterion == "Login form shown");
         Assert.AreEqual("Partially Addressed", loginCriterion.Status);
+    }
+
+    [TestMethod]
+    public void MergeBatchResults_AcEvidence_LimitedToThreeEntries()
+    {
+        var batches = Enumerable.Range(1, 6).Select(i =>
+        {
+            var b = MakeBatchResult("Approved", 10, Array.Empty<string>());
+            b.AcceptanceCriteriaAnalysis = new AcceptanceCriteriaAnalysis
+            {
+                Items = new List<AcceptanceCriteriaItem>
+                {
+                    new() { Criterion = "Security updates applied", Status = "Addressed", Evidence = $"Updated in File{i}.config" },
+                }
+            };
+            return b;
+        }).ToList();
+
+        var merged = CodeReviewOrchestrator.MergeBatchResults(batches, 6);
+
+        var item = merged.AcceptanceCriteriaAnalysis!.Items.Single();
+        // Evidence should be capped at 3 entries joined by " | "
+        var parts = item.Evidence.Split(" | ");
+        Assert.IsTrue(parts.Length <= 3, $"Expected at most 3 evidence entries but got {parts.Length}: {item.Evidence}");
+    }
+
+    [TestMethod]
+    public void MergeBatchResults_AcEvidence_LongEntriesTruncated()
+    {
+        var longEvidence = new string('x', 300);
+        var b1 = MakeBatchResult("Approved", 10, Array.Empty<string>());
+        b1.AcceptanceCriteriaAnalysis = new AcceptanceCriteriaAnalysis
+        {
+            Items = new List<AcceptanceCriteriaItem>
+            {
+                new() { Criterion = "Long evidence test", Status = "Addressed", Evidence = longEvidence },
+            }
+        };
+
+        // Need 2+ batch results to exercise the merge path (single batch returns as-is)
+        var b2 = MakeBatchResult("Approved", 10, Array.Empty<string>());
+
+        var merged = CodeReviewOrchestrator.MergeBatchResults(new List<CodeReviewResult> { b1, b2 }, 2);
+
+        var item = merged.AcceptanceCriteriaAnalysis!.Items.Single();
+        Assert.IsTrue(item.Evidence.Length <= 200, $"Expected evidence truncated to 200 chars but got {item.Evidence.Length}");
+        Assert.IsTrue(item.Evidence.EndsWith("..."), "Truncated evidence should end with ellipsis");
     }
 
     [TestMethod]

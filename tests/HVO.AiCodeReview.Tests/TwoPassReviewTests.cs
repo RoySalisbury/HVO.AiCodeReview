@@ -483,6 +483,97 @@ public class TwoPassReviewTests
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    //  ExtractDiffAnchoredContent (static helper)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [TestMethod]
+    [TestCategory("Unit")]
+    public void ExtractDiffAnchoredContent_PreservesRealLineNumbers()
+    {
+        // 20-line file, change at lines 10-11, context = 3
+        var content = string.Join('\n', Enumerable.Range(1, 20).Select(i => $"code line {i}"));
+        var ranges = new List<(int Start, int End)> { (10, 11) };
+
+        var result = AzureOpenAiReviewService.ExtractDiffAnchoredContent(content, ranges, contextLines: 3);
+
+        // Should show lines 7-14 (10-3=7, 11+3=14) with real line numbers
+        Assert.IsTrue(result.Contains(" 7 | code line 7"), "Must include line 7 with real number");
+        Assert.IsTrue(result.Contains("10 | code line 10"), "Must include line 10 with real number");
+        Assert.IsTrue(result.Contains("11 | code line 11"), "Must include line 11 with real number");
+        Assert.IsTrue(result.Contains("14 | code line 14"), "Must include line 14 with real number");
+        // Should NOT include lines far from the change
+        Assert.IsFalse(result.Contains("code line 1\n"), "Must NOT include line 1 content");
+        Assert.IsFalse(result.Contains("code line 20"), "Must NOT include line 20 content");
+    }
+
+    [TestMethod]
+    [TestCategory("Unit")]
+    public void ExtractDiffAnchoredContent_MergesOverlappingRegions()
+    {
+        // 50-line file, changes at lines 10-12 and 15-17, context = 5
+        // Region 1: 5-17, Region 2: 10-22 → overlaps → merged to 5-22
+        var content = string.Join('\n', Enumerable.Range(1, 50).Select(i => $"line {i}"));
+        var ranges = new List<(int Start, int End)> { (10, 12), (15, 17) };
+
+        var result = AzureOpenAiReviewService.ExtractDiffAnchoredContent(content, ranges, contextLines: 5);
+
+        // Should be one continuous block from 5-22
+        Assert.IsTrue(result.Contains(" 5 | line 5"), "Must include line 5");
+        Assert.IsTrue(result.Contains("22 | line 22"), "Must include line 22");
+        // Should not have omission markers between the merged regions
+        var omissionCount = result.Split("lines omitted").Length - 1;
+        // Only trailing omission expected (lines 23-50)
+        Assert.AreEqual(1, omissionCount, "Should have only trailing omission, no mid-gap");
+    }
+
+    [TestMethod]
+    [TestCategory("Unit")]
+    public void ExtractDiffAnchoredContent_ShowsOmissionBetweenDisjointRegions()
+    {
+        // 100-line file, changes at lines 10-12 and 80-82, context = 3
+        var content = string.Join('\n', Enumerable.Range(1, 100).Select(i => $"line {i}"));
+        var ranges = new List<(int Start, int End)> { (10, 12), (80, 82) };
+
+        var result = AzureOpenAiReviewService.ExtractDiffAnchoredContent(content, ranges, contextLines: 3);
+
+        // Should have two regions with omission between them
+        Assert.IsTrue(result.Contains(" 7 | line 7"), "Region 1 starts at line 7");
+        Assert.IsTrue(result.Contains("15 | line 15"), "Region 1 ends at line 15");
+        Assert.IsTrue(result.Contains("77 | line 77"), "Region 2 starts at line 77");
+        Assert.IsTrue(result.Contains("85 | line 85"), "Region 2 ends at line 85");
+        Assert.IsTrue(result.Contains("lines omitted"), "Must indicate omitted lines between regions");
+    }
+
+    [TestMethod]
+    [TestCategory("Unit")]
+    public void ExtractDiffAnchoredContent_ClampsToFileBounds()
+    {
+        // 10-line file, change at lines 1-2, context = 5
+        var content = string.Join('\n', Enumerable.Range(1, 10).Select(i => $"line {i}"));
+        var ranges = new List<(int Start, int End)> { (1, 2) };
+
+        var result = AzureOpenAiReviewService.ExtractDiffAnchoredContent(content, ranges, contextLines: 5);
+
+        // Should start at line 1 (clamped from -4) and include through line 7
+        Assert.IsTrue(result.Contains("1 | line 1"), "Must start at line 1");
+        Assert.IsTrue(result.Contains("7 | line 7"), "Must include line 7");
+    }
+
+    [TestMethod]
+    [TestCategory("Unit")]
+    public void ExtractDiffAnchoredContent_EmptyRanges_FallsBackToFullFile()
+    {
+        var content = "line 1\nline 2\nline 3";
+        var ranges = new List<(int Start, int End)>();
+
+        var result = AzureOpenAiReviewService.ExtractDiffAnchoredContent(content, ranges, contextLines: 3);
+
+        // Should fall back to full file with line numbers
+        Assert.IsTrue(result.Contains("1 | line 1"), "Fallback must include line 1");
+        Assert.IsTrue(result.Contains("3 | line 3"), "Fallback must include line 3");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════════════════════════
 

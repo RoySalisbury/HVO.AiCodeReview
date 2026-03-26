@@ -113,6 +113,7 @@ public sealed class ModelAdapterResolver
             MaxOutputTokensPrSummary = adapter.MaxOutputTokensPrSummary ?? baseProfile.MaxOutputTokensPrSummary,
             // Preserve non-adapter-controlled properties from the base profile
             VerdictThresholds = baseProfile.VerdictThresholds,
+            DiffAnchoredContextLines = baseProfile.DiffAnchoredContextLines,
         };
     }
 

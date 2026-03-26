@@ -47,6 +47,16 @@ public class ReviewProfile
     public int MaxOutputTokensDeepAnalysis { get; set; } = 6000;
 
     /// <summary>
+    /// Number of context lines to include around each changed hunk in Pass 2.
+    /// When &gt; 0, only the changed regions plus this many surrounding lines are
+    /// sent instead of the full modified file — significantly reducing prompt tokens
+    /// while preserving actual file line numbers.
+    /// Set to 0 to send the full modified file (legacy behaviour).
+    /// Default: 0 (disabled).
+    /// </summary>
+    public int DiffAnchoredContextLines { get; set; } = 0;
+
+    /// <summary>
     /// Verdict threshold configuration for future system-level verdict overrides.
     /// Currently aspirational — the AI determines the verdict in its JSON response.
     /// </summary>

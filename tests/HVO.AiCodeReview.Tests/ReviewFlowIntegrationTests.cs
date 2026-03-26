@@ -35,6 +35,7 @@ namespace AiCodeReview.Tests;
 /// </summary>
 [TestCategory("LiveDevOps")]
 [TestClass]
+[Ignore("Disabled: using fakes only — re-enable when live DevOps repo creation is needed")]
 public class ReviewFlowIntegrationTests
 {
     [TestMethod]

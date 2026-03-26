@@ -162,7 +162,7 @@
       "category": "ac-dod",
       "priority": 1700,
       "enabled": true,
-      "text": "ACCEPTANCE CRITERIA / DEFINITION OF DONE ANALYSIS:\nWhen linked work items with acceptance criteria are provided in the user prompt,\nyou MUST populate the \"acceptanceCriteriaAnalysis\" object. For each AC item:\na) State whether the PR code changes address it (\"Addressed\"), partially address\n   it (\"Partially Addressed\"), don't address it (\"Not Addressed\"), or if you\n   can't tell from the code alone (\"Cannot Determine\").\nb) Cite specific files/code as evidence.\nc) \"Cannot Determine\" is for criteria that require runtime verification, external\n   system checks, or manual testing (e.g., \"event visible in dashboard\").\nd) If NO linked work items or AC are provided, omit the acceptanceCriteriaAnalysis\n   field entirely — do NOT fabricate criteria.\ne) AC analysis does NOT change the code quality verdict. A PR can be \"APPROVED\" for\n   code quality even if some AC items are \"Not Addressed\" — those are separate concerns.\n   However, note unaddressed AC items in the verdictJustification as informational context.\nf) If work item discussion comments mention AC changes or scope decisions, factor those in."
+      "text": "ACCEPTANCE CRITERIA / DEFINITION OF DONE ANALYSIS:\nWhen linked work items with acceptance criteria are provided in the user prompt,\nyou MUST populate the \"acceptanceCriteriaAnalysis\" object. For each AC item:\na) State whether the PR code changes address it (\"Addressed\"), partially address\n   it (\"Partially Addressed\"), don't address it (\"Not Addressed\"), or if you\n   can't tell from the code alone (\"Cannot Determine\").\nb) Evidence MUST be ONE brief sentence (max 30 words). Cite 1-2 key files; do NOT\n   list every file. Example: \"Binding redirects updated in Web.config and App.config.\"\nc) \"Cannot Determine\" is for criteria that require runtime verification, external\n   system checks, or manual testing (e.g., \"event visible in dashboard\").\nd) If NO linked work items or AC are provided, omit the acceptanceCriteriaAnalysis\n   field entirely — do NOT fabricate criteria.\ne) AC analysis does NOT change the code quality verdict. A PR can be \"APPROVED\" for\n   code quality even if some AC items are \"Not Addressed\" — those are separate concerns.\n   However, note unaddressed AC items in the verdictJustification as informational context.\nf) If work item discussion comments mention AC changes or scope decisions, factor those in."
     },
     {
       "id": "batch-r18",
@@ -258,7 +258,7 @@
       "category": "ac-dod",
       "priority": 1100,
       "enabled": true,
-      "text": "ACCEPTANCE CRITERIA ANALYSIS (SINGLE FILE):\nWhen linked work items with acceptance criteria are provided, populate\n\"acceptanceCriteriaAnalysis\" ONLY with AC items relevant to THIS specific file.\nSkip AC items that don't relate to this file's purpose. If NO AC items are relevant\nto this file, omit the field entirely. If NO work items were provided, omit it."
+      "text": "ACCEPTANCE CRITERIA ANALYSIS (SINGLE FILE):\nWhen linked work items with acceptance criteria are provided, populate\n\"acceptanceCriteriaAnalysis\" ONLY with AC items relevant to THIS specific file.\nSkip AC items that don't relate to this file's purpose. If NO AC items are relevant\nto this file, omit the field entirely. If NO work items were provided, omit it.\nEvidence MUST be ONE brief sentence (max 30 words) — do NOT repeat the criterion text."
     },
     {
       "id": "verify-r01",

@@ -11,6 +11,7 @@ namespace AiCodeReview.Tests;
 /// </summary>
 [TestClass]
 [TestCategory("Manual")]
+[Ignore("Disabled: using fakes only — re-enable when live DevOps repo creation is needed")]
 public class SimulationPR63643
 {
     [TestMethod]

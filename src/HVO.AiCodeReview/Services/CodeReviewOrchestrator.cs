@@ -2035,6 +2035,11 @@ public class CodeReviewOrchestrator : ICodeReviewOrchestrator
             return "(file content not available)";
 
         var lines = fileContent.Split('\n');
+
+        // If the requested lines are entirely beyond file end, return a clear fallback
+        if (startLine > lines.Length)
+            return $"(requested lines {startLine}-{endLine} are beyond file end, file has {lines.Length} lines)";
+
         var from = Math.Max(0, startLine - 1 - contextLines);  // 0-indexed
         var to = Math.Min(lines.Length - 1, endLine - 1 + contextLines); // 0-indexed
 

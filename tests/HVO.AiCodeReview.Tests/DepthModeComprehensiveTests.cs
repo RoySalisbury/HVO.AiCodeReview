@@ -10,6 +10,7 @@ namespace AiCodeReview.Tests;
 /// BuildSummaryMarkdown edge cases, no-reviewable-files paths, and re-review × depth interactions.
 /// </summary>
 [TestClass]
+[Ignore("Disabled: using fakes only — re-enable when live DevOps repo creation is needed")]
 public class DepthModeComprehensiveTests
 {
     // ═══════════════════════════════════════════════════════════════════════

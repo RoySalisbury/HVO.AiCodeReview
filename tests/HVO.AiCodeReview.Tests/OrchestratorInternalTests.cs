@@ -58,6 +58,15 @@ public class OrchestratorInternalTests
         Assert.IsTrue(result.Contains("c"));
     }
 
+    [TestMethod]
+    public void ExtractCodeContext_LinesBeyondFileEnd_ReturnsFallback()
+    {
+        var content = "a\nb\nc";
+        var result = CodeReviewOrchestrator.ExtractCodeContext(content, 50, 55);
+        StringAssert.Contains(result, "beyond file end");
+        StringAssert.Contains(result, "3 lines");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  BuildThreadReply
     // ═══════════════════════════════════════════════════════════════════
